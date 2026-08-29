@@ -59,6 +59,7 @@ struct Index {
   @State private receivedRecordingCount: number = 0;
   @State private receivedRecordings: Array<ReceivedRecordingFile> = [];
   @State private isControllingWatch: boolean = false;
+  @State private isReconnectingPhoneReceiver: boolean = false;
   @State private remoteRecordingState: string = 'unknown';
   @State private notificationEnabled: boolean = true;
   @State private selectedTab: number = 0;
@@ -236,7 +237,7 @@ struct Index {
   }
 
   private async requestWatchSync(): Promise<void> {
-    if (this.transferReceiver === undefined || this.isSyncing) {
+    if (this.transferReceiver === undefined || this.isSyncing || this.isReconnectingPhoneReceiver) {
       return;
     }
     try {
@@ -248,7 +249,7 @@ struct Index {
   }
 
   private async requestWatchRecordingState(desiredState: string): Promise<void> {
-    if (this.transferReceiver === undefined || this.isControllingWatch) {
+    if (this.transferReceiver === undefined || this.isControllingWatch || this.isReconnectingPhoneReceiver) {
       return;
     }
     try {
@@ -260,14 +261,27 @@ struct Index {
   }
 
   private async reconnectPhoneReceiver(): Promise<void> {
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    this.resetSyncUiState();
-    if (this.transferReceiver !== undefined) {
-      await this.transferReceiver.stop();
-      this.transferReceiver = undefined;
+    if (this.isReconnectingPhoneReceiver) {
+      return;
     }
-    this.status = '正在重新注册 Wear Engine 接收器…';
-    await this.startPhoneReceiver(context);
+    this.isReconnectingPhoneReceiver = true;
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    try {
+      this.resetSyncUiState();
+      const receiver = this.transferReceiver;
+      if (receiver === undefined) {
+        this.status = '正在释放异常的 Wear Engine 通道…';
+        await WearEngineRecordingReceiver.destroyChannel();
+        this.status = 'Wear Engine 通道已重建，正在重新注册接收器…';
+        await this.startPhoneReceiver(context);
+        return;
+      }
+      await receiver.reconnect();
+    } catch (error) {
+      this.status = `重新连接失败：${wearEngineErrorMessage(error)}`;
+    } finally {
+      this.isReconnectingPhoneReceiver = false;
+    }
   }
 
   private resetSyncUiState(): void {
@@ -731,7 +745,7 @@ struct Index {
             .width('100%')
             .height(48)
             .backgroundColor($r('app.color.brand_primary'))
-            .enabled(!this.isSyncing)
+            .enabled(!this.isSyncing && !this.isReconnectingPhoneReceiver)
             .onClick(() => this.requestWatchSync())
 
           this.syncTransferProgressView()
@@ -746,11 +760,12 @@ struct Index {
                 .onClick(() => this.togglePlayback())
             }
 
-            Button('重新连接', { type: ButtonType.Capsule })
+            Button(this.isReconnectingPhoneReceiver ? '正在重连…' : '重新连接', { type: ButtonType.Capsule })
               .layoutWeight(1)
               .height(40)
               .fontColor($r('app.color.brand_primary'))
               .backgroundColor($r('app.color.surface_accent'))
+              .enabled(!this.isReconnectingPhoneReceiver)
               .onClick(() => this.reconnectPhoneReceiver())
           }
           .width('100%')

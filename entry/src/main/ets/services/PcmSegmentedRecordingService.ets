@@ -4,15 +4,20 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { RecordingFile } from '../models/RecordingModels';
+import { publishPartFile, syncAndClose } from '../shared/io/AtomicFileWriter';
+import { writeJsonAtomically } from '../shared/io/AtomicJsonStore';
+import {
+  PCM_BITS_PER_SAMPLE as BITS_PER_SAMPLE,
+  PCM_BYTES_PER_SAMPLE as BYTES_PER_SAMPLE,
+  PCM_CHANNEL_COUNT as CHANNEL_COUNT,
+  PCM_SAMPLE_RATE_HZ as SAMPLE_RATE,
+  createPcmWavHeader,
+  writeEntireBuffer
+} from '../shared/io/WavFormat';
 
-const SAMPLE_RATE: number = 16000;
-const CHANNEL_COUNT: number = 1;
-const BITS_PER_SAMPLE: number = 16;
-const BYTES_PER_SAMPLE: number = BITS_PER_SAMPLE / 8;
 const SEGMENT_SECONDS: number = 60;
 const SEGMENT_SAMPLES: number = SAMPLE_RATE * SEGMENT_SECONDS;
 const SEGMENT_PCM_BYTES: number = SEGMENT_SAMPLES * BYTES_PER_SAMPLE;
-const WAV_HEADER_BYTES: number = 44;
 const MAX_QUEUED_PCM_BYTES: number = SAMPLE_RATE * BYTES_PER_SAMPLE * 5;
 
 export interface PcmSegmentedRecordingCallbacks {
@@ -317,7 +322,7 @@ export class PcmSegmentedRecordingService {
       const available = SEGMENT_PCM_BYTES - active.pcmBytes;
       const length = Math.min(available, data.byteLength - offset);
       const piece = data.slice(offset, offset + length);
-      this.writeAll(active.fd, piece);
+      writeEntireBuffer(piece, (remaining: ArrayBuffer): number => fileIo.writeSync(active.fd, remaining));
       active.pcmBytes += length;
       this.totalPcmBytes += length;
       offset += length;
@@ -371,7 +376,8 @@ export class PcmSegmentedRecordingService {
       partPath: partPath,
       finalPath: finalPath
     };
-    this.writeAll(slot.fd, this.createWavHeader(0));
+    writeEntireBuffer(createPcmWavHeader(0),
+      (remaining: ArrayBuffer): number => fileIo.writeSync(slot.fd, remaining));
     return slot;
   }
 
@@ -394,11 +400,11 @@ export class PcmSegmentedRecordingService {
   private finalizeSlot(slot: WavFileSlot): RecordingFile {
     try {
       fileIo.lseek(slot.fd, 0, fileIo.WhenceType.SEEK_SET);
-      this.writeAll(slot.fd, this.createWavHeader(slot.pcmBytes));
-      fileIo.fsyncSync(slot.fd);
-      fileIo.closeSync(slot.fd);
+      writeEntireBuffer(createPcmWavHeader(slot.pcmBytes),
+        (remaining: ArrayBuffer): number => fileIo.writeSync(slot.fd, remaining));
+      syncAndClose(slot.fd);
       slot.fd = -1;
-      fileIo.renameSync(slot.partPath, slot.finalPath);
+      publishPartFile(slot.partPath, slot.finalPath);
       const stat = fileIo.statSync(slot.finalPath);
       const pathParts = slot.finalPath.split('/');
       return {
@@ -429,57 +435,6 @@ export class PcmSegmentedRecordingService {
       fileIo.unlinkSync(slot.partPath);
     } catch (error) {
       // The placeholder may already have been finalized or removed.
-    }
-  }
-
-  private createWavHeader(pcmBytes: number): ArrayBuffer {
-    const buffer = new ArrayBuffer(WAV_HEADER_BYTES);
-    const header = new Uint8Array(buffer);
-    this.writeAscii(header, 0, 'RIFF');
-    this.writeUint32Le(header, 4, 36 + pcmBytes);
-    this.writeAscii(header, 8, 'WAVE');
-    this.writeAscii(header, 12, 'fmt ');
-    this.writeUint32Le(header, 16, 16);
-    this.writeUint16Le(header, 20, 1);
-    this.writeUint16Le(header, 22, CHANNEL_COUNT);
-    this.writeUint32Le(header, 24, SAMPLE_RATE);
-    this.writeUint32Le(header, 28, SAMPLE_RATE * CHANNEL_COUNT * BYTES_PER_SAMPLE);
-    this.writeUint16Le(header, 32, CHANNEL_COUNT * BYTES_PER_SAMPLE);
-    this.writeUint16Le(header, 34, BITS_PER_SAMPLE);
-    this.writeAscii(header, 36, 'data');
-    this.writeUint32Le(header, 40, pcmBytes);
-    return buffer;
-  }
-
-  private writeAscii(target: Uint8Array, offset: number, value: string): void {
-    for (let index = 0; index < value.length; index += 1) {
-      target[offset + index] = value.charCodeAt(index);
-    }
-  }
-
-  private writeUint16Le(target: Uint8Array, offset: number, value: number): void {
-    target[offset] = value & 0xff;
-    target[offset + 1] = (value >>> 8) & 0xff;
-  }
-
-  private writeUint32Le(target: Uint8Array, offset: number, value: number): void {
-    target[offset] = value & 0xff;
-    target[offset + 1] = (value >>> 8) & 0xff;
-    target[offset + 2] = (value >>> 16) & 0xff;
-    target[offset + 3] = (value >>> 24) & 0xff;
-  }
-
-  private writeAll(fd: number, buffer: ArrayBuffer): void {
-    let remaining: ArrayBuffer = buffer;
-    while (remaining.byteLength > 0) {
-      const written = fileIo.writeSync(fd, remaining);
-      if (written <= 0) {
-        throw new Error('写入 WAV 文件失败');
-      }
-      if (written === remaining.byteLength) {
-        return;
-      }
-      remaining = remaining.slice(written);
     }
   }
 
@@ -573,14 +528,7 @@ export class PcmSegmentedRecordingService {
       segments: this.evidence
     };
     const summaryPath = `${this.sessionDirectory}/session_summary.json`;
-    const output = fileIo.openSync(summaryPath,
-      fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-    try {
-      fileIo.writeSync(output.fd, JSON.stringify(summary, null, 2));
-      fileIo.fsyncSync(output.fd);
-    } finally {
-      fileIo.closeSync(output.fd);
-    }
+    writeJsonAtomically(summaryPath, summary);
   }
 
   private isEvidenceContinuous(): boolean {

@@ -77,7 +77,7 @@ export default function receivedRecordingStoreTest() {
         };
         writeTestText(`${syncRoot}/received_index_v1.json`, JSON.stringify(fixture));
 
-        const store = new ReceivedRecordingStore(root, listDirectory, readTestText);
+        const store = new ReceivedRecordingStore(root, listDirectory, readTestText, writeTestText);
 
         expect(store.list().length).assertEqual(1);
         expect(store.list()[0].sourcePath).assertEqual('session_a/segment.wav');
@@ -103,7 +103,7 @@ export default function receivedRecordingStoreTest() {
         writeTestBytes(`${requestRoot}/001_scanned.wav`, new Uint8Array([5, 6, 7, 8]));
         writeTestText(`${syncRoot}/received_index_v1.json`, '{damaged');
 
-        const store = new ReceivedRecordingStore(root, listDirectory, readTestText);
+        const store = new ReceivedRecordingStore(root, listDirectory, readTestText, writeTestText);
 
         expect(store.list().length).assertEqual(1);
         expect(store.list()[0].fileName).assertEqual('scanned.wav');
@@ -125,7 +125,7 @@ export default function receivedRecordingStoreTest() {
       try {
         const path = `${root}/received_100.wav`;
         writeTestBytes(path, new Uint8Array([9, 10]));
-        const store = new ReceivedRecordingStore(root, listDirectory, readTestText);
+        const store = new ReceivedRecordingStore(root, listDirectory, readTestText, writeTestText);
         const recording: ReceivedRecordingFile = {
           fileName: 'received_100.wav',
           path: path,

@@ -1,9 +1,9 @@
 import { fileIo } from '@kit.CoreFileKit';
 import { describe, it, expect } from '@ohos/hypium';
 import {
-  InterruptedWavRecoveryService,
-  writeEntireWavBuffer
+  InterruptedWavRecoveryService
 } from '../main/ets/services/InterruptedWavRecoveryService';
+import { writeEntireBuffer } from '../main/ets/shared/io/WavFormat';
 import {
   createTestDirectory,
   ensureTestDirectory,
@@ -132,7 +132,7 @@ export default function interruptedWavRecoveryTest() {
       let calls = 0;
       let totalWritten = 0;
 
-      writeEntireWavBuffer(buffer, (remaining: ArrayBuffer): number => {
+      writeEntireBuffer(buffer, (remaining: ArrayBuffer): number => {
         calls += 1;
         const written = Math.min(3, remaining.byteLength);
         totalWritten += written;
@@ -146,7 +146,7 @@ export default function interruptedWavRecoveryTest() {
     it('failsWhenWriterMakesNoProgress', 0, () => {
       let rejected = false;
       try {
-        writeEntireWavBuffer(new ArrayBuffer(4), (remaining: ArrayBuffer): number => 0);
+        writeEntireBuffer(new ArrayBuffer(4), (remaining: ArrayBuffer): number => 0);
       } catch (error) {
         rejected = true;
       }

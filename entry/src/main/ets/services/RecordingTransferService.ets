@@ -9,6 +9,14 @@ import {
   WatchSyncFileDescriptor,
   WatchSyncProgress
 } from '../models/RecordingModels';
+import { copyFileAtomically } from '../shared/io/AtomicFileWriter';
+import {
+  JSON_LOAD_DAMAGED,
+  JSON_LOAD_MISSING,
+  JSON_LOAD_SUCCESS,
+  loadVersionedJson,
+  writeVersionedJson
+} from '../shared/io/AtomicJsonStore';
 import {
   WATCH_AUTO_FILE,
   WATCH_CONTROL_PROBE,
@@ -100,6 +108,10 @@ interface AutomaticQueueManifest {
   updatedAt: number;
   completedCount: number;
   files: Array<AutomaticQueueManifestEntry>;
+}
+
+function isAutomaticQueueManifest(manifest: AutomaticQueueManifest): boolean {
+  return Array.isArray(manifest.files);
 }
 
 interface P2pTransport {
@@ -752,15 +764,19 @@ export class WearEngineRecordingSender {
     }
     this.automaticQueueLoaded = true;
     const manifestPath = `${this.context.filesDir}/${AUTOMATIC_QUEUE_MANIFEST_FILE}`;
-    if (!fileIo.accessSync(manifestPath)) {
-      return;
-    }
     try {
-      const manifest = JSON.parse(fileIo.readTextSync(manifestPath)) as AutomaticQueueManifest;
-      if (manifest.version !== AUTOMATIC_QUEUE_MANIFEST_VERSION || !Array.isArray(manifest.files)) {
-        this.updateStatus('自动同步队列清单版本无效，录音文件未受影响');
+      const loaded = loadVersionedJson<AutomaticQueueManifest>(manifestPath,
+        AUTOMATIC_QUEUE_MANIFEST_VERSION, isAutomaticQueueManifest);
+      if (loaded.status === JSON_LOAD_MISSING) {
         return;
       }
+      if (loaded.status !== JSON_LOAD_SUCCESS || loaded.value === undefined) {
+        this.updateStatus(loaded.status === JSON_LOAD_DAMAGED ?
+          '自动同步队列清单无法读取，录音文件未受影响' :
+          '自动同步队列清单版本无效，录音文件未受影响');
+        return;
+      }
+      const manifest = loaded.value;
       this.automaticCompletedCount = Math.max(0, Math.floor(manifest.completedCount || 0));
       for (let index = 0; index < manifest.files.length; index += 1) {
         const entry = manifest.files[index];
@@ -814,14 +830,8 @@ export class WearEngineRecordingSender {
     };
     const manifestPath = `${this.context.filesDir}/${AUTOMATIC_QUEUE_MANIFEST_FILE}`;
     try {
-      const output = fileIo.openSync(manifestPath,
-        fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-      try {
-        fileIo.writeSync(output.fd, JSON.stringify(manifest, null, 2));
-        fileIo.fsyncSync(output.fd);
-      } finally {
-        fileIo.closeSync(output.fd);
-      }
+      writeVersionedJson<AutomaticQueueManifest>(manifestPath, AUTOMATIC_QUEUE_MANIFEST_VERSION,
+        manifest, isAutomaticQueueManifest);
       return true;
     } catch (error) {
       return false;
@@ -1406,6 +1416,18 @@ export class WearEngineRecordingReceiver {
     }
   }
 
+  static async destroyChannel(): Promise<void> {
+    await wearEngine.destroy();
+  }
+
+  async reconnect(): Promise<void> {
+    await this.stop();
+    this.updateReceiverStatus('正在释放异常的 Wear Engine 通道…');
+    await WearEngineRecordingReceiver.destroyChannel();
+    this.updateReceiverStatus('Wear Engine 通道已重建，正在重新注册接收器…');
+    await this.start();
+  }
+
   async requestRecordingState(desiredState: string): Promise<void> {
     const client = this.p2pClient;
     const peer = this.peer;
@@ -1921,6 +1943,10 @@ export class WearEngineRecordingReceiver {
     }
   }
 
+  private updateReceiverStatus(status: string): void {
+    this.statusHandler(status);
+  }
+
   private finishIfComplete(): void {
     if (!this.remoteComplete || this.expectedReceived < 0 || this.activeReceived < this.expectedReceived) {
       return;
@@ -1968,15 +1994,7 @@ export class WearEngineRecordingReceiver {
   }
 
   private copyIncomingFileDurably(sourceFd: number, finalPath: string): void {
-    const partPath = `${finalPath}.part`;
-    fileIo.copyFileSync(sourceFd, partPath);
-    const copied = fileIo.openSync(partPath, fileIo.OpenMode.READ_WRITE);
-    try {
-      fileIo.fsyncSync(copied.fd);
-    } finally {
-      fileIo.closeSync(copied.fd);
-    }
-    fileIo.renameSync(partPath, finalPath);
+    copyFileAtomically(sourceFd, finalPath);
   }
 
   private removePendingFile(descriptor: WatchSyncFileDescriptor): void {

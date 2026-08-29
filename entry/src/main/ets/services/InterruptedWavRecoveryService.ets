@@ -1,10 +1,16 @@
 import { fileIo } from '@kit.CoreFileKit';
+import { publishPartFile, syncAndClose } from '../shared/io/AtomicFileWriter';
+import { writeJsonAtomically } from '../shared/io/AtomicJsonStore';
+import {
+  PCM_BITS_PER_SAMPLE as BITS_PER_SAMPLE,
+  PCM_BYTES_PER_SAMPLE as BYTES_PER_SAMPLE,
+  PCM_CHANNEL_COUNT as CHANNEL_COUNT,
+  PCM_SAMPLE_RATE_HZ as SAMPLE_RATE,
+  WAV_HEADER_BYTES,
+  createPcmWavHeader,
+  writeEntireBuffer
+} from '../shared/io/WavFormat';
 
-const SAMPLE_RATE: number = 16000;
-const CHANNEL_COUNT: number = 1;
-const BITS_PER_SAMPLE: number = 16;
-const BYTES_PER_SAMPLE: number = BITS_PER_SAMPLE / 8;
-const WAV_HEADER_BYTES: number = 44;
 const MAX_SEGMENT_PCM_BYTES: number = SAMPLE_RATE * BYTES_PER_SAMPLE * 60;
 const SESSION_PREFIX: string = 'pcm_gap_test_';
 const PART_SUFFIX: string = '.wav.part';
@@ -42,23 +48,8 @@ export interface InterruptedWavRecoveryResult {
   failureCount: number;
 }
 
-export type WavBufferWriteOperation = (buffer: ArrayBuffer) => number;
 export type RecoveryDirectoryListOperation = (path: string) => Array<string>;
 export type RecoverySeekOperation = (fd: number) => void;
-
-export function writeEntireWavBuffer(buffer: ArrayBuffer, writeOperation: WavBufferWriteOperation): void {
-  let remaining = buffer;
-  while (remaining.byteLength > 0) {
-    const written = writeOperation(remaining);
-    if (written <= 0) {
-      throw new Error('写入 WAV 文件失败');
-    }
-    if (written === remaining.byteLength) {
-      return;
-    }
-    remaining = remaining.slice(written);
-  }
-}
 
 export class InterruptedWavRecoveryService {
   static recover(filesDirectory: string,
@@ -149,13 +140,18 @@ export class InterruptedWavRecoveryService {
       const output = fileIo.openSync(partPath, fileIo.OpenMode.READ_WRITE);
       try {
         seekToStart(output.fd);
-        InterruptedWavRecoveryService.writeAll(output.fd,
-          InterruptedWavRecoveryService.createWavHeader(pcmBytes));
-        fileIo.fsyncSync(output.fd);
-      } finally {
-        fileIo.closeSync(output.fd);
+        writeEntireBuffer(createPcmWavHeader(pcmBytes),
+          (remaining: ArrayBuffer): number => fileIo.writeSync(output.fd, remaining));
+      } catch (error) {
+        try {
+          fileIo.closeSync(output.fd);
+        } catch (closeError) {
+          // Preserve the header write failure and leave the original .part.
+        }
+        throw InterruptedWavRecoveryService.recoveryError(error);
       }
-      fileIo.renameSync(partPath, finalPath);
+      syncAndClose(output.fd);
+      publishPartFile(partPath, finalPath);
 
       const sampleCount = pcmBytes / BYTES_PER_SAMPLE;
       const evidence: RecoveredWavEvidence = {
@@ -189,58 +185,14 @@ export class InterruptedWavRecoveryService {
 
   private static writeSummary(sessionDirectory: string, summary: SessionRecoverySummary): void {
     const summaryPath = `${sessionDirectory}/recovery_summary.json`;
-    const output = fileIo.openSync(summaryPath,
-      fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-    try {
-      fileIo.writeSync(output.fd, JSON.stringify(summary, null, 2));
-      fileIo.fsyncSync(output.fd);
-    } finally {
-      fileIo.closeSync(output.fd);
-    }
-  }
-
-  private static createWavHeader(pcmBytes: number): ArrayBuffer {
-    const buffer = new ArrayBuffer(WAV_HEADER_BYTES);
-    const header = new Uint8Array(buffer);
-    InterruptedWavRecoveryService.writeAscii(header, 0, 'RIFF');
-    InterruptedWavRecoveryService.writeUint32Le(header, 4, 36 + pcmBytes);
-    InterruptedWavRecoveryService.writeAscii(header, 8, 'WAVE');
-    InterruptedWavRecoveryService.writeAscii(header, 12, 'fmt ');
-    InterruptedWavRecoveryService.writeUint32Le(header, 16, 16);
-    InterruptedWavRecoveryService.writeUint16Le(header, 20, 1);
-    InterruptedWavRecoveryService.writeUint16Le(header, 22, CHANNEL_COUNT);
-    InterruptedWavRecoveryService.writeUint32Le(header, 24, SAMPLE_RATE);
-    InterruptedWavRecoveryService.writeUint32Le(header, 28, SAMPLE_RATE * CHANNEL_COUNT * BYTES_PER_SAMPLE);
-    InterruptedWavRecoveryService.writeUint16Le(header, 32, CHANNEL_COUNT * BYTES_PER_SAMPLE);
-    InterruptedWavRecoveryService.writeUint16Le(header, 34, BITS_PER_SAMPLE);
-    InterruptedWavRecoveryService.writeAscii(header, 36, 'data');
-    InterruptedWavRecoveryService.writeUint32Le(header, 40, pcmBytes);
-    return buffer;
-  }
-
-  private static writeAscii(target: Uint8Array, offset: number, value: string): void {
-    for (let index = 0; index < value.length; index += 1) {
-      target[offset + index] = value.charCodeAt(index);
-    }
-  }
-
-  private static writeUint16Le(target: Uint8Array, offset: number, value: number): void {
-    target[offset] = value & 0xff;
-    target[offset + 1] = (value >>> 8) & 0xff;
-  }
-
-  private static writeUint32Le(target: Uint8Array, offset: number, value: number): void {
-    target[offset] = value & 0xff;
-    target[offset + 1] = (value >>> 8) & 0xff;
-    target[offset + 2] = (value >>> 16) & 0xff;
-    target[offset + 3] = (value >>> 24) & 0xff;
-  }
-
-  private static writeAll(fd: number, buffer: ArrayBuffer): void {
-    writeEntireWavBuffer(buffer, (remaining: ArrayBuffer): number => fileIo.writeSync(fd, remaining));
+    writeJsonAtomically(summaryPath, summary);
   }
 
   private static errorMessage(error: Object): string {
     return error instanceof Error ? error.message : JSON.stringify(error);
+  }
+
+  private static recoveryError(error: Object): Error {
+    return error instanceof Error ? error : new Error(JSON.stringify(error));
   }
 }

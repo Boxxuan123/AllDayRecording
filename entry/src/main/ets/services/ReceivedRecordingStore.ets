@@ -1,5 +1,12 @@
 import { fileIo } from '@kit.CoreFileKit';
 import { ReceivedRecordingFile, WatchSyncFileDescriptor } from '../models/RecordingModels';
+import {
+  JSON_LOAD_SUCCESS,
+  JsonTextReadOperation,
+  JsonTextWriteOperation,
+  loadVersionedJson,
+  writeVersionedJson
+} from '../shared/io/AtomicJsonStore';
 import { exactWatchFileKey, legacyWatchFileKey } from './WatchFileSyncProtocol';
 
 export const SYNC_RECEIVE_DIRECTORY: string = 'synced_from_watch';
@@ -25,7 +32,12 @@ interface ReceivedRecordingManifest {
 }
 
 export type DirectoryListOperation = (path: string) => Array<string>;
-export type TextReadOperation = (path: string) => string;
+export type TextReadOperation = JsonTextReadOperation;
+export type TextWriteOperation = JsonTextWriteOperation;
+
+function isReceivedRecordingManifest(manifest: ReceivedRecordingManifest): boolean {
+  return Array.isArray(manifest.recordings);
+}
 
 export class ReceivedRecordingStore {
   private filesDirectory: string;
@@ -34,15 +46,18 @@ export class ReceivedRecordingStore {
   private recordings: Array<ReceivedRecordingFile>;
   private listDirectory: DirectoryListOperation;
   private readText: TextReadOperation;
+  private writeText: TextWriteOperation | undefined;
 
   constructor(filesDirectory: string,
     listDirectory: DirectoryListOperation = (path: string): Array<string> => fileIo.listFileSync(path),
-    readText: TextReadOperation = (path: string): string => fileIo.readTextSync(path)) {
+    readText: TextReadOperation = (path: string): string => fileIo.readTextSync(path),
+    writeText?: TextWriteOperation) {
     this.filesDirectory = filesDirectory;
     this.syncRoot = `${filesDirectory}/${SYNC_RECEIVE_DIRECTORY}`;
     this.manifestPath = `${this.syncRoot}/${MANIFEST_FILE_NAME}`;
     this.listDirectory = listDirectory;
     this.readText = readText;
+    this.writeText = writeText;
     this.recordings = this.loadFromDisk();
   }
 
@@ -116,14 +131,13 @@ export class ReceivedRecordingStore {
   }
 
   private loadManifest(target: Array<ReceivedRecordingFile>): void {
-    if (!fileIo.accessSync(this.manifestPath)) {
+    const loaded = loadVersionedJson<ReceivedRecordingManifest>(this.manifestPath, MANIFEST_VERSION,
+      isReceivedRecordingManifest, (path: string): boolean => fileIo.accessSync(path), this.readText);
+    if (loaded.status !== JSON_LOAD_SUCCESS || loaded.value === undefined) {
       return;
     }
     try {
-      const manifest = JSON.parse(this.readText(this.manifestPath)) as ReceivedRecordingManifest;
-      if (manifest.version !== MANIFEST_VERSION || !Array.isArray(manifest.recordings)) {
-        return;
-      }
+      const manifest = loaded.value;
       for (let index = 0; index < manifest.recordings.length; index += 1) {
         const entry = manifest.recordings[index];
         if (entry.localPath.length === 0 || entry.localPath.startsWith('/') || entry.localPath.includes('..')) {
@@ -251,13 +265,12 @@ export class ReceivedRecordingStore {
       updatedAt: Date.now(),
       recordings: entries
     };
-    const output = fileIo.openSync(this.manifestPath,
-      fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-    try {
-      fileIo.writeSync(output.fd, JSON.stringify(manifest, null, 2));
-      fileIo.fsyncSync(output.fd);
-    } finally {
-      fileIo.closeSync(output.fd);
+    if (this.writeText === undefined) {
+      writeVersionedJson<ReceivedRecordingManifest>(this.manifestPath, MANIFEST_VERSION,
+        manifest, isReceivedRecordingManifest);
+    } else {
+      writeVersionedJson<ReceivedRecordingManifest>(this.manifestPath, MANIFEST_VERSION,
+        manifest, isReceivedRecordingManifest, this.writeText);
     }
   }
 

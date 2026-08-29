@@ -169,6 +169,8 @@ Pages -> ViewModels/Coordinators -> Domain services -> Transport/Storage adapter
 
 ### Phase 1：提取无状态共享基础设施
 
+执行状态（2026-08-29）：已完成，用户已确认真机回归通过。当前 Hypium 报告为 27/27 通过，`entry@ohosTest` 测试 HAP、独立 clean Debug 和 Release 构建均成功；路径、JSON schema/version、WAV 格式、录音参数和 wire 协议未改。真机回归期间发现 Wear Engine 核心接收通道卡住后仅重新注册回调不足以恢复，因此追加了 `stop -> destroy -> start` 的硬重连和重复点击保护；原先积压的第三段随后进入手机索引。详细迁移、字节/失败语义、警告保留依据及真机证据见 `doc/MAINTAINABILITY_PHASE_1_SHARED_IO.md`。
+
 目标：先消除最容易验证的重复逻辑，为后续拆分提供稳定底座。
 
 任务：
