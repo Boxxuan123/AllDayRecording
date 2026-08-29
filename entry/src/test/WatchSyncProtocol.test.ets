@@ -1,13 +1,15 @@
 import { describe, it, expect } from '@ohos/hypium';
+import { util } from '@kit.ArkTS';
 import {
   WATCH_SYNC_PROTOCOL_VERSION,
+  WATCH_SYNC_FILE,
   WATCH_SYNC_REQUEST,
   WatchSyncProtocolMessage,
   decodeWatchSyncMessage,
   encodeWatchSyncMessage,
   exactWatchFileKey,
   legacyWatchFileKey
-} from '../main/ets/services/WatchFileSyncProtocol';
+} from '../main/ets/sync/protocol/WatchFileSyncProtocol';
 
 export default function watchSyncProtocolTest() {
   describe('WatchSyncProtocol', () => {
@@ -54,6 +56,30 @@ export default function watchSyncProtocolTest() {
       expect(exactWatchFileKey(firstPath, 32044)).assertEqual(exactWatchFileKey(firstPath, 32044));
       expect(exactWatchFileKey(firstPath, 32044) === exactWatchFileKey(secondPath, 32044)).assertFalse();
       expect(legacyWatchFileKey(fileName, 32044)).assertEqual(legacyWatchFileKey(fileName, 32044));
+    });
+
+    it('matchesWireJsonGoldenFixture', 0, () => {
+      const message: WatchSyncProtocolMessage = {
+        version: 1,
+        type: WATCH_SYNC_FILE,
+        requestId: 'request_golden',
+        file: {
+          requestId: 'request_golden',
+          index: 1,
+          total: 1,
+          relativePath: 'pcm_gap_test_100/segment_000001.wav',
+          fileName: 'segment_000001.wav',
+          size: 32044,
+          automatic: false
+        }
+      };
+
+      const wireText = util.TextDecoder.create('utf-8').decodeToString(encodeWatchSyncMessage(message));
+
+      expect(wireText).assertEqual('{"version":1,"type":"sync_file","requestId":"request_golden",' +
+        '"file":{"requestId":"request_golden","index":1,"total":1,' +
+        '"relativePath":"pcm_gap_test_100/segment_000001.wav","fileName":"segment_000001.wav",' +
+        '"size":32044,"automatic":false}}');
     });
   });
 }

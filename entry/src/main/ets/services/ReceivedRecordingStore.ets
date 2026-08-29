@@ -7,7 +7,7 @@ import {
   loadVersionedJson,
   writeVersionedJson
 } from '../shared/io/AtomicJsonStore';
-import { exactWatchFileKey, legacyWatchFileKey } from './WatchFileSyncProtocol';
+import { exactWatchFileKey, legacyWatchFileKey } from '../sync/protocol/WatchFileSyncProtocol';
 
 export const SYNC_RECEIVE_DIRECTORY: string = 'synced_from_watch';
 const MANIFEST_FILE_NAME: string = 'received_index_v1.json';

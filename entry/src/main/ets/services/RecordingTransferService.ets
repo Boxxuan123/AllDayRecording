@@ -1,4 +1,4 @@
-import { common, bundleManager } from '@kit.AbilityKit';
+import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { wearEngine } from '@kit.WearEngine';
@@ -10,13 +10,6 @@ import {
   WatchSyncProgress
 } from '../models/RecordingModels';
 import { copyFileAtomically } from '../shared/io/AtomicFileWriter';
-import {
-  JSON_LOAD_DAMAGED,
-  JSON_LOAD_MISSING,
-  JSON_LOAD_SUCCESS,
-  loadVersionedJson,
-  writeVersionedJson
-} from '../shared/io/AtomicJsonStore';
 import {
   WATCH_AUTO_FILE,
   WATCH_CONTROL_PROBE,
@@ -38,11 +31,55 @@ import {
   WATCH_SYNC_REQUEST,
   WatchSyncProtocolMessage,
   decodeWatchSyncMessage,
-  encodeWatchSyncMessage,
   exactWatchFileKey,
   legacyWatchFileKey
-} from './WatchFileSyncProtocol';
+} from '../sync/protocol/WatchFileSyncProtocol';
+import {
+  PhoneReceiverLifecycleCoordinator,
+  PhoneSyncCoordinator
+} from '../sync/phone/PhoneSyncCoordinator';
+import {
+  WATCH_CONTROL_BUSY,
+  WATCH_CONTROL_REPLAY,
+  PhoneRecordingControlCoordinator,
+  PhoneRecordingControlState,
+  WatchRecordingControlCoordinator
+} from '../sync/control/WatchRecordingControlCoordinator';
+import {
+  AUTOMATIC_QUEUE_DAMAGED,
+  AUTOMATIC_QUEUE_ENQUEUED,
+  AUTOMATIC_QUEUE_ENQUEUED_NOT_SAVED,
+  AUTOMATIC_QUEUE_INVALID,
+  AUTOMATIC_QUEUE_REJECTED,
+  AutomaticSyncQueue,
+  AutomaticSyncQueueEntry
+} from '../sync/watch/AutomaticSyncQueue';
+import {
+  WATCH_MANUAL_DUPLICATE,
+  WATCH_MANUAL_QUEUED,
+  WatchFileAckCoordinator,
+  WatchManualSyncDecision,
+  WatchManualSyncRequest,
+  WatchSyncCoordinator,
+  watchFileTransferKey
+} from '../sync/watch/WatchSyncCoordinator';
+import {
+  P2P_COMMUNICATION_FAILURE,
+  P2P_COMMUNICATION_SUCCESS,
+  P2P_REMOTE_APP_NOT_INSTALLED,
+  P2P_REMOTE_APP_NOT_RUNNING,
+  P2P_REMOTE_APP_RUNNING,
+  WearEngineConnection,
+  WearEngineTransport,
+  destroyWearEngineChannel,
+  isP2pCommunicationError,
+  p2pResultMessage,
+  shouldRetryReceiverConnection,
+  wearEngineErrorMessage
+} from '../sync/transport/WearEngineTransport';
 import { ReceivedRecordingStore, SYNC_RECEIVE_DIRECTORY } from './ReceivedRecordingStore';
+
+export { wearEngineErrorMessage } from '../sync/transport/WearEngineTransport';
 
 const MAX_RECORDING_BYTES = 10 * 1024 * 1024;
 // Reliability-first fallback: keep only one Wear Engine file task in each manual
@@ -50,11 +87,6 @@ const MAX_RECORDING_BYTES = 10 * 1024 * 1024;
 // another request. The source file on the watch is never deleted.
 const MAX_SYNC_FILE_COUNT = 1;
 const INVENTORY_KEYS_PER_PAGE = 24;
-const P2P_REMOTE_APP_NOT_INSTALLED = 200;
-const P2P_REMOTE_APP_NOT_RUNNING = 201;
-const P2P_REMOTE_APP_RUNNING = 202;
-const P2P_COMMUNICATION_FAILURE = 206;
-const P2P_COMMUNICATION_SUCCESS = 207;
 const RECEIVER_CONNECT_ATTEMPTS = 5;
 const RECEIVER_RETRY_BASE_DELAY_MS = 800;
 const TRANSFER_RETRY_ATTEMPTS = 3;
@@ -66,9 +98,8 @@ const TRANSFER_FILE_ACK_TIMEOUT_MS = 60 * 1000;
 const SYNC_HANDSHAKE_TIMEOUT_MS = 20 * 1000;
 const TRANSFER_PROGRESS_STEP = 5;
 const TRANSFER_PROGRESS_MESSAGE_INTERVAL_MS = 1000;
+const CONTROL_COMMAND_TIMEOUT_MS = 20 * 1000;
 const PENDING_USER_ACTION_TIMEOUT_MS = 5 * 60 * 1000;
-const AUTOMATIC_QUEUE_MANIFEST_VERSION = 1;
-const AUTOMATIC_QUEUE_MANIFEST_FILE = 'automatic_sync_queue_v1.json';
 
 export type RecordingReceivedHandler = (recording: ReceivedRecordingFile) => void;
 export type TransferStatusHandler = (status: string) => void;
@@ -96,112 +127,12 @@ interface SyncScanResult {
   scannedCount: number;
 }
 
-interface AutomaticQueueManifestEntry {
-  relativePath: string;
-  fileName: string;
-  size: number;
-  durationMs: number;
-}
-
-interface AutomaticQueueManifest {
-  version: number;
-  updatedAt: number;
-  completedCount: number;
-  files: Array<AutomaticQueueManifestEntry>;
-}
-
-function isAutomaticQueueManifest(manifest: AutomaticQueueManifest): boolean {
-  return Array.isArray(manifest.files);
-}
-
-interface P2pTransport {
-  peer: wearEngine.Device;
-  client: wearEngine.P2pClient;
-  appParam: wearEngine.P2pAppParam;
-}
-
-type FileTransferAckResolve = () => void;
-type FileTransferAckReject = (error: Error) => void;
-
-function fileTransferAckKey(descriptor: WatchSyncFileDescriptor): string {
-  return `${descriptor.requestId}\n${descriptor.index}\n${descriptor.relativePath}`;
-}
-
-async function getLocalAppParam(): Promise<wearEngine.P2pAppParam> {
-  const info = await bundleManager.getBundleInfoForSelf(
-    bundleManager.BundleFlag.GET_BUNDLE_INFO_WITH_SIGNATURE_INFO);
-  return {
-    remoteApp: {
-      bundleName: info.name,
-      // Wear Engine's legacy field name is fingerprint; HarmonyOS uses appIdentifier as the app identity.
-      fingerprint: info.signatureInfo.appIdentifier
-    }
-  };
-}
-
-async function getConnectedPeer(context: common.UIAbilityContext): Promise<wearEngine.Device> {
-  if (!canIUse('SystemCapability.Health.WearEngine')) {
-    throw new Error('当前设备不支持 Wear Engine');
-  }
-  const devices = await wearEngine.getDeviceClient(context).getConnectedDevices();
-  if (devices.length === 0) {
-    throw new Error('未找到已连接的对端设备，请先在华为运动健康中确认手机与手表在线');
-  }
-  return devices[0];
-}
+type P2pTransport = WearEngineConnection;
 
 function waitForReceiverRetry(delayMs: number): Promise<void> {
   return new Promise<void>((resolve) => {
     setTimeout(resolve, delayMs);
   });
-}
-
-function shouldRetryReceiverConnection(error: Object): boolean {
-  const businessError = error as BusinessError;
-  if (businessError.code === 1008500004 || businessError.code === 1008500005 ||
-    businessError.code === 1008500006 || businessError.code === 1008500008) {
-    return false;
-  }
-  const message = error instanceof Error ? error.message : '';
-  return message !== '当前设备不支持 Wear Engine' && message !== 'Wear Engine 接收器启动已取消';
-}
-
-function p2pResultMessage(code: number | undefined): string {
-  switch (code) {
-    case P2P_REMOTE_APP_NOT_INSTALLED:
-      return '对端尚未安装本应用';
-    case P2P_REMOTE_APP_NOT_RUNNING:
-      return '请先打开对端应用';
-    case P2P_COMMUNICATION_FAILURE:
-      return 'Wear Engine 通信失败，请检查华为运动健康中的设备连接';
-    default:
-      return `Wear Engine 返回错误码 ${code}`;
-  }
-}
-
-function isP2pCommunicationError(error: Object): boolean {
-  const businessError = error as BusinessError;
-  if (businessError.code === 1008500002 || businessError.code === 1008500003) {
-    return true;
-  }
-  const message = error instanceof Error ? error.message : '';
-  return message.includes('Wear Engine 通信失败') || message.includes('当前未连接') ||
-    message.includes('未找到已连接的对端设备');
-}
-
-function validateP2pResult(result: wearEngine.P2pResult): void {
-  if (result.code !== undefined && result.code !== P2P_COMMUNICATION_SUCCESS) {
-    throw new Error(p2pResultMessage(result.code));
-  }
-}
-
-async function sendProtocolMessage(client: wearEngine.P2pClient, peer: wearEngine.Device,
-  appParam: wearEngine.P2pAppParam, message: WatchSyncProtocolMessage): Promise<void> {
-  const p2pMessage: wearEngine.P2pMessage = {
-    content: encodeWatchSyncMessage(message)
-  };
-  const result = await client.sendMessage(peer.randomId, appParam, p2pMessage);
-  validateP2pResult(result);
 }
 
 function scanSyncableFiles(filesDirectory: string, knownFileKeys: Array<string>): SyncScanResult {
@@ -279,61 +210,23 @@ function safeFileName(fileName: string): string {
   return fileName.replace(/[^A-Za-z0-9._-]/g, '_');
 }
 
-export function wearEngineErrorMessage(error: Object): string {
-  const businessError = error as BusinessError;
-  switch (businessError.code) {
-    case 1008500002:
-      return '没有已绑定的穿戴设备';
-    case 1008500003:
-      return '手机与手表当前未连接';
-    case 1008500004:
-      return '应用尚未在华为开发者联盟申请 Wear Engine 服务';
-    case 1008500005:
-      return '华为账号尚未授权本应用使用 Wear Engine';
-    case 1008500006:
-      return '请先同意 Wear Engine 隐私声明';
-    case 1008500008:
-      return '设备尚未登录华为账号';
-    case 1008509999:
-      return 'Wear Engine 权限校验失败，请确认设备基础信息与 P2P 通信能力已审批生效';
-    default:
-      if (businessError.code !== undefined) {
-        return `${businessError.message || 'Wear Engine 调用失败'}（错误码 ${businessError.code}）`;
-      }
-      return error instanceof Error ? error.message : '未知错误';
-  }
-}
-
 export class WearEngineRecordingSender {
   private context: common.UIAbilityContext;
+  private transportEngine: WearEngineTransport;
   private statusHandler: TransferStatusHandler | undefined;
   private p2pClient: wearEngine.P2pClient | undefined = undefined;
   private peer: wearEngine.Device | undefined = undefined;
   private appParam: wearEngine.P2pAppParam | undefined = undefined;
-  private syncInProgress: boolean = false;
-  private activeSyncRequestId: string = '';
-  private pendingSyncRequestId: string = '';
-  private pendingSyncKnownKeys: Array<string> = [];
+  private syncCoordinator: WatchSyncCoordinator = new WatchSyncCoordinator();
   private inventoryRequestId: string = '';
   private inventoryPageCount: number = 0;
   private inventoryPagesReceived: Array<number> = [];
   private inventoryKnownKeys: Array<string> = [];
-  private automaticTransferInProgress: boolean = false;
-  private automaticQueue: Array<SyncSourceFile> = [];
-  private automaticQueueLoaded: boolean = false;
-  private automaticRequestId: string = `auto_${Date.now()}`;
-  private automaticCompletedCount: number = 0;
+  private automaticQueue: AutomaticSyncQueue;
   private controlHandler: WatchRecordingControlHandler | undefined;
-  private controlInProgress: boolean = false;
-  private lastControlRequestId: string = '';
-  private lastControlAck: WatchSyncProtocolMessage | undefined = undefined;
-  private activeFileAckKey: string = '';
-  private activeFileAckResolve: FileTransferAckResolve | undefined = undefined;
-  private activeFileAckReject: FileTransferAckReject | undefined = undefined;
-  private activeFileAckTimeoutId: number = -1;
-  private activeFileProgressTimeoutId: number = -1;
-  private activeFileAckPhaseStarted: boolean = false;
-  private activeFileLastProgress: number = -1;
+  private controlCoordinator: WatchRecordingControlCoordinator = new WatchRecordingControlCoordinator();
+  private fileAckCoordinator: WatchFileAckCoordinator = new WatchFileAckCoordinator(
+    TRANSFER_PROGRESS_STALL_TIMEOUT_MS, TRANSFER_FILE_ACK_TIMEOUT_MS);
   private activeFileLastProgressSent: number = -1;
   private activeFileLastProgressSentAt: number = 0;
   private messageReceiver = (incoming: wearEngine.P2pMessage): void => {
@@ -343,18 +236,24 @@ export class WearEngineRecordingSender {
   constructor(context: common.UIAbilityContext, statusHandler?: TransferStatusHandler,
     controlHandler?: WatchRecordingControlHandler) {
     this.context = context;
+    this.transportEngine = new WearEngineTransport(context);
+    this.automaticQueue = new AutomaticSyncQueue(context.filesDir);
     this.statusHandler = statusHandler;
     this.controlHandler = controlHandler;
   }
 
   async start(): Promise<void> {
-    this.restoreAutomaticQueue();
+    const restoreStatus = this.automaticQueue.restore();
+    if (restoreStatus === AUTOMATIC_QUEUE_DAMAGED) {
+      this.updateStatus('自动同步队列清单无法读取，录音文件未受影响');
+    } else if (restoreStatus === AUTOMATIC_QUEUE_INVALID) {
+      this.updateStatus('自动同步队列清单版本无效，录音文件未受影响');
+    }
     if (this.p2pClient !== undefined) {
       return;
     }
     const transport = await this.createTransport();
-    await transport.client.registerMessageReceiver(
-      transport.peer.randomId, transport.appParam, this.messageReceiver);
+    await this.transportEngine.registerMessageReceiver(transport, this.messageReceiver);
     this.peer = transport.peer;
     this.appParam = transport.appParam;
     this.p2pClient = transport.client;
@@ -364,12 +263,12 @@ export class WearEngineRecordingSender {
       requestId: ''
     };
     try {
-      await sendProtocolMessage(transport.client, transport.peer, transport.appParam, readyMessage);
+      await this.transportEngine.sendProtocolMessage(transport, readyMessage);
     } catch (error) {
       // The phone page may not be open yet. The registered receiver remains ready for a later request.
     }
-    if (this.automaticQueue.length > 0) {
-      this.updateStatus(`已恢复自动同步队列（${this.automaticQueue.length}），准备续传`);
+    if (this.automaticQueue.count() > 0) {
+      this.updateStatus(`已恢复自动同步队列（${this.automaticQueue.count()}），准备续传`);
       this.drainAutomaticQueue();
     }
   }
@@ -383,7 +282,11 @@ export class WearEngineRecordingSender {
     this.appParam = undefined;
     if (client !== undefined && peer !== undefined && appParam !== undefined) {
       try {
-        await client.unregisterMessageReceiver(peer.randomId, appParam, this.messageReceiver);
+        await this.transportEngine.unregisterMessageReceiver({
+          client: client,
+          peer: peer,
+          appParam: appParam
+        }, this.messageReceiver);
       } catch (error) {
         // The peer may have disconnected while the page was closing.
       }
@@ -391,7 +294,7 @@ export class WearEngineRecordingSender {
   }
 
   async send(recording: RecordingFile): Promise<void> {
-    if (this.syncInProgress || this.automaticTransferInProgress) {
+    if (this.syncCoordinator.isBusy()) {
       throw new Error('正在同步其他录音，请稍后再手动发送');
     }
     const transport = await this.getTransport();
@@ -399,27 +302,16 @@ export class WearEngineRecordingSender {
   }
 
   enqueueAutomatic(recording: RecordingFile): void {
-    if (recording.path.endsWith('.part') || recording.size <= 0 || recording.size > MAX_RECORDING_BYTES) {
+    const result = this.automaticQueue.enqueue(recording);
+    if (result === AUTOMATIC_QUEUE_REJECTED) {
       this.updateStatus('分片尚未完整封口，未加入自动同步');
       return;
     }
-    for (let index = 0; index < this.automaticQueue.length; index += 1) {
-      if (this.automaticQueue[index].path === recording.path) {
-        return;
-      }
+    if (result !== AUTOMATIC_QUEUE_ENQUEUED && result !== AUTOMATIC_QUEUE_ENQUEUED_NOT_SAVED) {
+      return;
     }
-    const filesPrefix = `${this.context.filesDir}/`;
-    const relativePath = recording.path.startsWith(filesPrefix) ?
-      recording.path.substring(filesPrefix.length) : recording.fileName;
-    this.automaticQueue.push({
-      fileName: recording.fileName,
-      path: recording.path,
-      size: recording.size,
-      durationMs: recording.durationMs,
-      relativePath: relativePath
-    });
-    const queueSaved = this.persistAutomaticQueue();
-    this.updateStatus(queueSaved ? `已封口，等待自动同步（${this.automaticQueue.length}）` :
+    this.updateStatus(result === AUTOMATIC_QUEUE_ENQUEUED ?
+      `已封口，等待自动同步（${this.automaticQueue.count()}）` :
       '录音已封口，但自动队列清单保存失败；录音文件已保留');
     this.drainAutomaticQueue();
   }
@@ -432,8 +324,7 @@ export class WearEngineRecordingSender {
     const transport = await this.getTransport();
     const ack = await this.sendRecordingAck(transport, requestId, desiredState, success,
       result.actualState, result.sessionId, result.message);
-    this.lastControlRequestId = requestId;
-    this.lastControlAck = ack;
+    this.controlCoordinator.complete(requestId, ack);
     this.updateStatus(result.message);
   }
 
@@ -519,7 +410,7 @@ export class WearEngineRecordingSender {
         type: WATCH_CONTROL_READY,
         requestId: requestId
       };
-      await sendProtocolMessage(transport.client, transport.peer, transport.appParam, ready);
+      await this.transportEngine.sendProtocolMessage(transport, ready);
     } catch (error) {
       this.updateStatus(`手机控制握手失败：${wearEngineErrorMessage(error)}`);
     }
@@ -533,11 +424,15 @@ export class WearEngineRecordingSender {
       this.updateStatus(`手机控制连接失败：${wearEngineErrorMessage(error)}`);
       return;
     }
-    if (command.requestId === this.lastControlRequestId && this.lastControlAck !== undefined) {
-      await sendProtocolMessage(transport.client, transport.peer, transport.appParam, this.lastControlAck);
+    const decision = this.controlCoordinator.inspect(command.requestId);
+    if (decision === WATCH_CONTROL_REPLAY) {
+      const lastAck = this.controlCoordinator.lastAck();
+      if (lastAck !== undefined) {
+        await this.transportEngine.sendProtocolMessage(transport, lastAck);
+      }
       return;
     }
-    if (this.controlInProgress) {
+    if (decision === WATCH_CONTROL_BUSY) {
       await this.sendRecordingAck(transport, command.requestId, command.desiredState || '', false,
         '', '', '手表正在处理另一项录音控制');
       return;
@@ -553,23 +448,21 @@ export class WearEngineRecordingSender {
         '', '', '手表录音控制器尚未就绪');
       return;
     }
-    this.controlInProgress = true;
+    this.controlCoordinator.begin();
     try {
       const result = await this.controlHandler(desiredState, command.requestId);
       const ack = await this.sendRecordingAck(transport, command.requestId, desiredState, true,
         result.actualState, result.sessionId, result.message);
-      this.lastControlRequestId = command.requestId;
-      this.lastControlAck = ack;
+      this.controlCoordinator.complete(command.requestId, ack);
       this.updateStatus(result.message);
     } catch (error) {
       const message = wearEngineErrorMessage(error);
       const ack = await this.sendRecordingAck(transport, command.requestId, desiredState, false,
         '', '', message);
-      this.lastControlRequestId = command.requestId;
-      this.lastControlAck = ack;
+      this.controlCoordinator.complete(command.requestId, ack);
       this.updateStatus(`手机控制失败：${message}`);
     } finally {
-      this.controlInProgress = false;
+      this.controlCoordinator.finishWithoutAck();
     }
   }
 
@@ -585,18 +478,17 @@ export class WearEngineRecordingSender {
       sessionId: sessionId,
       message: message
     };
-    await sendProtocolMessage(transport.client, transport.peer, transport.appParam, ack);
+    await this.transportEngine.sendProtocolMessage(transport, ack);
     return ack;
   }
 
   private async processSyncRequest(requestId: string, knownFileKeys: Array<string>): Promise<void> {
-    if (this.syncInProgress || this.automaticTransferInProgress) {
-      if (requestId === this.activeSyncRequestId || requestId === this.pendingSyncRequestId) {
-        return;
-      }
-      this.pendingSyncRequestId = requestId;
-      this.pendingSyncKnownKeys = knownFileKeys.slice();
-      const detail = this.automaticTransferInProgress ?
+    const decision: WatchManualSyncDecision = this.syncCoordinator.requestManual(requestId, knownFileKeys);
+    if (decision.action === WATCH_MANUAL_DUPLICATE) {
+      return;
+    }
+    if (decision.action === WATCH_MANUAL_QUEUED) {
+      const detail = this.syncCoordinator.isAutomatic() ?
         '当前自动分片发送完成后，将优先执行本次手机同步' :
         '当前手机同步完成后，将继续执行本次请求';
       this.updateStatus(detail);
@@ -608,15 +500,18 @@ export class WearEngineRecordingSender {
       }
       return;
     }
-    this.syncInProgress = true;
-    this.activeSyncRequestId = requestId;
+    await this.runManualSync(decision.request);
+  }
+
+  private async runManualSync(request: WatchManualSyncRequest): Promise<void> {
+    const requestId = request.requestId;
+    const knownFileKeys = request.knownFileKeys;
     let transport: P2pTransport;
     try {
       transport = await this.getTransport();
     } catch (error) {
       this.updateStatus(`无法响应手机同步：${wearEngineErrorMessage(error)}`);
-      this.syncInProgress = false;
-      this.activeSyncRequestId = '';
+      this.syncCoordinator.finishCurrent();
       if (!this.startPendingSyncIfIdle()) {
         this.drainAutomaticQueue();
       }
@@ -637,7 +532,7 @@ export class WearEngineRecordingSender {
         remaining: scan.remainingCount,
         scannedTotal: scan.scannedCount
       };
-      await sendProtocolMessage(transport.client, transport.peer, transport.appParam, beginMessage);
+      await this.transportEngine.sendProtocolMessage(transport, beginMessage);
       this.updateStatus(`手表扫描到 ${scan.scannedCount} 个文件，本轮发送 ${scan.files.length} 个` +
         `${scan.alreadyReceivedCount > 0 ? `，已识别手机保存 ${scan.alreadyReceivedCount} 个` : ''}`);
 
@@ -682,14 +577,13 @@ export class WearEngineRecordingSender {
         remaining: scan.remainingCount,
         scannedTotal: scan.scannedCount
       };
-      await sendProtocolMessage(transport.client, transport.peer, transport.appParam, completeMessage);
+      await this.transportEngine.sendProtocolMessage(transport, completeMessage);
       this.updateStatus(`手机同步完成 ${sentCount} 个，手表文件全部保留`);
     } catch (error) {
       await this.sendSyncError(transport, requestId, wearEngineErrorMessage(error));
       this.updateStatus(`手机同步失败，手表文件已保留：${wearEngineErrorMessage(error)}`);
     } finally {
-      this.syncInProgress = false;
-      this.activeSyncRequestId = '';
+      this.syncCoordinator.finishCurrent();
       if (!this.startPendingSyncIfIdle()) {
         this.drainAutomaticQueue();
       }
@@ -697,19 +591,21 @@ export class WearEngineRecordingSender {
   }
 
   private async drainAutomaticQueue(): Promise<void> {
-    if (this.automaticTransferInProgress || this.syncInProgress || this.pendingSyncRequestId.length > 0 ||
-      this.automaticQueue.length === 0) {
+    if (this.automaticQueue.count() === 0 || !this.syncCoordinator.beginAutomatic()) {
       return;
     }
-    this.automaticTransferInProgress = true;
     try {
       let transport = await this.getTransport();
-      while (!this.syncInProgress && this.pendingSyncRequestId.length === 0 && this.automaticQueue.length > 0) {
-        const source = this.automaticQueue[0];
-        const queuePosition = this.automaticCompletedCount + 1;
-        const queueTotal = this.automaticCompletedCount + this.automaticQueue.length;
+      while (this.syncCoordinator.isAutomatic() && !this.syncCoordinator.hasPendingManual() &&
+        this.automaticQueue.count() > 0) {
+        const source: AutomaticSyncQueueEntry | undefined = this.automaticQueue.first();
+        if (source === undefined) {
+          break;
+        }
+        const queuePosition = this.automaticQueue.completedCount() + 1;
+        const queueTotal = this.automaticQueue.completedCount() + this.automaticQueue.count();
         const descriptor: WatchSyncFileDescriptor = {
-          requestId: this.automaticRequestId,
+          requestId: this.automaticQueue.requestId(),
           index: queuePosition,
           total: queueTotal,
           relativePath: source.relativePath,
@@ -727,9 +623,7 @@ export class WearEngineRecordingSender {
           this.updateStatus(`自动队列正在发送第 ${queuePosition} 段（共 ${queueTotal} 段）`);
           transport = await this.transferDescribedRecordingWithRetry(
             transport, fileMessage, descriptor, source);
-          this.automaticQueue.shift();
-          this.automaticCompletedCount += 1;
-          const queueSaved = this.persistAutomaticQueue();
+          const queueSaved = this.automaticQueue.complete(source.path);
           this.updateStatus(queueSaved ? `自动同步完成第 ${queuePosition} 段：${source.fileName}，手表原文件保留` :
             `第 ${queuePosition} 段已确认，但队列清单更新失败；录音文件仍保留`);
         } catch (error) {
@@ -741,115 +635,22 @@ export class WearEngineRecordingSender {
     } catch (error) {
       this.updateStatus(`自动同步待重试，手表原文件已保留：${wearEngineErrorMessage(error)}`);
     } finally {
-      this.automaticTransferInProgress = false;
+      this.syncCoordinator.finishCurrent();
       this.startPendingSyncIfIdle();
     }
   }
 
   private startPendingSyncIfIdle(): boolean {
-    if (this.syncInProgress || this.automaticTransferInProgress || this.pendingSyncRequestId.length === 0) {
+    const pending = this.syncCoordinator.takePendingManual();
+    if (pending === undefined) {
       return false;
     }
-    const requestId = this.pendingSyncRequestId;
-    const knownFileKeys = this.pendingSyncKnownKeys.slice();
-    this.pendingSyncRequestId = '';
-    this.pendingSyncKnownKeys = [];
-    this.processSyncRequest(requestId, knownFileKeys);
+    this.runManualSync(pending);
     return true;
   }
 
-  private restoreAutomaticQueue(): void {
-    if (this.automaticQueueLoaded) {
-      return;
-    }
-    this.automaticQueueLoaded = true;
-    const manifestPath = `${this.context.filesDir}/${AUTOMATIC_QUEUE_MANIFEST_FILE}`;
-    try {
-      const loaded = loadVersionedJson<AutomaticQueueManifest>(manifestPath,
-        AUTOMATIC_QUEUE_MANIFEST_VERSION, isAutomaticQueueManifest);
-      if (loaded.status === JSON_LOAD_MISSING) {
-        return;
-      }
-      if (loaded.status !== JSON_LOAD_SUCCESS || loaded.value === undefined) {
-        this.updateStatus(loaded.status === JSON_LOAD_DAMAGED ?
-          '自动同步队列清单无法读取，录音文件未受影响' :
-          '自动同步队列清单版本无效，录音文件未受影响');
-        return;
-      }
-      const manifest = loaded.value;
-      this.automaticCompletedCount = Math.max(0, Math.floor(manifest.completedCount || 0));
-      for (let index = 0; index < manifest.files.length; index += 1) {
-        const entry = manifest.files[index];
-        if (entry.relativePath.length === 0 || entry.relativePath.startsWith('/') ||
-          entry.relativePath.includes('..')) {
-          continue;
-        }
-        const path = `${this.context.filesDir}/${entry.relativePath}`;
-        if (!fileIo.accessSync(path)) {
-          continue;
-        }
-        const stat = fileIo.statSync(path);
-        const lowerName = entry.fileName.toLowerCase();
-        if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_RECORDING_BYTES ||
-          stat.size !== entry.size || (!lowerName.endsWith('.wav') && !lowerName.endsWith('.m4a')) ||
-          lowerName.endsWith('.part')) {
-          continue;
-        }
-        this.automaticQueue.push({
-          fileName: entry.fileName,
-          path: path,
-          relativePath: entry.relativePath,
-          size: entry.size,
-          durationMs: entry.durationMs || 0
-        });
-      }
-      if (this.automaticQueue.length !== manifest.files.length) {
-        this.persistAutomaticQueue();
-      }
-    } catch (error) {
-      this.updateStatus('自动同步队列清单无法读取，录音文件未受影响');
-    }
-  }
-
-  private persistAutomaticQueue(): boolean {
-    const entries: Array<AutomaticQueueManifestEntry> = [];
-    for (let index = 0; index < this.automaticQueue.length; index += 1) {
-      const source = this.automaticQueue[index];
-      entries.push({
-        relativePath: source.relativePath,
-        fileName: source.fileName,
-        size: source.size,
-        durationMs: source.durationMs
-      });
-    }
-    const manifest: AutomaticQueueManifest = {
-      version: AUTOMATIC_QUEUE_MANIFEST_VERSION,
-      updatedAt: Date.now(),
-      completedCount: this.automaticCompletedCount,
-      files: entries
-    };
-    const manifestPath = `${this.context.filesDir}/${AUTOMATIC_QUEUE_MANIFEST_FILE}`;
-    try {
-      writeVersionedJson<AutomaticQueueManifest>(manifestPath, AUTOMATIC_QUEUE_MANIFEST_VERSION,
-        manifest, isAutomaticQueueManifest);
-      return true;
-    } catch (error) {
-      return false;
-    }
-  }
-
   private removeAutomaticFile(path: string): void {
-    let removedCount = 0;
-    for (let index = this.automaticQueue.length - 1; index >= 0; index -= 1) {
-      if (this.automaticQueue[index].path === path) {
-        this.automaticQueue.splice(index, 1);
-        removedCount += 1;
-      }
-    }
-    if (removedCount > 0) {
-      this.automaticCompletedCount += removedCount;
-      this.persistAutomaticQueue();
-    }
+    this.automaticQueue.removeIfQueued(path);
   }
 
   private async sendFileFailed(transport: P2pTransport, descriptor: WatchSyncFileDescriptor): Promise<void> {
@@ -860,7 +661,7 @@ export class WearEngineRecordingSender {
       file: descriptor
     };
     try {
-      await sendProtocolMessage(transport.client, transport.peer, transport.appParam, failedMessage);
+      await this.transportEngine.sendProtocolMessage(transport, failedMessage);
     } catch (error) {
       // A later phone reconnect retries the still-queued source; the watch file remains untouched.
     }
@@ -874,7 +675,7 @@ export class WearEngineRecordingSender {
       message: message
     };
     try {
-      await sendProtocolMessage(transport.client, transport.peer, transport.appParam, errorMessage);
+      await this.transportEngine.sendProtocolMessage(transport, errorMessage);
     } catch (error) {
       // Preserve the local status even when the peer has disconnected.
     }
@@ -888,7 +689,7 @@ export class WearEngineRecordingSender {
       message: message
     };
     try {
-      await sendProtocolMessage(transport.client, transport.peer, transport.appParam, queuedMessage);
+      await this.transportEngine.sendProtocolMessage(transport, queuedMessage);
     } catch (error) {
       // The queued request remains authoritative and starts after the in-flight file even if this hint is lost.
     }
@@ -906,18 +707,7 @@ export class WearEngineRecordingSender {
   }
 
   private async createTransport(): Promise<P2pTransport> {
-    const peer = await getConnectedPeer(this.context);
-    const client = wearEngine.getP2pClient(this.context);
-    const appParam = await getLocalAppParam();
-    const installed = await client.isRemoteAppInstalled(peer.randomId, appParam.remoteApp.bundleName);
-    if (!installed) {
-      throw new Error('对端尚未安装本应用');
-    }
-    return {
-      peer: peer,
-      client: client,
-      appParam: appParam
-    };
+    return this.transportEngine.connect(true);
   }
 
   private async reacquireTransport(): Promise<P2pTransport> {
@@ -934,7 +724,7 @@ export class WearEngineRecordingSender {
     let lastError: Object = new Error('Wear Engine 消息发送失败');
     for (let attempt = 1; attempt <= TRANSFER_RETRY_ATTEMPTS; attempt += 1) {
       try {
-        await sendProtocolMessage(currentTransport.client, currentTransport.peer, currentTransport.appParam, message);
+        await this.transportEngine.sendProtocolMessage(currentTransport, message);
         return currentTransport;
       } catch (error) {
         lastError = error as Object;
@@ -985,8 +775,7 @@ export class WearEngineRecordingSender {
     let lastError: Object = new Error('Wear Engine 文件传输失败');
     for (let attempt = 1; attempt <= TRANSFER_RETRY_ATTEMPTS; attempt += 1) {
       try {
-        await sendProtocolMessage(currentTransport.client, currentTransport.peer,
-          currentTransport.appParam, fileMessage);
+        await this.transportEngine.sendProtocolMessage(currentTransport, fileMessage);
         await this.transferRecordingAwaitingAck(currentTransport, recording, descriptor);
         return currentTransport;
       } catch (error) {
@@ -1011,32 +800,27 @@ export class WearEngineRecordingSender {
     if (recording.size <= 0 || recording.size > MAX_RECORDING_BYTES) {
       throw new Error('录音文件为空或超过 10 MB 限制');
     }
-    if (this.activeFileAckKey.length > 0) {
+    if (this.fileAckCoordinator.activeKey().length > 0) {
       throw new Error('上一片文件仍在等待手机持久化回执');
     }
 
-    const ackKey = fileTransferAckKey(descriptor);
+    const ackKey = watchFileTransferKey(descriptor);
     const inputFile = fileIo.openSync(recording.path, fileIo.OpenMode.READ_ONLY);
     try {
       await new Promise<void>((resolve, reject) => {
-        this.activeFileAckKey = ackKey;
-        this.activeFileAckResolve = resolve;
-        this.activeFileAckReject = reject;
-        this.activeFileAckPhaseStarted = false;
-        this.activeFileLastProgress = -1;
+        this.fileAckCoordinator.begin(descriptor, resolve, reject);
         this.activeFileLastProgressSent = -1;
         this.activeFileLastProgressSentAt = 0;
-        this.refreshFileTransferProgressTimeout(ackKey);
         this.reportFileTransferProgress(transport, descriptor, 0, 'transferring', true);
 
-        transport.client.transferFile(transport.peer.randomId, transport.appParam, { file: inputFile },
+        this.transportEngine.transferFile(transport, inputFile,
           (error: BusinessError, result: wearEngine.P2pResult) => {
             if (error) {
-              this.failFileTransferAck(ackKey, new Error(wearEngineErrorMessage(error)));
+              this.fileAckCoordinator.failForKey(ackKey, new Error(wearEngineErrorMessage(error)));
               return;
             }
             if (result.code !== undefined && result.code !== P2P_COMMUNICATION_SUCCESS) {
-              this.failFileTransferAck(ackKey, new Error(p2pResultMessage(result.code)));
+              this.fileAckCoordinator.failForKey(ackKey, new Error(p2pResultMessage(result.code)));
               return;
             }
             if (result.progress !== undefined) {
@@ -1057,53 +841,16 @@ export class WearEngineRecordingSender {
 
   private handleFileTransferProgress(transport: P2pTransport, descriptor: WatchSyncFileDescriptor,
     ackKey: string, progress: number): void {
-    if (ackKey !== this.activeFileAckKey) {
-      return;
-    }
     const bounded = Math.max(0, Math.min(100, Math.floor(progress)));
-    if (bounded < this.activeFileLastProgress) {
+    if (ackKey !== this.fileAckCoordinator.activeKey() ||
+      !this.fileAckCoordinator.progress(descriptor, bounded)) {
       return;
     }
-    const increased = bounded > this.activeFileLastProgress;
-    this.activeFileLastProgress = bounded;
     if (bounded >= 100) {
-      this.startFileAckTimeout(ackKey);
       this.reportFileTransferProgress(transport, descriptor, 100, 'waiting_ack', true);
       return;
     }
-    if (increased) {
-      this.refreshFileTransferProgressTimeout(ackKey);
-    }
     this.reportFileTransferProgress(transport, descriptor, bounded, 'transferring', false);
-  }
-
-  private refreshFileTransferProgressTimeout(ackKey: string): void {
-    if (this.activeFileProgressTimeoutId >= 0) {
-      clearTimeout(this.activeFileProgressTimeoutId);
-    }
-    this.activeFileProgressTimeoutId = setTimeout(() => {
-      if (this.activeFileAckKey !== ackKey || this.activeFileAckPhaseStarted) {
-        return;
-      }
-      this.failFileTransferAck(ackKey, new Error('Wear Engine 通信失败：文件传输进度 60 秒未变化'));
-    }, TRANSFER_PROGRESS_STALL_TIMEOUT_MS);
-  }
-
-  private startFileAckTimeout(ackKey: string): void {
-    if (this.activeFileAckPhaseStarted) {
-      return;
-    }
-    this.activeFileAckPhaseStarted = true;
-    if (this.activeFileProgressTimeoutId >= 0) {
-      clearTimeout(this.activeFileProgressTimeoutId);
-      this.activeFileProgressTimeoutId = -1;
-    }
-    this.activeFileAckTimeoutId = setTimeout(() => {
-      if (this.activeFileAckKey !== ackKey) {
-        return;
-      }
-      this.failFileTransferAck(ackKey, new Error('Wear Engine 通信失败：文件已传完，但等待手机持久化回执超时'));
-    }, TRANSFER_FILE_ACK_TIMEOUT_MS);
   }
 
   private reportFileTransferProgress(transport: P2pTransport, descriptor: WatchSyncFileDescriptor,
@@ -1124,44 +871,17 @@ export class WearEngineRecordingSender {
       transferredBytes: Math.min(descriptor.size, Math.floor(descriptor.size * progress / 100)),
       transferStage: stage
     };
-    sendProtocolMessage(transport.client, transport.peer, transport.appParam, progressMessage).catch(() => {
+    this.transportEngine.sendProtocolMessage(transport, progressMessage).catch(() => {
       // Progress is advisory; the file transfer and durable ACK remain authoritative.
     });
   }
 
   private completeFileTransferAck(descriptor: WatchSyncFileDescriptor): void {
-    const ackKey = fileTransferAckKey(descriptor);
-    if (ackKey !== this.activeFileAckKey || this.activeFileAckResolve === undefined) {
-      return;
-    }
-    const resolve = this.activeFileAckResolve;
-    this.clearFileTransferAck();
-    resolve();
-  }
-
-  private failFileTransferAck(ackKey: string, error: Error): void {
-    if (ackKey !== this.activeFileAckKey || this.activeFileAckReject === undefined) {
-      return;
-    }
-    const reject = this.activeFileAckReject;
-    this.clearFileTransferAck();
-    reject(error);
+    this.fileAckCoordinator.acknowledge(descriptor);
   }
 
   private clearFileTransferAck(): void {
-    if (this.activeFileAckTimeoutId >= 0) {
-      clearTimeout(this.activeFileAckTimeoutId);
-    }
-    if (this.activeFileProgressTimeoutId >= 0) {
-      clearTimeout(this.activeFileProgressTimeoutId);
-    }
-    this.activeFileAckKey = '';
-    this.activeFileAckResolve = undefined;
-    this.activeFileAckReject = undefined;
-    this.activeFileAckTimeoutId = -1;
-    this.activeFileProgressTimeoutId = -1;
-    this.activeFileAckPhaseStarted = false;
-    this.activeFileLastProgress = -1;
+    this.fileAckCoordinator.clear();
     this.activeFileLastProgressSent = -1;
     this.activeFileLastProgressSentAt = 0;
   }
@@ -1174,7 +894,7 @@ export class WearEngineRecordingSender {
     const inputFile = fileIo.openSync(recording.path, fileIo.OpenMode.READ_ONLY);
     try {
       await new Promise<void>((resolve, reject) => {
-        transport.client.transferFile(transport.peer.randomId, transport.appParam, { file: inputFile },
+        this.transportEngine.transferFile(transport, inputFile,
           (error: BusinessError, result: wearEngine.P2pResult) => {
             if (error) {
               reject(new Error(wearEngineErrorMessage(error)));
@@ -1208,6 +928,7 @@ export class WearEngineRecordingSender {
 
 export class WearEngineRecordingReceiver {
   private context: common.UIAbilityContext;
+  private transportEngine: WearEngineTransport;
   private receivedHandler: RecordingReceivedHandler;
   private statusHandler: TransferStatusHandler;
   private syncProgressHandler: WatchSyncProgressHandler;
@@ -1215,8 +936,7 @@ export class WearEngineRecordingReceiver {
   private p2pClient: wearEngine.P2pClient | undefined = undefined;
   private peer: wearEngine.Device | undefined = undefined;
   private appParam: wearEngine.P2pAppParam | undefined = undefined;
-  private pendingFiles: Array<WatchSyncFileDescriptor> = [];
-  private activeRequestId: string = '';
+  private phoneSync: PhoneSyncCoordinator = new PhoneSyncCoordinator(SYNC_HANDSHAKE_TIMEOUT_MS);
   private activeTotal: number = 0;
   private activeReceived: number = 0;
   private activeSkipped: number = 0;
@@ -1225,8 +945,6 @@ export class WearEngineRecordingReceiver {
   private activeScannedTotal: number = 0;
   private expectedReceived: number = -1;
   private remoteComplete: boolean = false;
-  private syncRequestInProgress: boolean = false;
-  private syncHandshakeTimeoutId: number = -1;
   private fileTransferActive: boolean = false;
   private transferStage: string = 'idle';
   private transferPercent: number = 0;
@@ -1238,14 +956,11 @@ export class WearEngineRecordingReceiver {
   private transferAutomatic: boolean = false;
   private lastTransferProgressAt: number = 0;
   private activeTransferDescriptor: WatchSyncFileDescriptor | undefined = undefined;
-  private activeControlRequestId: string = '';
-  private desiredControlState: string = '';
-  private controlCommandSent: boolean = false;
-  private controlTimeoutId: number = -1;
+  private phoneControl: PhoneRecordingControlCoordinator = new PhoneRecordingControlCoordinator(
+    CONTROL_COMMAND_TIMEOUT_MS, PENDING_USER_ACTION_TIMEOUT_MS);
   private startTask: Promise<void> | undefined = undefined;
-  private startCancelled: boolean = false;
+  private receiverLifecycle: PhoneReceiverLifecycleCoordinator = new PhoneReceiverLifecycleCoordinator();
   private recordingStore: ReceivedRecordingStore;
-  private completedDescriptorKeys: Set<string> = new Set<string>();
   private fileReceiver = (incoming: wearEngine.P2pFile): void => {
     this.receiveFile(incoming);
   };
@@ -1257,6 +972,7 @@ export class WearEngineRecordingReceiver {
     statusHandler: TransferStatusHandler, syncProgressHandler: WatchSyncProgressHandler,
     controlStatusHandler: WatchRecordingControlStatusHandler) {
     this.context = context;
+    this.transportEngine = new WearEngineTransport(context);
     this.receivedHandler = receivedHandler;
     this.statusHandler = statusHandler;
     this.syncProgressHandler = syncProgressHandler;
@@ -1276,8 +992,8 @@ export class WearEngineRecordingReceiver {
       await this.startTask;
       return;
     }
-    this.startCancelled = false;
-    const task = this.connectWithRetry();
+    const startToken = this.receiverLifecycle.beginStart();
+    const task = this.connectWithRetry(startToken);
     this.startTask = task;
     try {
       await task;
@@ -1285,12 +1001,13 @@ export class WearEngineRecordingReceiver {
       if (this.startTask === task) {
         this.startTask = undefined;
       }
+      this.receiverLifecycle.finish(startToken);
     }
   }
 
-  private async connectWithRetry(): Promise<void> {
+  private async connectWithRetry(startToken: number): Promise<void> {
     for (let attempt = 1; attempt <= RECEIVER_CONNECT_ATTEMPTS; attempt += 1) {
-      if (this.startCancelled) {
+      if (!this.receiverLifecycle.isActive(startToken)) {
         throw new Error('Wear Engine 接收器启动已取消');
       }
       this.statusHandler(`正在核对 Wear Engine 用户授权（${attempt}/${RECEIVER_CONNECT_ATTEMPTS}）…`);
@@ -1298,10 +1015,10 @@ export class WearEngineRecordingReceiver {
         const authorization = await wearEngine.getAuthClient(this.context).getAuthorization();
         this.statusHandler(`用户授权正常（${authorization.permissions.length} 项），正在查找手表` +
           `（${attempt}/${RECEIVER_CONNECT_ATTEMPTS}）…`);
-        await this.connectOnce();
+        await this.connectOnce(startToken);
         return;
       } catch (error) {
-        if (this.startCancelled) {
+        if (!this.receiverLifecycle.isActive(startToken)) {
           throw new Error('Wear Engine 接收器启动已取消');
         }
         if (attempt >= RECEIVER_CONNECT_ATTEMPTS || !shouldRetryReceiverConnection(error)) {
@@ -1314,38 +1031,39 @@ export class WearEngineRecordingReceiver {
     }
   }
 
-  private async connectOnce(): Promise<void> {
-    const peer = await getConnectedPeer(this.context);
-    if (this.startCancelled) {
+  private async connectOnce(startToken: number): Promise<void> {
+    const transport = await this.transportEngine.connect(false);
+    const peer = transport.peer;
+    if (!this.receiverLifecycle.isActive(startToken)) {
       throw new Error('Wear Engine 接收器启动已取消');
     }
     this.statusHandler('已找到手表，正在注册文件与消息接收…');
-    const appParam = await getLocalAppParam();
-    const client = wearEngine.getP2pClient(this.context);
+    const appParam = transport.appParam;
+    const client = transport.client;
     let messageRegistered = false;
     let fileRegistered = false;
     try {
-      await client.registerMessageReceiver(peer.randomId, appParam, this.messageReceiver);
+      await this.transportEngine.registerMessageReceiver(transport, this.messageReceiver);
       messageRegistered = true;
-      if (this.startCancelled) {
+      if (!this.receiverLifecycle.isActive(startToken)) {
         throw new Error('Wear Engine 接收器启动已取消');
       }
-      await client.registerFileReceiver(peer.randomId, appParam, this.fileReceiver);
+      await this.transportEngine.registerFileReceiver(transport, this.fileReceiver);
       fileRegistered = true;
-      if (this.startCancelled) {
+      if (!this.receiverLifecycle.isActive(startToken)) {
         throw new Error('Wear Engine 接收器启动已取消');
       }
     } catch (error) {
       if (fileRegistered) {
         try {
-          await client.unregisterFileReceiver(peer.randomId, appParam, this.fileReceiver);
+          await this.transportEngine.unregisterFileReceiver(transport, this.fileReceiver);
         } catch (unregisterError) {
           // The Wear Engine service may have restarted while cleaning up this attempt.
         }
       }
       if (messageRegistered) {
         try {
-          await client.unregisterMessageReceiver(peer.randomId, appParam, this.messageReceiver);
+          await this.transportEngine.unregisterMessageReceiver(transport, this.messageReceiver);
         } catch (unregisterError) {
           // The Wear Engine service may have restarted while cleaning up this attempt.
         }
@@ -1362,14 +1080,14 @@ export class WearEngineRecordingReceiver {
       requestId: ''
     };
     try {
-      await sendProtocolMessage(client, peer, appParam, readyMessage);
+      await this.transportEngine.sendProtocolMessage(transport, readyMessage);
     } catch (error) {
       // The watch may not be open yet; receiving remains available in the foreground.
     }
   }
 
   async stop(): Promise<void> {
-    this.startCancelled = true;
+    this.receiverLifecycle.cancel();
     const startTask = this.startTask;
     if (startTask !== undefined) {
       try {
@@ -1384,10 +1102,9 @@ export class WearEngineRecordingReceiver {
     this.p2pClient = undefined;
     this.peer = undefined;
     this.appParam = undefined;
-    this.clearControlTimeout();
+    this.phoneControl.finish();
     this.clearSyncHandshakeTimeout();
-    this.syncRequestInProgress = false;
-    this.activeRequestId = '';
+    this.phoneSync.stop();
     this.activeTotal = 0;
     this.activeReceived = 0;
     this.activeSkipped = 0;
@@ -1396,20 +1113,21 @@ export class WearEngineRecordingReceiver {
     this.activeScannedTotal = 0;
     this.expectedReceived = -1;
     this.remoteComplete = false;
-    this.pendingFiles = [];
     this.resetFileTransferState();
-    this.activeControlRequestId = '';
-    this.desiredControlState = '';
-    this.controlCommandSent = false;
     this.emitProgress(false, '同步状态已重置');
     if (client !== undefined && peer !== undefined && appParam !== undefined) {
+      const transport: P2pTransport = {
+        client: client,
+        peer: peer,
+        appParam: appParam
+      };
       try {
-        await client.unregisterFileReceiver(peer.randomId, appParam, this.fileReceiver);
+        await this.transportEngine.unregisterFileReceiver(transport, this.fileReceiver);
       } catch (error) {
         // The peer may have disconnected while the page was closing.
       }
       try {
-        await client.unregisterMessageReceiver(peer.randomId, appParam, this.messageReceiver);
+        await this.transportEngine.unregisterMessageReceiver(transport, this.messageReceiver);
       } catch (error) {
         // The peer may have disconnected while the page was closing.
       }
@@ -1417,7 +1135,7 @@ export class WearEngineRecordingReceiver {
   }
 
   static async destroyChannel(): Promise<void> {
-    await wearEngine.destroy();
+    await destroyWearEngineChannel();
   }
 
   async reconnect(): Promise<void> {
@@ -1435,46 +1153,34 @@ export class WearEngineRecordingReceiver {
     if (client === undefined || peer === undefined || appParam === undefined) {
       throw new Error('手机控制通道尚未连接');
     }
+    const transport: P2pTransport = {
+      client: client,
+      peer: peer,
+      appParam: appParam
+    };
     if (desiredState !== 'recording' && desiredState !== 'stopped') {
       throw new Error('不支持的录音目标状态');
     }
-    if (this.activeControlRequestId.length > 0) {
-      throw new Error('上一项手表录音控制仍在进行');
-    }
-
-    this.activeControlRequestId = `control_${Date.now()}`;
-    this.desiredControlState = desiredState;
-    this.controlCommandSent = false;
+    const requestId = `control_${Date.now()}`;
     const actionText = desiredState === 'recording' ? '启动' : '停止';
+    this.phoneControl.begin(requestId, desiredState, (expired: PhoneRecordingControlState): void => {
+      this.emitControlState(expired, false, '', `手表${actionText}录音超时，请确认新包已在手表前台`);
+    });
     this.emitControl(true, '', `正在拉起手表并请求${actionText}录音…`);
-    this.controlTimeoutId = setTimeout(() => {
-      if (this.activeControlRequestId.length === 0) {
-        return;
-      }
-      this.emitControl(false, '', `手表${actionText}录音超时，请确认新包已在手表前台`);
-      this.activeControlRequestId = '';
-      this.desiredControlState = '';
-      this.controlCommandSent = false;
-      this.controlTimeoutId = -1;
-    }, 20000);
 
     try {
-      const startStatus = await this.startRemoteWatchUi(client, peer, appParam);
+      const startStatus = await this.startRemoteWatchUi(transport);
       this.emitControl(true, '', `${startStatus}，正在等待手表录音控制器…`);
       await this.sendControlProbe();
     } catch (error) {
-      this.clearControlTimeout();
       this.emitControl(false, '', `手机控制请求失败：${wearEngineErrorMessage(error)}`);
-      this.activeControlRequestId = '';
-      this.desiredControlState = '';
-      this.controlCommandSent = false;
+      this.phoneControl.finish();
       throw new Error(wearEngineErrorMessage(error));
     }
   }
 
-  private async startRemoteWatchUi(client: wearEngine.P2pClient, peer: wearEngine.Device,
-    appParam: wearEngine.P2pAppParam): Promise<string> {
-    const result = await client.startRemoteApp(peer.randomId, appParam.remoteApp.bundleName);
+  private async startRemoteWatchUi(transport: P2pTransport): Promise<string> {
+    const result = await this.transportEngine.startRemoteApp(transport);
 
     if (result.code === P2P_REMOTE_APP_NOT_INSTALLED || result.code === P2P_COMMUNICATION_FAILURE) {
       throw new Error(p2pResultMessage(result.code));
@@ -1496,33 +1202,33 @@ export class WearEngineRecordingReceiver {
     if (client === undefined || peer === undefined || appParam === undefined) {
       throw new Error('手机接收通道尚未连接');
     }
-    if (this.syncRequestInProgress) {
+    const transport: P2pTransport = {
+      client: client,
+      peer: peer,
+      appParam: appParam
+    };
+    if (this.phoneSync.inProgress()) {
       throw new Error('上一项手表文件同步仍在进行');
     }
 
     const requestId = Date.now().toString();
-    this.syncRequestInProgress = true;
-    this.activeRequestId = requestId;
     this.activeTotal = 0;
     this.activeReceived = 0;
     this.activeSkipped = 0;
     this.activeAlreadyReceived = 0;
     this.activeRemaining = 0;
     this.activeScannedTotal = 0;
-    this.completedDescriptorKeys.clear();
     this.expectedReceived = -1;
     this.remoteComplete = false;
     this.resetFileTransferState();
-    this.pendingFiles = this.pendingFiles.filter((descriptor: WatchSyncFileDescriptor) =>
-      descriptor.automatic === true);
-    this.emitProgress(true, '正在拉起手表并请求一个文件…');
     this.startSyncHandshakeTimeout(requestId);
+    this.emitProgress(true, '正在拉起手表并请求一个文件…');
     try {
       try {
         // On API 23, startRemoteApp can return UNKNOWN_ERROR when the watch app
         // is already in the foreground. The following message is the
         // authoritative check that the sync responder is ready.
-        await client.startRemoteApp(peer.randomId, appParam.remoteApp.bundleName);
+        await this.transportEngine.startRemoteApp(transport);
       } catch (error) {
         // Continue and let sendMessage report the actual P2P availability.
       }
@@ -1539,7 +1245,7 @@ export class WearEngineRecordingReceiver {
           inventoryPages: inventoryPages,
           knownFileKeys: knownFileKeys.slice(pageStart, pageStart + INVENTORY_KEYS_PER_PAGE)
         };
-        await sendProtocolMessage(client, peer, appParam, inventoryMessage);
+        await this.transportEngine.sendProtocolMessage(transport, inventoryMessage);
       }
       const request: WatchSyncProtocolMessage = {
         version: WATCH_SYNC_PROTOCOL_VERSION,
@@ -1547,15 +1253,14 @@ export class WearEngineRecordingReceiver {
         requestId: requestId,
         inventoryPages: inventoryPages
       };
-      await sendProtocolMessage(client, peer, appParam, request);
-      if (this.activeRequestId === requestId) {
+      await this.transportEngine.sendProtocolMessage(transport, request);
+      if (this.phoneSync.requestId() === requestId) {
         this.emitProgress(true, '同步请求已发送，等待手表响应…');
       }
     } catch (error) {
       this.clearSyncHandshakeTimeout();
       this.emitProgress(false, `同步请求失败：${wearEngineErrorMessage(error)}`);
-      this.syncRequestInProgress = false;
-      this.activeRequestId = '';
+      this.phoneSync.finishRequest();
       throw new Error(wearEngineErrorMessage(error));
     }
   }
@@ -1564,16 +1269,16 @@ export class WearEngineRecordingReceiver {
     try {
       const message = decodeWatchSyncMessage(incoming.content);
       if (message.type === WATCH_SYNC_READY) {
-        if (this.activeControlRequestId.length > 0 && !this.controlCommandSent) {
+        if (this.phoneControl.isActive() && !this.phoneControl.commandSent()) {
           this.sendControlProbe();
         }
         return;
       }
-      if (message.type === WATCH_CONTROL_READY && message.requestId === this.activeControlRequestId) {
+      if (message.type === WATCH_CONTROL_READY && this.phoneControl.matches(message.requestId)) {
         this.sendRecordingCommand();
         return;
       }
-      if (message.type === WATCH_RECORDING_ACK && message.requestId === this.activeControlRequestId) {
+      if (message.type === WATCH_RECORDING_ACK && this.phoneControl.matches(message.requestId)) {
         this.handleRecordingAck(message);
         return;
       }
@@ -1582,12 +1287,12 @@ export class WearEngineRecordingReceiver {
         return;
       }
       if (message.type === WATCH_AUTO_FILE && message.file !== undefined) {
-        if (this.syncRequestInProgress) {
+        if (this.phoneSync.inProgress()) {
           this.clearSyncHandshakeTimeout();
         }
         this.addPendingFile(message.file);
         this.setTransferDescriptor(message.file, 'preparing', 0, true);
-        this.emitProgress(this.syncRequestInProgress,
+        this.emitProgress(this.phoneSync.inProgress(),
           `自动队列准备发送第 ${message.file.index} 段：${message.file.fileName}`);
         return;
       }
@@ -1600,16 +1305,16 @@ export class WearEngineRecordingReceiver {
             this.activeReceived += 1;
           }
           this.setTransferDescriptor(message.file, 'waiting_ack', 100, false);
-          this.emitProgress(this.syncRequestInProgress,
+          this.emitProgress(this.phoneSync.inProgress(),
             `文件已保存在手机，但确认回执未送达：${message.file.fileName}；手表会安全重试`);
         } else {
           this.setTransferDescriptor(message.file, 'failed', 0, false);
-          this.emitProgress(this.syncRequestInProgress,
+          this.emitProgress(this.phoneSync.inProgress(),
             `本片尚未传完，手表源文件已保留，等待补传：${message.file.fileName}`);
         }
         return;
       }
-      if (message.requestId !== this.activeRequestId) {
+      if (message.requestId !== this.phoneSync.requestId()) {
         return;
       }
       if (message.type === WATCH_SYNC_QUEUED) {
@@ -1668,8 +1373,7 @@ export class WearEngineRecordingReceiver {
           this.transferStage = 'failed';
           this.emitProgress(false, `同步失败：${detail}；手表源文件已保留`);
         }
-        this.syncRequestInProgress = false;
-        this.activeRequestId = '';
+        this.phoneSync.finishRequest();
       }
     } catch (error) {
       this.statusHandler(`同步消息解析失败：${wearEngineErrorMessage(error)}`);
@@ -1681,10 +1385,10 @@ export class WearEngineRecordingReceiver {
     if (descriptor === undefined) {
       return;
     }
-    if (descriptor.automatic !== true && message.requestId !== this.activeRequestId) {
+    if (!this.phoneSync.accepts(message.requestId, descriptor.automatic === true)) {
       return;
     }
-    if (descriptor.automatic !== true || this.syncRequestInProgress) {
+    if (descriptor.automatic !== true || this.phoneSync.inProgress()) {
       this.clearSyncHandshakeTimeout();
     }
     const stage = message.transferStage !== undefined ? message.transferStage : 'transferring';
@@ -1705,7 +1409,7 @@ export class WearEngineRecordingReceiver {
       detail = descriptor.automatic === true ? `自动队列第 ${descriptor.index} 段已确认：${descriptor.fileName}` :
         `手机已保存并完成确认：${descriptor.fileName}`;
     }
-    this.emitProgress(this.syncRequestInProgress, detail);
+    this.emitProgress(this.phoneSync.inProgress(), detail);
   }
 
   private setTransferDescriptor(descriptor: WatchSyncFileDescriptor, stage: string,
@@ -1738,25 +1442,15 @@ export class WearEngineRecordingReceiver {
   }
 
   private startSyncHandshakeTimeout(requestId: string): void {
-    this.clearSyncHandshakeTimeout();
-    this.syncHandshakeTimeoutId = setTimeout(() => {
-      if (this.activeRequestId !== requestId || !this.syncRequestInProgress) {
-        return;
-      }
-      this.syncRequestInProgress = false;
-      this.activeRequestId = '';
+    this.phoneSync.beginRequest(requestId, (_expiredRequestId: string): void => {
       this.fileTransferActive = false;
       this.transferStage = 'failed';
-      this.syncHandshakeTimeoutId = -1;
       this.emitProgress(false, '手表未在 20 秒内响应，本次同步已结束；手表文件未删除');
-    }, SYNC_HANDSHAKE_TIMEOUT_MS);
+    });
   }
 
   private clearSyncHandshakeTimeout(): void {
-    if (this.syncHandshakeTimeoutId >= 0) {
-      clearTimeout(this.syncHandshakeTimeoutId);
-      this.syncHandshakeTimeoutId = -1;
-    }
+    this.phoneSync.clearHandshake();
   }
 
   private async sendControlProbe(): Promise<void> {
@@ -1764,16 +1458,21 @@ export class WearEngineRecordingReceiver {
     const peer = this.peer;
     const appParam = this.appParam;
     if (client === undefined || peer === undefined || appParam === undefined ||
-      this.activeControlRequestId.length === 0) {
+      !this.phoneControl.isActive()) {
       return;
     }
+    const transport: P2pTransport = {
+      client: client,
+      peer: peer,
+      appParam: appParam
+    };
     const probe: WatchSyncProtocolMessage = {
       version: WATCH_SYNC_PROTOCOL_VERSION,
       type: WATCH_CONTROL_PROBE,
-      requestId: this.activeControlRequestId
+      requestId: this.phoneControl.requestId()
     };
     try {
-      await sendProtocolMessage(client, peer, appParam, probe);
+      await this.transportEngine.sendProtocolMessage(transport, probe);
       this.emitControl(true, '', '手表已拉起，等待录音控制器就绪…');
     } catch (error) {
       this.emitControl(true, '', '手表正在启动，等待 READY 握手…');
@@ -1785,68 +1484,62 @@ export class WearEngineRecordingReceiver {
     const peer = this.peer;
     const appParam = this.appParam;
     if (client === undefined || peer === undefined || appParam === undefined ||
-      this.activeControlRequestId.length === 0 || this.controlCommandSent) {
+      !this.phoneControl.isActive() || this.phoneControl.commandSent()) {
       return;
     }
-    this.controlCommandSent = true;
+    const transport: P2pTransport = {
+      client: client,
+      peer: peer,
+      appParam: appParam
+    };
+    this.phoneControl.markCommandSent();
     const command: WatchSyncProtocolMessage = {
       version: WATCH_SYNC_PROTOCOL_VERSION,
       type: WATCH_RECORDING_COMMAND,
-      requestId: this.activeControlRequestId,
-      desiredState: this.desiredControlState,
+      requestId: this.phoneControl.requestId(),
+      desiredState: this.phoneControl.desiredState(),
       sentAt: Date.now()
     };
     try {
-      await sendProtocolMessage(client, peer, appParam, command);
+      await this.transportEngine.sendProtocolMessage(transport, command);
       this.emitControl(true, '', '录音命令已送达，等待手表实际状态回执…');
     } catch (error) {
-      this.controlCommandSent = false;
+      this.phoneControl.markCommandSendFailed();
       this.emitControl(true, '', `命令暂未送达，等待重连：${wearEngineErrorMessage(error)}`);
     }
   }
 
   private handleRecordingAck(message: WatchSyncProtocolMessage): void {
-    this.clearControlTimeout();
+    this.phoneControl.clearTimeout();
     const succeeded = message.success === true;
     const actualState = message.actualState || '';
     const detail = message.message || (succeeded ? '手表已完成录音控制' : '手表录音控制失败');
     if (succeeded && actualState === 'pending_user_action') {
       this.emitControl(true, actualState, detail);
-      this.controlTimeoutId = setTimeout(() => {
-        if (this.activeControlRequestId.length === 0) {
-          return;
-        }
-        this.emitControl(false, 'pending_user_action', '等待手表点击通知已超时，请重新发起');
-        this.activeControlRequestId = '';
-        this.desiredControlState = '';
-        this.controlCommandSent = false;
-        this.controlTimeoutId = -1;
-      }, PENDING_USER_ACTION_TIMEOUT_MS);
+      this.phoneControl.beginPendingUserAction((expired: PhoneRecordingControlState): void => {
+        this.emitControlState(expired, false, 'pending_user_action', '等待手表点击通知已超时，请重新发起');
+      });
       return;
     }
     this.emitControl(false, actualState, detail);
-    this.activeControlRequestId = '';
-    this.desiredControlState = '';
-    this.controlCommandSent = false;
+    this.phoneControl.finish();
   }
 
   private emitControl(inProgress: boolean, actualState: string, message: string): void {
+    this.emitControlState(this.phoneControl.state(), inProgress, actualState, message);
+  }
+
+  private emitControlState(controlState: PhoneRecordingControlState,
+    inProgress: boolean, actualState: string, message: string): void {
     const status: WatchRecordingControlStatus = {
-      requestId: this.activeControlRequestId,
-      desiredState: this.desiredControlState,
+      requestId: controlState.requestId,
+      desiredState: controlState.desiredState,
       actualState: actualState,
       inProgress: inProgress,
       message: message
     };
     this.statusHandler(message);
     this.controlStatusHandler(status);
-  }
-
-  private clearControlTimeout(): void {
-    if (this.controlTimeoutId >= 0) {
-      clearTimeout(this.controlTimeoutId);
-      this.controlTimeoutId = -1;
-    }
   }
 
   private receiveFile(incoming: wearEngine.P2pFile): void {
@@ -1856,13 +1549,13 @@ export class WearEngineRecordingReceiver {
         throw new Error('收到的录音为空或超过 10 MB 限制');
       }
 
-      const descriptor = this.pendingFiles.length > 0 ? this.pendingFiles.shift() : undefined;
+      const descriptor = this.phoneSync.takePendingFile();
       if (descriptor !== undefined) {
         if (descriptor.size !== sourceStat.size) {
           throw new Error(`文件大小不符：期望 ${descriptor.size}，实际 ${sourceStat.size}`);
         }
         this.setTransferDescriptor(descriptor, 'saving', 100, true);
-        this.emitProgress(this.syncRequestInProgress, `传输完成，正在安全保存：${descriptor.fileName}`);
+        this.emitProgress(this.phoneSync.inProgress(), `传输完成，正在安全保存：${descriptor.fileName}`);
         const existing = this.recordingStore.findExisting(descriptor);
         if (existing !== undefined) {
           this.receivedHandler(existing);
@@ -1870,7 +1563,7 @@ export class WearEngineRecordingReceiver {
           this.sendFileReceivedAck(descriptor);
           this.setTransferDescriptor(descriptor, 'waiting_ack', 100, true);
           if (descriptor.automatic === true) {
-            this.emitProgress(this.syncRequestInProgress,
+            this.emitProgress(this.phoneSync.inProgress(),
               `手机已有该文件，正在补发确认：${descriptor.fileName}`);
             return;
           }
@@ -1907,7 +1600,7 @@ export class WearEngineRecordingReceiver {
         this.sendFileReceivedAck(descriptor);
         this.setTransferDescriptor(descriptor, 'waiting_ack', 100, true);
         if (descriptor.automatic === true) {
-          this.emitProgress(this.syncRequestInProgress,
+          this.emitProgress(this.phoneSync.inProgress(),
             `自动同步已保存，正在确认：${descriptor.fileName}`);
           return;
         }
@@ -1959,17 +1652,11 @@ export class WearEngineRecordingReceiver {
     }
     this.emitProgress(false, `同步完成：本轮收到 ${this.activeReceived} 个；手表扫描到 ` +
       `${this.activeScannedTotal} 个文件，原文件已保留`);
-    this.syncRequestInProgress = false;
-    this.activeRequestId = '';
+    this.phoneSync.finishRequest();
   }
 
   private markDescriptorReceived(descriptor: WatchSyncFileDescriptor): boolean {
-    const key = fileTransferAckKey(descriptor);
-    if (this.completedDescriptorKeys.has(key)) {
-      return false;
-    }
-    this.completedDescriptorKeys.add(key);
-    return true;
+    return this.phoneSync.markReceived(descriptor);
   }
 
   private sendFileReceivedAck(descriptor: WatchSyncFileDescriptor): void {
@@ -1978,18 +1665,23 @@ export class WearEngineRecordingReceiver {
     const appParam = this.appParam;
     if (client === undefined || peer === undefined || appParam === undefined) {
       this.setTransferDescriptor(descriptor, 'waiting_ack', 100, false);
-      this.emitProgress(this.syncRequestInProgress, '文件已保存，等待 Wear Engine 重连后补发确认回执');
+      this.emitProgress(this.phoneSync.inProgress(), '文件已保存，等待 Wear Engine 重连后补发确认回执');
       return;
     }
+    const transport: P2pTransport = {
+      client: client,
+      peer: peer,
+      appParam: appParam
+    };
     const ack: WatchSyncProtocolMessage = {
       version: WATCH_SYNC_PROTOCOL_VERSION,
       type: WATCH_SYNC_FILE_RECEIVED,
       requestId: descriptor.requestId,
       file: descriptor
     };
-    sendProtocolMessage(client, peer, appParam, ack).catch(() => {
+    this.transportEngine.sendProtocolMessage(transport, ack).catch(() => {
       this.setTransferDescriptor(descriptor, 'waiting_ack', 100, false);
-      this.emitProgress(this.syncRequestInProgress, '文件已保存，确认回执暂未送达，手表将安全重试');
+      this.emitProgress(this.phoneSync.inProgress(), '文件已保存，确认回执暂未送达，手表将安全重试');
     });
   }
 
@@ -1998,30 +1690,16 @@ export class WearEngineRecordingReceiver {
   }
 
   private removePendingFile(descriptor: WatchSyncFileDescriptor): void {
-    for (let index = 0; index < this.pendingFiles.length; index += 1) {
-      const pending = this.pendingFiles[index];
-      if (pending.requestId === descriptor.requestId && pending.index === descriptor.index &&
-        pending.relativePath === descriptor.relativePath) {
-        this.pendingFiles.splice(index, 1);
-        return;
-      }
-    }
+    this.phoneSync.removePendingFile(descriptor);
   }
 
   private addPendingFile(descriptor: WatchSyncFileDescriptor): void {
-    for (let index = 0; index < this.pendingFiles.length; index += 1) {
-      const pending = this.pendingFiles[index];
-      if (pending.requestId === descriptor.requestId && pending.index === descriptor.index &&
-        pending.relativePath === descriptor.relativePath) {
-        return;
-      }
-    }
-    this.pendingFiles.push(descriptor);
+    this.phoneSync.addPendingFile(descriptor);
   }
 
   private emitProgress(inProgress: boolean, message: string): void {
     const progress: WatchSyncProgress = {
-      requestId: this.activeRequestId,
+      requestId: this.phoneSync.requestId(),
       total: this.activeTotal,
       received: this.activeReceived,
       skipped: this.activeSkipped,
