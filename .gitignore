@@ -1,0 +1,16 @@
+/node_modules
+/oh_modules
+/local.properties
+/build-profile.json5
+/.idea
+/outputs
+/.DS_Store
+*.log
+**/build
+/.hvigor
+.cxx
+/.clangd
+/.clang-format
+/.clang-tidy
+**/.test
+/.appanalyzer
