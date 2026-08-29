@@ -1,5 +1,11 @@
-import localUnitTest from './LocalUnit.test';
+import automaticQueueAndSyncStateTest from './AutomaticQueueAndSyncState.test';
+import interruptedWavRecoveryTest from './InterruptedWavRecovery.test';
+import receivedRecordingStoreTest from './ReceivedRecordingStore.test';
+import watchSyncProtocolTest from './WatchSyncProtocol.test';
 
 export default function testsuite() {
-  localUnitTest();
+  watchSyncProtocolTest();
+  automaticQueueAndSyncStateTest();
+  receivedRecordingStoreTest();
+  interruptedWavRecoveryTest();
 }

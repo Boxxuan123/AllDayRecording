@@ -42,14 +42,38 @@ export interface InterruptedWavRecoveryResult {
   failureCount: number;
 }
 
+export type WavBufferWriteOperation = (buffer: ArrayBuffer) => number;
+export type RecoveryDirectoryListOperation = (path: string) => Array<string>;
+export type RecoverySeekOperation = (fd: number) => void;
+
+export function writeEntireWavBuffer(buffer: ArrayBuffer, writeOperation: WavBufferWriteOperation): void {
+  let remaining = buffer;
+  while (remaining.byteLength > 0) {
+    const written = writeOperation(remaining);
+    if (written <= 0) {
+      throw new Error('写入 WAV 文件失败');
+    }
+    if (written === remaining.byteLength) {
+      return;
+    }
+    remaining = remaining.slice(written);
+  }
+}
+
 export class InterruptedWavRecoveryService {
-  static recover(filesDirectory: string): InterruptedWavRecoveryResult {
+  static recover(filesDirectory: string,
+    listDirectory: RecoveryDirectoryListOperation =
+      (path: string): Array<string> => fileIo.listFileSync(path),
+    seekToStart: RecoverySeekOperation =
+      (fd: number): void => {
+        fileIo.lseek(fd, 0, fileIo.WhenceType.SEEK_SET);
+      }): InterruptedWavRecoveryResult {
     const result: InterruptedWavRecoveryResult = {
       recoveredCount: 0,
       discardedEmptyCount: 0,
       failureCount: 0
     };
-    const rootEntries = fileIo.listFileSync(filesDirectory);
+    const rootEntries = listDirectory(filesDirectory);
     for (let index = 0; index < rootEntries.length; index += 1) {
       const sessionName = rootEntries[index];
       if (!sessionName.startsWith(SESSION_PREFIX)) {
@@ -60,7 +84,7 @@ export class InterruptedWavRecoveryService {
         if (!fileIo.statSync(sessionDirectory).isDirectory()) {
           continue;
         }
-        const summary = InterruptedWavRecoveryService.recoverSession(sessionDirectory);
+        const summary = InterruptedWavRecoveryService.recoverSession(sessionDirectory, listDirectory, seekToStart);
         result.recoveredCount += summary.recoveredFiles.length;
         result.discardedEmptyCount += summary.discardedEmptyParts.length;
         result.failureCount += summary.failures.length;
@@ -71,7 +95,8 @@ export class InterruptedWavRecoveryService {
     return result;
   }
 
-  private static recoverSession(sessionDirectory: string): SessionRecoverySummary {
+  private static recoverSession(sessionDirectory: string,
+    listDirectory: RecoveryDirectoryListOperation, seekToStart: RecoverySeekOperation): SessionRecoverySummary {
     const summary: SessionRecoverySummary = {
       format: 'AllDayRecording interrupted WAV recovery v1',
       recoveredAt: Date.now(),
@@ -84,7 +109,7 @@ export class InterruptedWavRecoveryService {
       discardedEmptyParts: [],
       failures: []
     };
-    const entries = fileIo.listFileSync(sessionDirectory);
+    const entries = listDirectory(sessionDirectory);
     let foundPart: boolean = false;
     for (let index = 0; index < entries.length; index += 1) {
       const fileName = entries[index];
@@ -92,7 +117,7 @@ export class InterruptedWavRecoveryService {
         continue;
       }
       foundPart = true;
-      InterruptedWavRecoveryService.recoverPart(sessionDirectory, fileName, summary);
+      InterruptedWavRecoveryService.recoverPart(sessionDirectory, fileName, summary, seekToStart);
     }
     if (foundPart) {
       InterruptedWavRecoveryService.writeSummary(sessionDirectory, summary);
@@ -101,7 +126,7 @@ export class InterruptedWavRecoveryService {
   }
 
   private static recoverPart(sessionDirectory: string, fileName: string,
-    summary: SessionRecoverySummary): void {
+    summary: SessionRecoverySummary, seekToStart: RecoverySeekOperation): void {
     const partPath = `${sessionDirectory}/${fileName}`;
     try {
       const size = fileIo.statSync(partPath).size;
@@ -123,7 +148,7 @@ export class InterruptedWavRecoveryService {
 
       const output = fileIo.openSync(partPath, fileIo.OpenMode.READ_WRITE);
       try {
-        fileIo.lseek(output.fd, 0, fileIo.WhenceType.SEEK_SET);
+        seekToStart(output.fd);
         InterruptedWavRecoveryService.writeAll(output.fd,
           InterruptedWavRecoveryService.createWavHeader(pcmBytes));
         fileIo.fsyncSync(output.fd);
@@ -212,17 +237,7 @@ export class InterruptedWavRecoveryService {
   }
 
   private static writeAll(fd: number, buffer: ArrayBuffer): void {
-    let remaining = buffer;
-    while (remaining.byteLength > 0) {
-      const written = fileIo.writeSync(fd, remaining);
-      if (written <= 0) {
-        throw new Error('写入 WAV 文件失败');
-      }
-      if (written === remaining.byteLength) {
-        return;
-      }
-      remaining = remaining.slice(written);
-    }
+    writeEntireWavBuffer(buffer, (remaining: ArrayBuffer): number => fileIo.writeSync(fd, remaining));
   }
 
   private static errorMessage(error: Object): string {

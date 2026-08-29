@@ -24,16 +24,25 @@ interface ReceivedRecordingManifest {
   recordings: Array<ReceivedRecordingManifestEntry>;
 }
 
+export type DirectoryListOperation = (path: string) => Array<string>;
+export type TextReadOperation = (path: string) => string;
+
 export class ReceivedRecordingStore {
   private filesDirectory: string;
   private syncRoot: string;
   private manifestPath: string;
   private recordings: Array<ReceivedRecordingFile>;
+  private listDirectory: DirectoryListOperation;
+  private readText: TextReadOperation;
 
-  constructor(filesDirectory: string) {
+  constructor(filesDirectory: string,
+    listDirectory: DirectoryListOperation = (path: string): Array<string> => fileIo.listFileSync(path),
+    readText: TextReadOperation = (path: string): string => fileIo.readTextSync(path)) {
     this.filesDirectory = filesDirectory;
     this.syncRoot = `${filesDirectory}/${SYNC_RECEIVE_DIRECTORY}`;
     this.manifestPath = `${this.syncRoot}/${MANIFEST_FILE_NAME}`;
+    this.listDirectory = listDirectory;
+    this.readText = readText;
     this.recordings = this.loadFromDisk();
   }
 
@@ -111,7 +120,7 @@ export class ReceivedRecordingStore {
       return;
     }
     try {
-      const manifest = JSON.parse(fileIo.readTextSync(this.manifestPath)) as ReceivedRecordingManifest;
+      const manifest = JSON.parse(this.readText(this.manifestPath)) as ReceivedRecordingManifest;
       if (manifest.version !== MANIFEST_VERSION || !Array.isArray(manifest.recordings)) {
         return;
       }
@@ -154,7 +163,7 @@ export class ReceivedRecordingStore {
 
   private scanSyncDirectory(directory: string, relativeDirectory: string,
     target: Array<ReceivedRecordingFile>): void {
-    const entries = fileIo.listFileSync(directory);
+    const entries = this.listDirectory(directory);
     for (let index = 0; index < entries.length; index += 1) {
       const name = entries[index];
       if (name === MANIFEST_FILE_NAME) {
@@ -187,7 +196,7 @@ export class ReceivedRecordingStore {
   }
 
   private scanLegacyManualFiles(target: Array<ReceivedRecordingFile>): void {
-    const entries = fileIo.listFileSync(this.filesDirectory);
+    const entries = this.listDirectory(this.filesDirectory);
     for (let index = 0; index < entries.length; index += 1) {
       const name = entries[index];
       if (!name.startsWith('received_') || !this.isAudioFile(name)) {

@@ -1,5 +1,5 @@
-import abilityTest from './Ability.test';
+import applicationProtocolContractTest from './ApplicationProtocolContract.test';
 
 export default function testsuite() {
-  abilityTest();
+  applicationProtocolContractTest();
 }
