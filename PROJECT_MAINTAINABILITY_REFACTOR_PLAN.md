@@ -229,6 +229,8 @@ Pages -> ViewModels/Coordinators -> Domain services -> Transport/Storage adapter
 
 ### Phase 3：拆分手机/手表页面与业务状态
 
+执行状态（2026-08-30）：已完成 Phase 3，用户已确认 WATCH 5 真机视觉与录音流程回归通过，代码提交为 `2cfa334`。`Index.ets` 已从 1,394 行缩减为 17 行，只负责设备类型选择；手机/手表 Root、ViewModel 和六个页面组件已分离。Hypium 39/39 通过，`entry@ohosTest`、独立 clean Debug 和 Release 构建成功，详见 `doc/MAINTAINABILITY_PHASE_3_PRESENTATION.md`。
+
 目标：把 `Index.ets` 从业务控制中心降为最小设备入口。
 
 任务：
@@ -374,10 +376,10 @@ Release 必须在 Debug 完成后再次 clean，避免共享 `entry/build` 造�
 
 | Phase | 状态 | 验收记录 | 提交 |
 | --- | --- | --- | --- |
-| Phase 0 行为基线与特征测试 | 未开始 |  |  |
-| Phase 1 共享文件/WAV 基础设施 | 未开始 |  |  |
-| Phase 2 Wear Engine 与同步状态机拆分 | 未开始 |  |  |
-| Phase 3 Phone/Watch 页面与状态拆分 | 未开始 |  |  |
+| Phase 0 行为基线与特征测试 | 已完成 | `doc/MAINTAINABILITY_PHASE_0_BASELINE.md` | `f5264dd` |
+| Phase 1 共享文件/WAV 基础设施 | 已完成 | `doc/MAINTAINABILITY_PHASE_1_SHARED_IO.md` | `8f7443c`、`c6f4fb7` |
+| Phase 2 Wear Engine 与同步状态机拆分 | 已完成 | `doc/MAINTAINABILITY_PHASE_2_SYNC.md` | `081109d`、`2c68691` |
+| Phase 3 Phone/Watch 页面与状态拆分 | 已完成 | `doc/MAINTAINABILITY_PHASE_3_PRESENTATION.md` | `2cfa334` |
 | Phase 4 录音领域与诊断隔离 | 未开始 |  |  |
 | Phase 5 质量门禁与文档 | 未开始 |  |  |
 | Phase 6 Phone/Watch 物理模块评估 | 未开始 |  |  |
