@@ -1,4 +1,8 @@
 import { fileIo } from '@kit.CoreFileKit';
+import {
+  PCM_RECORDING_SEGMENT_BYTES,
+  isPcmRecordingSessionName
+} from '../recording/PcmRecordingContract';
 import { publishPartFile, syncAndClose } from '../shared/io/AtomicFileWriter';
 import { writeJsonAtomically } from '../shared/io/AtomicJsonStore';
 import {
@@ -11,8 +15,6 @@ import {
   writeEntireBuffer
 } from '../shared/io/WavFormat';
 
-const MAX_SEGMENT_PCM_BYTES: number = SAMPLE_RATE * BYTES_PER_SAMPLE * 60;
-const SESSION_PREFIX: string = 'pcm_gap_test_';
 const PART_SUFFIX: string = '.wav.part';
 
 interface RecoveredWavEvidence {
@@ -67,7 +69,7 @@ export class InterruptedWavRecoveryService {
     const rootEntries = listDirectory(filesDirectory);
     for (let index = 0; index < rootEntries.length; index += 1) {
       const sessionName = rootEntries[index];
-      if (!sessionName.startsWith(SESSION_PREFIX)) {
+      if (!isPcmRecordingSessionName(sessionName)) {
         continue;
       }
       const sessionDirectory = `${filesDirectory}/${sessionName}`;
@@ -127,7 +129,7 @@ export class InterruptedWavRecoveryService {
         return;
       }
       const pcmBytes = size - WAV_HEADER_BYTES;
-      if (pcmBytes <= 0 || pcmBytes > MAX_SEGMENT_PCM_BYTES || pcmBytes % BYTES_PER_SAMPLE !== 0) {
+      if (pcmBytes <= 0 || pcmBytes > PCM_RECORDING_SEGMENT_BYTES || pcmBytes % BYTES_PER_SAMPLE !== 0) {
         throw new Error(`无效的 PCM 长度 ${pcmBytes}`);
       }
 

@@ -3,17 +3,22 @@ import { media } from '@kit.MediaKit';
 import { common, wantAgent } from '@kit.AbilityKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { RecordingFile } from '../models/RecordingModels';
+import { RecordingFile } from '../../models/RecordingModels';
+import { requireRecordingDiagnosticsEnabled } from '../RecordingDiagnosticsPolicy';
 
-export interface SegmentedRecordingCallbacks {
+export function avRecorderGapBaselineDiagnosticName(): string {
+  return 'av_recorder_gap_baseline';
+}
+
+export interface AvRecorderGapBaselineCallbacks {
   onSegmentStarted: (segmentIndex: number, startedAt: number) => void;
   onSegmentCompleted: (recording: RecordingFile, completedCount: number) => void;
   onSessionError: (message: string) => void;
 }
 
-export class AudioRecordingService {
+export class AvRecorderGapBaseline {
   private context: common.UIAbilityContext;
-  private callbacks: SegmentedRecordingCallbacks;
+  private callbacks: AvRecorderGapBaselineCallbacks;
   private recorder: media.AVRecorder | undefined = undefined;
   private outputFd: number = -1;
   private outputPath: string = '';
@@ -30,7 +35,8 @@ export class AudioRecordingService {
   private sessionActive: boolean = false;
   private backgroundTaskActive: boolean = false;
 
-  constructor(context: common.UIAbilityContext, callbacks: SegmentedRecordingCallbacks) {
+  constructor(context: common.UIAbilityContext, callbacks: AvRecorderGapBaselineCallbacks) {
+    requireRecordingDiagnosticsEnabled();
     this.context = context;
     this.callbacks = callbacks;
   }

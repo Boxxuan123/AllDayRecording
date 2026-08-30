@@ -1,9 +1,14 @@
 import { commonEventManager } from '@kit.BasicServicesKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { requireRecordingDiagnosticsEnabled } from './RecordingDiagnosticsPolicy';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'SleepModeProbe';
+
+export function sleepModeProbeDiagnosticName(): string {
+  return 'sleep_mode_probe';
+}
 
 export interface SleepModeProbeCallbacks {
   onStarted: (logPath: string) => void;
@@ -29,6 +34,7 @@ export class SleepModeProbeService {
   private eventHandler: (data: commonEventManager.CommonEventData) => void;
 
   constructor(filesDirectory: string, callbacks: SleepModeProbeCallbacks) {
+    requireRecordingDiagnosticsEnabled();
     this.filesDirectory = filesDirectory;
     this.callbacks = callbacks;
     this.eventHandler = (data: commonEventManager.CommonEventData): void => {

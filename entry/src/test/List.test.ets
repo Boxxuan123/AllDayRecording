@@ -1,5 +1,6 @@
 import automaticQueueAndSyncStateTest from './AutomaticQueueAndSyncState.test';
 import interruptedWavRecoveryTest from './InterruptedWavRecovery.test';
+import pcmRecordingDomainTest from './PcmRecordingDomain.test';
 import presentationStateTest from './PresentationState.test';
 import receivedRecordingStoreTest from './ReceivedRecordingStore.test';
 import sharedIoTest from './SharedIo.test';
@@ -12,4 +13,5 @@ export default function testsuite() {
   presentationStateTest();
   receivedRecordingStoreTest();
   interruptedWavRecoveryTest();
+  pcmRecordingDomainTest();
 }

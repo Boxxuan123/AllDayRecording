@@ -1,24 +1,22 @@
-import { common, wantAgent } from '@kit.AbilityKit';
-import { audio } from '@kit.AudioKit';
+import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { RecordingFile } from '../models/RecordingModels';
-import { publishPartFile, syncAndClose } from '../shared/io/AtomicFileWriter';
-import { writeJsonAtomically } from '../shared/io/AtomicJsonStore';
 import {
-  PCM_BITS_PER_SAMPLE as BITS_PER_SAMPLE,
-  PCM_BYTES_PER_SAMPLE as BYTES_PER_SAMPLE,
-  PCM_CHANNEL_COUNT as CHANNEL_COUNT,
-  PCM_SAMPLE_RATE_HZ as SAMPLE_RATE,
-  createPcmWavHeader,
-  writeEntireBuffer
-} from '../shared/io/WavFormat';
-
-const SEGMENT_SECONDS: number = 60;
-const SEGMENT_SAMPLES: number = SAMPLE_RATE * SEGMENT_SECONDS;
-const SEGMENT_PCM_BYTES: number = SEGMENT_SAMPLES * BYTES_PER_SAMPLE;
-const MAX_QUEUED_PCM_BYTES: number = SAMPLE_RATE * BYTES_PER_SAMPLE * 5;
+  AudioCaptureDiagnostics,
+  AudioCaptureLifecycle
+} from '../recording/AudioCaptureLifecycle';
+import { AudioRecordingBackgroundTask } from '../recording/AudioRecordingBackgroundTask';
+import {
+  PCM_RECORDING_MAX_QUEUED_BYTES,
+  PCM_RECORDING_SEGMENT_BYTES,
+  PCM_RECORDING_SEGMENT_SAMPLES,
+  PcmSessionMetrics,
+  pcmRecordingSessionDirectory
+} from '../recording/PcmRecordingContract';
+import { PcmSessionSummaryStore } from '../recording/PcmSessionSummaryStore';
+import { WavSegmentSlot } from '../recording/WavSegmentSlot';
+import { PCM_BYTES_PER_SAMPLE } from '../shared/io/WavFormat';
 
 export interface PcmSegmentedRecordingCallbacks {
   onSegmentStarted: (segmentIndex: number, firstSample: number) => void;
@@ -27,47 +25,14 @@ export interface PcmSegmentedRecordingCallbacks {
   onSessionError: (message: string) => void;
 }
 
-interface WavFileSlot {
-  index: number;
-  firstSample: number;
-  pcmBytes: number;
-  fd: number;
-  partPath: string;
-  finalPath: string;
-}
-
-interface PcmSegmentEvidence {
-  index: number;
-  fileName: string;
-  firstSample: number;
-  sampleCount: number;
-  pcmBytes: number;
-}
-
-interface PcmSessionSummary {
-  format: string;
-  sessionStartedAt: number;
-  sampleRate: number;
-  channels: number;
-  bitsPerSample: number;
-  segmentSamples: number;
-  totalSamples: number;
-  completedSegments: number;
-  continuityValid: boolean;
-  hardwareOverflowCount: number;
-  softwareQueueOverflowCount: number;
-  capturerFramePosition: number;
-  capturerBufferSizeBytes: number;
-  segments: Array<PcmSegmentEvidence>;
-}
-
 export class PcmSegmentedRecordingService {
   private context: common.UIAbilityContext;
   private callbacks: PcmSegmentedRecordingCallbacks;
-  private capturer: audio.AudioCapturer | undefined = undefined;
-  private readDataHandler: (buffer: ArrayBuffer) => void;
-  private activeSlot: WavFileSlot | undefined = undefined;
-  private standbySlot: WavFileSlot | undefined = undefined;
+  private captureLifecycle: AudioCaptureLifecycle;
+  private backgroundTask: AudioRecordingBackgroundTask;
+  private summaryStore: PcmSessionSummaryStore = new PcmSessionSummaryStore();
+  private activeSlot: WavSegmentSlot | undefined = undefined;
+  private standbySlot: WavSegmentSlot | undefined = undefined;
   private queuedBuffers: Array<ArrayBuffer> = [];
   private queuedPcmBytes: number = 0;
   private drainScheduled: boolean = false;
@@ -77,15 +42,12 @@ export class PcmSegmentedRecordingService {
   private sessionActive: boolean = false;
   private stopping: boolean = false;
   private abortScheduled: boolean = false;
-  private backgroundTaskActive: boolean = false;
   private failureMessage: string = '';
   private sessionStartedAt: number = 0;
   private sessionDirectory: string = '';
   private nextSegmentIndex: number = 1;
-  private completedCount: number = 0;
   private totalPcmBytes: number = 0;
   private lastCompleted: RecordingFile | undefined = undefined;
-  private evidence: Array<PcmSegmentEvidence> = [];
   private hardwareOverflowCount: number = 0;
   private softwareQueueOverflowCount: number = 0;
   private capturerFramePosition: number = -1;
@@ -94,78 +56,60 @@ export class PcmSegmentedRecordingService {
   constructor(context: common.UIAbilityContext, callbacks: PcmSegmentedRecordingCallbacks) {
     this.context = context;
     this.callbacks = callbacks;
-    this.readDataHandler = (buffer: ArrayBuffer): void => {
+    this.captureLifecycle = new AudioCaptureLifecycle((buffer: ArrayBuffer): void => {
       this.enqueueCapturedBuffer(buffer);
-    };
+    });
+    this.backgroundTask = new AudioRecordingBackgroundTask(context, 1002);
   }
 
   async start(): Promise<void> {
-    if (this.sessionActive || this.capturer !== undefined) {
+    if (this.sessionActive || this.captureLifecycle.isPrepared()) {
       throw new Error('连续 PCM 录音已经开始');
     }
-    if (!canIUse('SystemCapability.Multimedia.Audio.Capturer')) {
-      throw new Error('当前手表不支持 AudioCapturer');
-    }
+    this.captureLifecycle.ensureSupported();
 
     this.resetSessionState();
     this.sessionStartedAt = Date.now();
-    this.sessionDirectory = `${this.context.filesDir}/pcm_gap_test_${this.sessionStartedAt}`;
+    this.sessionDirectory = pcmRecordingSessionDirectory(this.context.filesDir, this.sessionStartedAt);
     fileIo.mkdirSync(this.sessionDirectory);
 
     try {
       this.activeSlot = this.createWavSlot(this.nextSegmentIndex, 0);
       this.nextSegmentIndex += 1;
-      this.standbySlot = this.createWavSlot(this.nextSegmentIndex, SEGMENT_SAMPLES);
+      this.standbySlot = this.createWavSlot(this.nextSegmentIndex, PCM_RECORDING_SEGMENT_SAMPLES);
       this.nextSegmentIndex += 1;
-
-      const options: audio.AudioCapturerOptions = {
-        streamInfo: {
-          samplingRate: audio.AudioSamplingRate.SAMPLE_RATE_16000,
-          channels: audio.AudioChannel.CHANNEL_1,
-          sampleFormat: audio.AudioSampleFormat.SAMPLE_FORMAT_S16LE,
-          encodingType: audio.AudioEncodingType.ENCODING_TYPE_RAW
-        },
-        capturerInfo: {
-          source: audio.SourceType.SOURCE_TYPE_MIC,
-          capturerFlags: 0
-        }
-      };
-      const capturer = await audio.createAudioCapturer(options);
-      this.capturer = capturer;
-      this.capturerBufferSizeBytes = await capturer.getBufferSize();
-      capturer.on('readData', this.readDataHandler);
+      await this.captureLifecycle.prepare();
       this.acceptingData = true;
       this.sessionActive = true;
-      await this.startBackgroundRecording();
-      await capturer.start();
+      await this.backgroundTask.start();
+      await this.captureLifecycle.start();
       this.callbacks.onSegmentStarted(1, 0);
     } catch (error) {
       this.acceptingData = false;
       this.sessionActive = false;
       this.queuedBuffers = [];
       this.queuedPcmBytes = 0;
-      await this.releaseCapturerOnly();
+      await this.captureLifecycle.release();
       this.discardSlot(this.activeSlot);
       this.discardSlot(this.standbySlot);
       this.activeSlot = undefined;
       this.standbySlot = undefined;
-      await this.stopBackgroundRecording();
+      await this.backgroundTask.stop();
       throw new Error(`无法启动连续 PCM 录音：${this.businessErrorMessage(error)}`);
     }
   }
 
   async stop(): Promise<RecordingFile | undefined> {
-    if (!this.sessionActive || this.capturer === undefined || this.stopping) {
+    if (!this.sessionActive || !this.captureLifecycle.isPrepared() || this.stopping) {
       throw new Error('当前没有可停止的连续 PCM 会话');
     }
     this.stopping = true;
-    const capturer = this.capturer;
 
     try {
-      this.readCapturerDiagnostics(capturer);
-      await capturer.stop();
+      this.applyCaptureDiagnostics(this.captureLifecycle.readDiagnostics());
+      await this.captureLifecycle.stop();
       this.acceptingData = false;
-      capturer.off('readData', this.readDataHandler);
+      this.captureLifecycle.detachReadData();
       await this.waitForDrain();
       if (this.failureMessage.length > 0) {
         throw new Error(this.failureMessage);
@@ -174,7 +118,7 @@ export class PcmSegmentedRecordingService {
       const active = this.activeSlot;
       this.activeSlot = undefined;
       if (active !== undefined) {
-        if (active.pcmBytes > 0) {
+        if (active.getPcmBytes() > 0) {
           this.publishCompletedSlot(active);
         } else {
           this.discardSlot(active);
@@ -188,15 +132,15 @@ export class PcmSegmentedRecordingService {
       this.acceptingData = false;
       this.sessionActive = false;
       this.stopping = false;
-      await this.releaseCapturerOnly();
+      await this.captureLifecycle.release();
       this.closeSlotWithoutRemoving(this.activeSlot);
       this.closeSlotWithoutRemoving(this.standbySlot);
-      await this.stopBackgroundRecording();
+      await this.backgroundTask.stop();
     }
   }
 
   async release(): Promise<void> {
-    if (this.sessionActive && !this.stopping && this.capturer !== undefined) {
+    if (this.sessionActive && !this.stopping && this.captureLifecycle.isPrepared()) {
       try {
         await this.stop();
         return;
@@ -206,10 +150,10 @@ export class PcmSegmentedRecordingService {
     }
     this.acceptingData = false;
     this.sessionActive = false;
-    await this.releaseCapturerOnly();
+    await this.captureLifecycle.release();
     this.closeSlotWithoutRemoving(this.activeSlot);
     this.closeSlotWithoutRemoving(this.standbySlot);
-    await this.stopBackgroundRecording();
+    await this.backgroundTask.stop();
   }
 
   getStartedAt(): number {
@@ -221,11 +165,11 @@ export class PcmSegmentedRecordingService {
   }
 
   getCompletedCount(): number {
-    return this.completedCount;
+    return this.summaryStore.getCompletedCount();
   }
 
   getTotalSamples(): number {
-    return this.totalPcmBytes / BYTES_PER_SAMPLE;
+    return this.totalPcmBytes / PCM_BYTES_PER_SAMPLE;
   }
 
   getHardwareOverflowCount(): number {
@@ -243,10 +187,9 @@ export class PcmSegmentedRecordingService {
     this.abortScheduled = false;
     this.failureMessage = '';
     this.nextSegmentIndex = 1;
-    this.completedCount = 0;
     this.totalPcmBytes = 0;
     this.lastCompleted = undefined;
-    this.evidence = [];
+    this.summaryStore.reset();
     this.hardwareOverflowCount = 0;
     this.softwareQueueOverflowCount = 0;
     this.capturerFramePosition = -1;
@@ -257,11 +200,11 @@ export class PcmSegmentedRecordingService {
     if (!this.acceptingData || this.failureMessage.length > 0 || buffer.byteLength === 0) {
       return;
     }
-    if (buffer.byteLength % BYTES_PER_SAMPLE !== 0) {
+    if (buffer.byteLength % PCM_BYTES_PER_SAMPLE !== 0) {
       this.failSession('AudioCapturer 返回了非完整 S16LE 采样');
       return;
     }
-    if (this.queuedPcmBytes + buffer.byteLength > MAX_QUEUED_PCM_BYTES) {
+    if (this.queuedPcmBytes + buffer.byteLength > PCM_RECORDING_MAX_QUEUED_BYTES) {
       this.softwareQueueOverflowCount += 1;
       this.failSession('PCM 写入队列超过 5 秒，已停止以避免静默丢音频');
       return;
@@ -313,21 +256,20 @@ export class PcmSegmentedRecordingService {
 
   private writeCapturedData(data: ArrayBuffer): void {
     let offset: number = 0;
-    const completedSlots: Array<WavFileSlot> = [];
+    const completedSlots: Array<WavSegmentSlot> = [];
     while (offset < data.byteLength) {
       const active = this.activeSlot;
       if (active === undefined) {
         throw new Error('没有活动 WAV 文件槽');
       }
-      const available = SEGMENT_PCM_BYTES - active.pcmBytes;
+      const available = PCM_RECORDING_SEGMENT_BYTES - active.getPcmBytes();
       const length = Math.min(available, data.byteLength - offset);
       const piece = data.slice(offset, offset + length);
-      writeEntireBuffer(piece, (remaining: ArrayBuffer): number => fileIo.writeSync(active.fd, remaining));
-      active.pcmBytes += length;
+      active.write(piece);
       this.totalPcmBytes += length;
       offset += length;
 
-      if (active.pcmBytes === SEGMENT_PCM_BYTES) {
+      if (active.getPcmBytes() === PCM_RECORDING_SEGMENT_BYTES) {
         const completed = this.swapToStandbySlot();
         completedSlots.push(completed);
       }
@@ -339,7 +281,7 @@ export class PcmSegmentedRecordingService {
     this.ensureStandbySlot();
   }
 
-  private swapToStandbySlot(): WavFileSlot {
+  private swapToStandbySlot(): WavSegmentSlot {
     const completed = this.activeSlot;
     const next = this.standbySlot;
     if (completed === undefined || next === undefined) {
@@ -355,87 +297,30 @@ export class PcmSegmentedRecordingService {
     if (this.standbySlot !== undefined || this.activeSlot === undefined || !this.sessionActive) {
       return;
     }
-    const firstSample = this.activeSlot.firstSample + SEGMENT_SAMPLES;
+    const firstSample = this.activeSlot.firstSample + PCM_RECORDING_SEGMENT_SAMPLES;
     this.standbySlot = this.createWavSlot(this.nextSegmentIndex, firstSample);
     this.nextSegmentIndex += 1;
   }
 
-  private createWavSlot(index: number, firstSample: number): WavFileSlot {
-    const indexText = index.toString().padStart(6, '0');
-    const sampleText = firstSample.toString().padStart(12, '0');
-    const fileName = `segment_${indexText}_first_${sampleText}.wav`;
-    const finalPath = `${this.sessionDirectory}/${fileName}`;
-    const partPath = `${finalPath}.part`;
-    const outputFile = fileIo.openSync(partPath,
-      fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC);
-    const slot: WavFileSlot = {
-      index: index,
-      firstSample: firstSample,
-      pcmBytes: 0,
-      fd: outputFile.fd,
-      partPath: partPath,
-      finalPath: finalPath
-    };
-    writeEntireBuffer(createPcmWavHeader(0),
-      (remaining: ArrayBuffer): number => fileIo.writeSync(slot.fd, remaining));
-    return slot;
+  private createWavSlot(index: number, firstSample: number): WavSegmentSlot {
+    return new WavSegmentSlot(this.sessionDirectory, index, firstSample);
   }
 
-  private publishCompletedSlot(slot: WavFileSlot): void {
-    const recording = this.finalizeSlot(slot);
-    const sampleCount = slot.pcmBytes / BYTES_PER_SAMPLE;
-    this.completedCount += 1;
+  private publishCompletedSlot(slot: WavSegmentSlot): void {
+    const recording = slot.finalize();
+    const pcmBytes = slot.getPcmBytes();
+    const sampleCount = pcmBytes / PCM_BYTES_PER_SAMPLE;
     this.lastCompleted = recording;
-    const evidence: PcmSegmentEvidence = {
-      index: slot.index,
-      fileName: recording.fileName,
-      firstSample: slot.firstSample,
-      sampleCount: sampleCount,
-      pcmBytes: slot.pcmBytes
-    };
-    this.evidence.push(evidence);
-    this.callbacks.onSegmentCompleted(recording, this.completedCount, slot.firstSample, sampleCount);
+    this.summaryStore.append(recording, slot.index, slot.firstSample, sampleCount, pcmBytes);
+    this.callbacks.onSegmentCompleted(recording, this.summaryStore.getCompletedCount(),
+      slot.firstSample, sampleCount);
   }
 
-  private finalizeSlot(slot: WavFileSlot): RecordingFile {
-    try {
-      fileIo.lseek(slot.fd, 0, fileIo.WhenceType.SEEK_SET);
-      writeEntireBuffer(createPcmWavHeader(slot.pcmBytes),
-        (remaining: ArrayBuffer): number => fileIo.writeSync(slot.fd, remaining));
-      syncAndClose(slot.fd);
-      slot.fd = -1;
-      publishPartFile(slot.partPath, slot.finalPath);
-      const stat = fileIo.statSync(slot.finalPath);
-      const pathParts = slot.finalPath.split('/');
-      return {
-        fileName: pathParts[pathParts.length - 1],
-        path: slot.finalPath,
-        size: stat.size,
-        durationMs: Math.round(slot.pcmBytes * 1000 / (SAMPLE_RATE * BYTES_PER_SAMPLE))
-      };
-    } catch (error) {
-      this.closeSlotWithoutRemoving(slot);
-      throw new Error(`WAV 封口失败：${this.businessErrorMessage(error)}`);
-    }
-  }
-
-  private discardSlot(slot: WavFileSlot | undefined): void {
+  private discardSlot(slot: WavSegmentSlot | undefined): void {
     if (slot === undefined) {
       return;
     }
-    if (slot.fd >= 0) {
-      try {
-        fileIo.closeSync(slot.fd);
-      } catch (error) {
-        // Continue removing the unused placeholder file.
-      }
-      slot.fd = -1;
-    }
-    try {
-      fileIo.unlinkSync(slot.partPath);
-    } catch (error) {
-      // The placeholder may already have been finalized or removed.
-    }
+    slot.discard();
   }
 
   private waitForDrain(): Promise<void> {
@@ -479,126 +364,35 @@ export class PcmSegmentedRecordingService {
     this.queuedBuffers = [];
     this.queuedPcmBytes = 0;
     this.notifyDrainIdle();
-    await this.releaseCapturerOnly();
+    await this.captureLifecycle.release();
     this.closeSlotWithoutRemoving(this.activeSlot);
     this.closeSlotWithoutRemoving(this.standbySlot);
-    await this.stopBackgroundRecording();
+    await this.backgroundTask.stop();
   }
 
-  private closeSlotWithoutRemoving(slot: WavFileSlot | undefined): void {
-    if (slot === undefined || slot.fd < 0) {
+  private closeSlotWithoutRemoving(slot: WavSegmentSlot | undefined): void {
+    if (slot === undefined) {
       return;
     }
-    try {
-      fileIo.closeSync(slot.fd);
-    } catch (error) {
-      // Preserve the original failure while leaving .part as crash evidence.
-    }
-    slot.fd = -1;
+    slot.closePreservingPart();
   }
 
-  private readCapturerDiagnostics(capturer: audio.AudioCapturer): void {
-    try {
-      this.hardwareOverflowCount = capturer.getOverflowCountSync();
-    } catch (error) {
-      this.hardwareOverflowCount = -1;
-    }
-    try {
-      this.capturerFramePosition = capturer.getAudioTimestampInfoSync().framePos;
-    } catch (error) {
-      this.capturerFramePosition = -1;
-    }
+  private applyCaptureDiagnostics(diagnostics: AudioCaptureDiagnostics): void {
+    this.hardwareOverflowCount = diagnostics.hardwareOverflowCount;
+    this.capturerFramePosition = diagnostics.framePosition;
+    this.capturerBufferSizeBytes = diagnostics.bufferSizeBytes;
   }
 
   private writeSessionSummary(): void {
-    const summary: PcmSessionSummary = {
-      format: 'AllDayRecording PCM gap test v1',
+    const metrics: PcmSessionMetrics = {
       sessionStartedAt: this.sessionStartedAt,
-      sampleRate: SAMPLE_RATE,
-      channels: CHANNEL_COUNT,
-      bitsPerSample: BITS_PER_SAMPLE,
-      segmentSamples: SEGMENT_SAMPLES,
       totalSamples: this.getTotalSamples(),
-      completedSegments: this.completedCount,
-      continuityValid: this.isEvidenceContinuous(),
       hardwareOverflowCount: this.hardwareOverflowCount,
       softwareQueueOverflowCount: this.softwareQueueOverflowCount,
       capturerFramePosition: this.capturerFramePosition,
-      capturerBufferSizeBytes: this.capturerBufferSizeBytes,
-      segments: this.evidence
+      capturerBufferSizeBytes: this.capturerBufferSizeBytes
     };
-    const summaryPath = `${this.sessionDirectory}/session_summary.json`;
-    writeJsonAtomically(summaryPath, summary);
-  }
-
-  private isEvidenceContinuous(): boolean {
-    let expectedFirstSample: number = 0;
-    for (let index = 0; index < this.evidence.length; index += 1) {
-      const segment = this.evidence[index];
-      if (segment.firstSample !== expectedFirstSample) {
-        return false;
-      }
-      expectedFirstSample += segment.sampleCount;
-    }
-    return expectedFirstSample === this.getTotalSamples() &&
-      this.hardwareOverflowCount === 0 && this.softwareQueueOverflowCount === 0;
-  }
-
-  private async releaseCapturerOnly(): Promise<void> {
-    const capturer = this.capturer;
-    this.capturer = undefined;
-    if (capturer === undefined) {
-      return;
-    }
-    try {
-      capturer.off('readData', this.readDataHandler);
-    } catch (error) {
-      // Continue releasing a partially initialized capturer.
-    }
-    try {
-      await capturer.stop();
-    } catch (error) {
-      // The capturer may already be stopped.
-    }
-    try {
-      await capturer.release();
-    } catch (error) {
-      // Best-effort cleanup after an interrupted capture session.
-    }
-  }
-
-  private async startBackgroundRecording(): Promise<void> {
-    if (!canIUse('SystemCapability.ResourceSchedule.BackgroundTaskManager.ContinuousTask')) {
-      throw new Error('当前手表不支持录音持续任务');
-    }
-    const notificationWantAgent = await wantAgent.getWantAgent({
-      wants: [{
-        bundleName: this.context.applicationInfo.name,
-        abilityName: 'EntryAbility'
-      }],
-      actionType: wantAgent.OperationType.START_ABILITY,
-      requestCode: 1002,
-      actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
-    });
-    await backgroundTaskManager.startBackgroundRunning(
-      this.context,
-      backgroundTaskManager.BackgroundMode.AUDIO_RECORDING,
-      notificationWantAgent
-    );
-    this.backgroundTaskActive = true;
-  }
-
-  private async stopBackgroundRecording(): Promise<void> {
-    if (!this.backgroundTaskActive) {
-      return;
-    }
-    try {
-      await backgroundTaskManager.stopBackgroundRunning(this.context);
-    } catch (error) {
-      // The system may already have canceled the task.
-    } finally {
-      this.backgroundTaskActive = false;
-    }
+    this.summaryStore.write(this.sessionDirectory, metrics);
   }
 
   private businessErrorMessage(error: Object): string {
