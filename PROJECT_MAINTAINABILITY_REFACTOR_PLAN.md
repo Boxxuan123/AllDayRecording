@@ -255,6 +255,8 @@ Pages -> ViewModels/Coordinators -> Domain services -> Transport/Storage adapter
 
 ### Phase 4：整理录音领域与诊断代码
 
+执行状态（2026-08-30）：已完成 Phase 4，用户已确认 WATCH 5 正常停止、熄屏录音和中断恢复回归通过，代码提交为 `550fb46`。`PcmSegmentedRecordingService.ets` 已从 663 行缩减为 405 行，AudioCapturer、后台任务、WAV 文件槽、会话契约/摘要分别独立；旧 AVRecorder 与 Sleep Mode Probe 已移入默认关闭且生产 UI 不可达的 `diagnostics`。Hypium 46/46 通过，`entry@ohosTest`、独立 clean Debug 和 Release 构建成功，详见 `doc/MAINTAINABILITY_PHASE_4_RECORDING_DOMAIN.md`。
+
 目标：区分生产录音链路、历史基线和诊断工具。
 
 任务：
@@ -380,7 +382,7 @@ Release 必须在 Debug 完成后再次 clean，避免共享 `entry/build` 造�
 | Phase 1 共享文件/WAV 基础设施 | 已完成 | `doc/MAINTAINABILITY_PHASE_1_SHARED_IO.md` | `8f7443c`、`c6f4fb7` |
 | Phase 2 Wear Engine 与同步状态机拆分 | 已完成 | `doc/MAINTAINABILITY_PHASE_2_SYNC.md` | `081109d`、`2c68691` |
 | Phase 3 Phone/Watch 页面与状态拆分 | 已完成 | `doc/MAINTAINABILITY_PHASE_3_PRESENTATION.md` | `2cfa334` |
-| Phase 4 录音领域与诊断隔离 | 未开始 |  |  |
+| Phase 4 录音领域与诊断隔离 | 已完成 | `doc/MAINTAINABILITY_PHASE_4_RECORDING_DOMAIN.md` | `550fb46` |
 | Phase 5 质量门禁与文档 | 未开始 |  |  |
 | Phase 6 Phone/Watch 物理模块评估 | 未开始 |  |  |
 | Phase 7 内容完整性协议升级 | 未批准 |  |  |
