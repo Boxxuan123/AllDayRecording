@@ -3,6 +3,7 @@ import {
   AUTOMATIC_QUEUE_DAMAGED,
   AUTOMATIC_QUEUE_DUPLICATE,
   AUTOMATIC_QUEUE_ENQUEUED,
+  AUTOMATIC_QUEUE_INVALID,
   AUTOMATIC_QUEUE_RESTORED,
   AutomaticSyncQueue,
   AutomaticSyncQueueClock,
@@ -110,8 +111,12 @@ class FakeSyncClock implements SyncClock, AutomaticSyncQueueClock {
 class FakeQueueFileSystem implements AutomaticSyncQueueFileSystem {
   texts: Map<string, string> = new Map<string, string>();
   files: Map<string, AutomaticSyncQueueFileInfo> = new Map<string, AutomaticSyncQueueFileInfo>();
+  existsCalls: Array<string> = [];
+  statCalls: Array<string> = [];
+  writeCalls: Array<string> = [];
 
   exists(path: string): boolean {
+    this.existsCalls.push(path);
     return this.texts.has(path) || this.files.has(path);
   }
 
@@ -120,10 +125,12 @@ class FakeQueueFileSystem implements AutomaticSyncQueueFileSystem {
   }
 
   writeText(path: string, content: string): void {
+    this.writeCalls.push(path);
     this.texts.set(path, content);
   }
 
   stat(path: string): AutomaticSyncQueueFileInfo {
+    this.statCalls.push(path);
     const result = this.files.get(path);
     if (result === undefined) {
       throw new Error(`测试文件不存在：${path}`);
@@ -185,6 +192,12 @@ export default function automaticQueueAndSyncStateTest() {
       expect(queue.completedCount()).assertEqual(2);
       expect(queue.count()).assertEqual(1);
       expect(queue.first()?.relativePath).assertEqual('session_a/segment_1.wav');
+      const repaired = JSON.parse(storage.texts.get('/files/automatic_sync_queue_v1.json') || '{}') as
+        AutomaticQueueManifestFixture;
+      expect(repaired.files.length).assertEqual(1);
+      expect(repaired.files[0].relativePath).assertEqual('session_a/segment_1.wav');
+      expect(storage.writeCalls.length).assertEqual(1);
+      expect(storage.files.has('/files/session_a/segment_1.wav')).assertTrue();
     });
 
     it('fallsBackWithoutQueueForDamagedJson', 0, () => {
@@ -194,6 +207,135 @@ export default function automaticQueueAndSyncStateTest() {
 
       expect(queue.restore()).assertEqual(AUTOMATIC_QUEUE_DAMAGED);
       expect(queue.count()).assertEqual(0);
+    });
+
+    it('rejectsNullElementBeforeFileAccess', 0, () => {
+      const storage = new FakeQueueFileSystem();
+      storage.texts.set('/files/automatic_sync_queue_v1.json',
+        '{"version":1,"updatedAt":1000,"completedCount":0,"files":[null]}');
+      const queue = new AutomaticSyncQueue('/files', storage, new FakeSyncClock());
+
+      expect(queue.restore()).assertEqual(AUTOMATIC_QUEUE_INVALID);
+      expect(queue.count()).assertEqual(0);
+      expect(storage.existsCalls.length).assertEqual(1);
+      expect(storage.statCalls.length).assertEqual(0);
+      expect(storage.writeCalls.length).assertEqual(0);
+    });
+
+    it('rejectsEntriesWithMissingPathsOrNames', 0, () => {
+      const invalidEntries: Array<string> = [
+        '{"relativePath":"session_a/segment.wav","size":32044,"durationMs":1000}',
+        '{"fileName":"segment.wav","size":32044,"durationMs":1000}',
+        '{"relativePath":"","fileName":"segment.wav","size":32044,"durationMs":1000}',
+        '{"relativePath":"session_a/segment.wav","fileName":"","size":32044,"durationMs":1000}'
+      ];
+      for (let index = 0; index < invalidEntries.length; index += 1) {
+        const storage = new FakeQueueFileSystem();
+        storage.texts.set('/files/automatic_sync_queue_v1.json',
+          `{"version":1,"updatedAt":1000,"completedCount":0,"files":[${invalidEntries[index]}]}`);
+        const queue = new AutomaticSyncQueue('/files', storage, new FakeSyncClock());
+
+        expect(queue.restore()).assertEqual(AUTOMATIC_QUEUE_INVALID);
+        expect(queue.count()).assertEqual(0);
+        expect(storage.existsCalls.length).assertEqual(1);
+        expect(storage.statCalls.length).assertEqual(0);
+        expect(storage.writeCalls.length).assertEqual(0);
+      }
+    });
+
+    it('rejectsInvalidSizeValues', 0, () => {
+      const invalidSizes: Array<string> = ['"32044"', '0', '-1', '10485761'];
+      for (let index = 0; index < invalidSizes.length; index += 1) {
+        const storage = new FakeQueueFileSystem();
+        storage.texts.set('/files/automatic_sync_queue_v1.json',
+          '{"version":1,"updatedAt":1000,"completedCount":0,"files":[' +
+          '{"relativePath":"session_a/segment.wav","fileName":"segment.wav","size":' +
+          `${invalidSizes[index]},"durationMs":1000}]}`);
+        const queue = new AutomaticSyncQueue('/files', storage, new FakeSyncClock());
+
+        expect(queue.restore()).assertEqual(AUTOMATIC_QUEUE_INVALID);
+        expect(storage.statCalls.length).assertEqual(0);
+        expect(storage.writeCalls.length).assertEqual(0);
+      }
+    });
+
+    it('rejectsInvalidDurationValues', 0, () => {
+      const invalidDurations: Array<string> = ['"1000"', '-1', 'null'];
+      for (let index = 0; index < invalidDurations.length; index += 1) {
+        const storage = new FakeQueueFileSystem();
+        storage.texts.set('/files/automatic_sync_queue_v1.json',
+          '{"version":1,"updatedAt":1000,"completedCount":0,"files":[' +
+          '{"relativePath":"session_a/segment.wav","fileName":"segment.wav","size":32044,' +
+          `"durationMs":${invalidDurations[index]}}]}`);
+        const queue = new AutomaticSyncQueue('/files', storage, new FakeSyncClock());
+
+        expect(queue.restore()).assertEqual(AUTOMATIC_QUEUE_INVALID);
+        expect(storage.statCalls.length).assertEqual(0);
+        expect(storage.writeCalls.length).assertEqual(0);
+      }
+    });
+
+    it('rejectsUnsafePathsWithoutAccessingTarget', 0, () => {
+      const invalidPaths: Array<string> = ['/absolute/segment.wav', 'session_a/../segment.wav'];
+      for (let index = 0; index < invalidPaths.length; index += 1) {
+        const storage = new FakeQueueFileSystem();
+        storage.texts.set('/files/automatic_sync_queue_v1.json',
+          '{"version":1,"updatedAt":1000,"completedCount":0,"files":[' +
+          `{"relativePath":"${invalidPaths[index]}","fileName":"segment.wav",` +
+          '"size":32044,"durationMs":1000}]}');
+        const queue = new AutomaticSyncQueue('/files', storage, new FakeSyncClock());
+
+        expect(queue.restore()).assertEqual(AUTOMATIC_QUEUE_INVALID);
+        expect(storage.existsCalls.length).assertEqual(1);
+        expect(storage.statCalls.length).assertEqual(0);
+        expect(storage.writeCalls.length).assertEqual(0);
+      }
+    });
+
+    it('rejectsPartAndNonAudioTypes', 0, () => {
+      const invalidNames: Array<string> = ['segment.wav.part', 'segment.txt'];
+      for (let index = 0; index < invalidNames.length; index += 1) {
+        const storage = new FakeQueueFileSystem();
+        storage.texts.set('/files/automatic_sync_queue_v1.json',
+          '{"version":1,"updatedAt":1000,"completedCount":0,"files":[' +
+          `{"relativePath":"session_a/${invalidNames[index]}","fileName":"${invalidNames[index]}",` +
+          '"size":32044,"durationMs":1000}]}');
+        const queue = new AutomaticSyncQueue('/files', storage, new FakeSyncClock());
+
+        expect(queue.restore()).assertEqual(AUTOMATIC_QUEUE_INVALID);
+        expect(storage.statCalls.length).assertEqual(0);
+        expect(storage.writeCalls.length).assertEqual(0);
+      }
+    });
+
+    it('rejectsInvalidManifestShapeAndCounts', 0, () => {
+      const invalidManifests: Array<string> = [
+        '[]',
+        '{"version":"1","updatedAt":1000,"completedCount":0,"files":[]}',
+        '{"version":1,"updatedAt":"1000","completedCount":0,"files":[]}',
+        '{"version":1,"updatedAt":-1,"completedCount":0,"files":[]}',
+        '{"version":1,"updatedAt":1000,"completedCount":"0","files":[]}',
+        '{"version":1,"updatedAt":1000,"completedCount":-1,"files":[]}',
+        '{"version":1,"updatedAt":1000,"completedCount":1.5,"files":[]}',
+        '{"version":1,"updatedAt":1000,"completedCount":0,"files":{}}'
+      ];
+      for (let index = 0; index < invalidManifests.length; index += 1) {
+        const storage = new FakeQueueFileSystem();
+        storage.texts.set('/files/automatic_sync_queue_v1.json', invalidManifests[index]);
+        const queue = new AutomaticSyncQueue('/files', storage, new FakeSyncClock());
+
+        expect(queue.restore()).assertEqual(AUTOMATIC_QUEUE_INVALID);
+        expect(queue.count()).assertEqual(0);
+        expect(storage.statCalls.length).assertEqual(0);
+        expect(storage.writeCalls.length).assertEqual(0);
+      }
+
+      const nullStorage = new FakeQueueFileSystem();
+      nullStorage.texts.set('/files/automatic_sync_queue_v1.json', 'null');
+      const nullQueue = new AutomaticSyncQueue('/files', nullStorage, new FakeSyncClock());
+      expect(nullQueue.restore()).assertEqual(AUTOMATIC_QUEUE_DAMAGED);
+      expect(nullStorage.statCalls.length).assertEqual(0);
+      expect(nullStorage.writeCalls.length).assertEqual(0);
     });
 
     it('persistsSameManifestAndRejectsDuplicatePath', 0, () => {

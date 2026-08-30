@@ -101,7 +101,40 @@ class SystemAutomaticSyncQueueClock implements AutomaticSyncQueueClock {
 }
 
 function isAutomaticQueueManifest(manifest: AutomaticQueueManifest): boolean {
-  return Array.isArray(manifest.files);
+  if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest) ||
+    typeof manifest.version !== 'number' || manifest.version !== AUTOMATIC_QUEUE_MANIFEST_VERSION ||
+    typeof manifest.updatedAt !== 'number' || !Number.isFinite(manifest.updatedAt) || manifest.updatedAt < 0 ||
+    typeof manifest.completedCount !== 'number' || !Number.isFinite(manifest.completedCount) ||
+    manifest.completedCount < 0 || Math.floor(manifest.completedCount) !== manifest.completedCount ||
+    !Array.isArray(manifest.files)) {
+    return false;
+  }
+  for (let index = 0; index < manifest.files.length; index += 1) {
+    if (!isAutomaticQueueManifestEntry(manifest.files[index])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isAutomaticQueueManifestEntry(entry: AutomaticQueueManifestEntry): boolean {
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry) ||
+    typeof entry.relativePath !== 'string' || entry.relativePath.trim().length === 0 ||
+    typeof entry.fileName !== 'string' || entry.fileName.trim().length === 0 ||
+    typeof entry.size !== 'number' || !Number.isFinite(entry.size) ||
+    entry.size <= 0 || entry.size > MAX_RECORDING_BYTES ||
+    typeof entry.durationMs !== 'number' || !Number.isFinite(entry.durationMs) || entry.durationMs < 0) {
+    return false;
+  }
+  if (entry.relativePath.startsWith('/') || entry.relativePath.includes('..')) {
+    return false;
+  }
+  return isSupportedAudioFile(entry.relativePath) && isSupportedAudioFile(entry.fileName);
+}
+
+function isSupportedAudioFile(path: string): boolean {
+  const lowerPath = path.toLowerCase();
+  return (lowerPath.endsWith('.wav') || lowerPath.endsWith('.m4a')) && !lowerPath.endsWith('.part');
 }
 
 export class AutomaticSyncQueue {
@@ -141,7 +174,7 @@ export class AutomaticSyncQueue {
       return loaded.status === JSON_LOAD_DAMAGED ? AUTOMATIC_QUEUE_DAMAGED : AUTOMATIC_QUEUE_INVALID;
     }
     const manifest = loaded.value;
-    this.completed = Math.max(0, Math.floor(manifest.completedCount || 0));
+    this.completed = manifest.completedCount;
     for (let index = 0; index < manifest.files.length; index += 1) {
       const entry = manifest.files[index];
       if (!this.isSafeEntry(entry)) {
@@ -265,10 +298,7 @@ export class AutomaticSyncQueue {
   }
 
   private isSafeEntry(entry: AutomaticQueueManifestEntry): boolean {
-    const lowerName = entry.fileName.toLowerCase();
-    return entry.relativePath.length > 0 && !entry.relativePath.startsWith('/') &&
-      !entry.relativePath.includes('..') && entry.size > 0 && entry.size <= MAX_RECORDING_BYTES &&
-      (lowerName.endsWith('.wav') || lowerName.endsWith('.m4a')) && !lowerName.endsWith('.part');
+    return isAutomaticQueueManifestEntry(entry);
   }
 
   private isSyncableRecording(recording: RecordingFile): boolean {

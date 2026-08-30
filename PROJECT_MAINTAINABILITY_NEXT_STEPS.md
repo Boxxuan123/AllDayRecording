@@ -28,8 +28,8 @@ Phase 0–6 已经完成主要结构目标：Watch、Phone 和 `common` 在源�
 - Debug：独立 `clean assembleApp` 成功。
 - Release：再次独立 `clean assembleApp` 成功。
 - Release `.app`：解包后恰好包含 Watch `entry` 与 Phone `phone` 两个 HAP。
-- 测试源码：Watch 43 项、Phone 3 项，共 46 项。
-- 宿主机 Hypium：`hostTest` 已在允许本地 socket 的 Darwin 环境生成当前报告，Watch 43/43、Phone 3/3，合计 46/46 通过；受限环境仍会在 `Darwin` 后有界超时。
+- 测试源码：Watch 50 项、Phone 3 项，共 53 项；比 N0 多出的 7 项均为 N1 队列结构损坏恢复测试。
+- 宿主机 Hypium：`hostTest` 已在允许本地 socket 的 Darwin 环境生成当前报告，Watch 50/50、Phone 3/3，合计 53/53 通过；受限环境仍会在 `Darwin` 后有界超时。
 - 审查结束时 Git 工作区干净。
 
 ### 2.2 已知可靠性缺口
@@ -158,6 +158,13 @@ Debug/Release 与双 HAP 产物边界均通过。详细证据见
 fix: harden automatic sync queue manifest recovery
 ```
 
+执行状态（2026-08-30）：已完成。清单及元素会在候选文件访问前完成类型、计数、路径、
+大小、时长和音频后缀校验；结构无效返回 `invalid`，损坏 JSON/空文档返回 `damaged`，
+合法清单缺失项的过滤与剩余队列持久化行为保持不变。新增 7 项测试后当前真实报告为
+Watch 50/50、Phone 3/3，合计 53/53；Linter、`entry@ohosTest`、独立 clean
+Debug/Release 与双 HAP 产物边界均通过。详细证据见
+`doc/MAINTAINABILITY_PHASE_N1_QUEUE_RECOVERY.md`。
+
 ## 6. Phase N2：消除构建产生的 Git 污染
 
 ### 目标
@@ -251,7 +258,7 @@ chore: replace phase probe names in phone startup logs
 
 ## 10. 提交与停止规则
 
-1. Phase N0 已完成；默认下一次只执行 Phase N1，且必须先获得单独批准。
+1. Phase N0、N1 已完成；默认下一次只执行 Phase N2，且必须先获得单独批准。
 2. 每阶段开始前列出精确文件允许清单，不使用 `git add .`。
 3. 提交前检查 staged stat、name-status、diff check，以及敏感/本地/设备产物。
 4. 构建、测试、日志和设备备份不得进入 Git。
@@ -262,7 +269,7 @@ chore: replace phase probe names in phone startup logs
 
 只有同时满足以下条件，维护性收尾才可标记完成：
 
-- 46 项测试拥有当前提交对应的真实通过报告，或用户明确接受并记录替代门禁。
+- 当前全部测试拥有当前提交对应的真实通过报告，或用户明确接受并记录替代门禁。
 - 自动同步队列面对结构损坏清单不抛异常、不修改录音源文件。
 - Debug/Release 构建不再污染 Git 工作区。
 - 正式生产日志不再使用已结束 Phase 的临时命名。
