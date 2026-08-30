@@ -14,8 +14,12 @@ export {
 export {
   WifiTransferUpdateHandler,
   WifiRecordingReceivedHandler,
+  WifiExistingRecordingHandler,
+  WifiTransferBatchResult,
+  WifiTransferBatchCompletedHandler,
   sanitizeWifiRecordingFileName,
   isSafeWifiRecordingSourcePath,
+  isExactWifiRecordingMatch,
   wifiRecordingTransferErrorMessage,
   WifiRecordingTransferService
 } from './src/main/ets/services/WifiRecordingTransferService';

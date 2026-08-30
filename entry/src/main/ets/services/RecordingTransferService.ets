@@ -61,7 +61,6 @@ import {
 export { wearEngineErrorMessage } from 'common';
 
 const MAX_RECORDING_BYTES: number = 10 * 1024 * 1024;
-const MAX_SYNC_FILE_COUNT: number = 1;
 const INVENTORY_KEYS_PER_PAGE: number = 24;
 const TRANSFER_RETRY_ATTEMPTS: number = 3;
 const TRANSFER_RETRY_BASE_DELAY_MS: number = 800;
@@ -126,10 +125,6 @@ function scanSyncableFiles(filesDirectory: string, knownFileKeys: Array<string>)
     }
   }
   result.files = missing;
-  if (result.files.length > MAX_SYNC_FILE_COUNT) {
-    result.remainingCount = result.files.length - MAX_SYNC_FILE_COUNT;
-    result.files = result.files.slice(0, MAX_SYNC_FILE_COUNT);
-  }
   return result;
 }
 
@@ -223,6 +218,7 @@ export class WearEngineRecordingSender {
   private inventoryPageCount: number = 0;
   private inventoryPagesReceived: Array<number> = [];
   private inventoryKnownKeys: Array<string> = [];
+  private confirmedPhoneFileKeys: Array<string> = [];
   private automaticQueue: AutomaticSyncQueue;
   private controlHandler: WatchRecordingControlHandler | undefined;
   private controlCoordinator: WatchRecordingControlCoordinator = new WatchRecordingControlCoordinator();
@@ -602,7 +598,7 @@ export class WearEngineRecordingSender {
     let sentCount: number = 0;
     let skippedCount: number = 0;
     try {
-      const scan = scanSyncableFiles(this.context.filesDir, knownFileKeys);
+      const scan = scanSyncableFiles(this.context.filesDir, this.withConfirmedPhoneFileKeys(knownFileKeys));
       skippedCount = scan.skippedCount;
       const beginMessage: WatchSyncProtocolMessage = {
         version: WATCH_SYNC_PROTOCOL_VERSION,
@@ -638,6 +634,7 @@ export class WearEngineRecordingSender {
           transport = await this.transferDescribedRecordingWithRetry(
             transport, fileMessage, descriptor, source);
           this.automaticRetryCoordinator.markSuccess();
+          this.markPhoneFileConfirmed(source.relativePath, source.size);
           sentCount += 1;
           this.removeAutomaticFile(source.path);
           this.updateStatus(`同步 ${sentCount}/${scan.files.length}，手表原文件保留`);
@@ -731,6 +728,7 @@ export class WearEngineRecordingSender {
           transport = await this.transferDescribedRecordingWithRetry(
             transport, fileMessage, descriptor, source);
           this.automaticRetryCoordinator.markSuccess();
+          this.markPhoneFileConfirmed(source.relativePath, source.size);
           const queueSaved = this.automaticQueue.complete(source.path);
           this.updateStatus(queueSaved ? `自动同步完成第 ${queuePosition} 段：${source.fileName}，手表原文件保留` :
             `第 ${queuePosition} 段已确认，但队列清单更新失败；录音文件仍保留`);
@@ -763,6 +761,24 @@ export class WearEngineRecordingSender {
 
   private removeAutomaticFile(path: string): void {
     this.automaticQueue.removeIfQueued(path);
+  }
+
+  private markPhoneFileConfirmed(relativePath: string, size: number): void {
+    const key = exactWatchFileKey(relativePath, size);
+    if (this.confirmedPhoneFileKeys.indexOf(key) < 0) {
+      this.confirmedPhoneFileKeys.push(key);
+    }
+  }
+
+  private withConfirmedPhoneFileKeys(knownFileKeys: Array<string>): Array<string> {
+    const result = knownFileKeys.slice();
+    for (let index = 0; index < this.confirmedPhoneFileKeys.length; index += 1) {
+      const key = this.confirmedPhoneFileKeys[index];
+      if (result.indexOf(key) < 0) {
+        result.push(key);
+      }
+    }
+    return result;
   }
 
   private async sendFileFailed(transport: P2pTransport, descriptor: WatchSyncFileDescriptor): Promise<void> {

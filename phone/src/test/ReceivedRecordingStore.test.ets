@@ -150,5 +150,51 @@ export default function receivedRecordingStoreTest() {
         removeTestTree(root, listDirectory);
       }
     });
+
+    it('replacesSameWifiIdentityWithNewVerifiedCopy', 0, () => {
+      const root = createTestDirectory('received_wifi_replace');
+      const syncRoot = `${root}/${SYNC_RECEIVE_DIRECTORY}`;
+      const listDirectory = listFixture(new Map<string, Array<string>>([
+        [root, ['old.wav', 'new.wav', SYNC_RECEIVE_DIRECTORY]],
+        [syncRoot, ['received_index_v1.json']]
+      ]));
+      try {
+        const oldPath = `${root}/old.wav`;
+        const newPath = `${root}/new.wav`;
+        writeTestBytes(oldPath, new Uint8Array([1, 2]));
+        writeTestBytes(newPath, new Uint8Array([3, 4]));
+        const store = new ReceivedRecordingStore(root, listDirectory, readTestText, writeTestText);
+        const syncKey = exactWatchFileKey('session_a/segment.wav', 2);
+        const oldRecording: ReceivedRecordingFile = {
+          fileName: 'segment.wav',
+          path: oldPath,
+          size: 2,
+          durationMs: 0,
+          requestId: 'wifi_old',
+          sourcePath: 'session_a/segment.wav',
+          receivedAt: 100,
+          syncKey: syncKey
+        };
+        const newRecording: ReceivedRecordingFile = {
+          fileName: 'segment.wav',
+          path: newPath,
+          size: 2,
+          durationMs: 0,
+          requestId: 'wifi_new',
+          sourcePath: 'session_a/segment.wav',
+          receivedAt: 200,
+          syncKey: syncKey
+        };
+
+        store.record(oldRecording);
+        const stored = store.recordVerified(newRecording);
+
+        expect(stored.path).assertEqual(newPath);
+        expect(store.list().length).assertEqual(1);
+        expect(store.findWifiExisting('session_a/segment.wav', 2)?.path).assertEqual(newPath);
+      } finally {
+        removeTestTree(root, listDirectory);
+      }
+    });
   });
 }

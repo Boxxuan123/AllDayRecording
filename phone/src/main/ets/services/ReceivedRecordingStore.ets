@@ -97,6 +97,17 @@ export class ReceivedRecordingStore {
     return this.findExact(descriptor);
   }
 
+  findWifiExisting(sourcePath: string, size: number): ReceivedRecordingFile | undefined {
+    const key = exactWatchFileKey(sourcePath, size);
+    for (let index = 0; index < this.recordings.length; index += 1) {
+      const recording = this.recordings[index];
+      if (recording.syncKey === key || (recording.sourcePath === sourcePath && recording.size === size)) {
+        return recording;
+      }
+    }
+    return undefined;
+  }
+
   record(recording: ReceivedRecordingFile): ReceivedRecordingFile {
     for (let index = 0; index < this.recordings.length; index += 1) {
       const existing = this.recordings[index];
@@ -113,6 +124,31 @@ export class ReceivedRecordingStore {
       // The copied audio remains authoritative and will rebuild the index on the next launch.
     }
     return recording;
+  }
+
+  recordVerified(recording: ReceivedRecordingFile): ReceivedRecordingFile {
+    if (recording.syncKey === undefined) {
+      return this.record(recording);
+    }
+    for (let index = 0; index < this.recordings.length; index += 1) {
+      const existing = this.recordings[index];
+      if (existing.syncKey !== recording.syncKey &&
+        (existing.sourcePath !== recording.sourcePath || existing.size !== recording.size)) {
+        continue;
+      }
+      if (existing.path === recording.path) {
+        return existing;
+      }
+      this.recordings[index] = recording;
+      this.sortNewestFirst();
+      try {
+        this.writeManifest();
+      } catch (error) {
+        // Both copied audio files remain recoverable if the index update fails.
+      }
+      return recording;
+    }
+    return this.record(recording);
   }
 
   private loadFromDisk(): Array<ReceivedRecordingFile> {

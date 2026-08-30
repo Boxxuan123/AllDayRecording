@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@ohos/hypium';
 import {
+  isExactWifiRecordingMatch,
   isSafeWifiRecordingSourcePath,
   sanitizeWifiRecordingFileName
 } from 'common';
@@ -17,6 +18,18 @@ export default function wifiRecordingTransferPolicyTest() {
     it('sanitizesReceivedFileNames', 0, () => {
       expect(sanitizeWifiRecordingFileName('segment 01/测试.wav')).assertEqual('segment_01___.wav');
       expect(sanitizeWifiRecordingFileName('segment_000001.wav')).assertEqual('segment_000001.wav');
+    });
+
+    it('skipsOnlyAnExactPathSizeAndHashMatch', 0, () => {
+      const hash = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+      const otherHash = '1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+      expect(isExactWifiRecordingMatch('session_a/segment.wav', 1024, hash,
+        'session_a/segment.wav', 1024, hash.toUpperCase())).assertTrue();
+      expect(isExactWifiRecordingMatch('session_a/segment.wav', 1024, hash,
+        'session_b/segment.wav', 1024, hash)).assertFalse();
+      expect(isExactWifiRecordingMatch('session_a/segment.wav', 1024, hash,
+        'session_a/segment.wav', 1024, otherHash)).assertFalse();
     });
   });
 }

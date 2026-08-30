@@ -33,9 +33,21 @@ const FRAME_END: number = 3;
 const FRAME_ACK: number = 4;
 const FRAME_ERROR: number = 5;
 const FRAME_READY: number = 6;
+const FRAME_BATCH_END: number = 7;
+const FRAME_BATCH_ACK: number = 8;
 
 export type WifiTransferUpdateHandler = (status: string, progress: number) => void;
 export type WifiRecordingReceivedHandler = (recording: ReceivedRecordingFile, sha256: string) => void;
+export type WifiExistingRecordingHandler =
+  (sourcePath: string, size: number) => ReceivedRecordingFile | undefined;
+
+export interface WifiTransferBatchResult {
+  total: number;
+  transferred: number;
+  alreadyPresent: number;
+}
+
+export type WifiTransferBatchCompletedHandler = (result: WifiTransferBatchResult) => void;
 
 interface TransferMetadata {
   protocol: string;
@@ -47,6 +59,8 @@ interface TransferMetadata {
   durationMs: number;
   sha256: string;
   chunkSize: number;
+  batchIndex: number;
+  batchTotal: number;
 }
 
 interface TransferAck {
@@ -58,6 +72,12 @@ interface TransferAck {
 interface TransferError {
   transferToken: number;
   message: string;
+}
+
+interface TransferBatchSummary extends WifiTransferBatchResult {
+  protocol: string;
+  version: number;
+  batchToken: number;
 }
 
 interface ReceivingFile {
@@ -72,6 +92,8 @@ interface ReceivingFile {
   expectedSize: number;
   expectedHash: string;
   expectedChunkSize: number;
+  batchIndex: number;
+  batchTotal: number;
   receivedSize: number;
   nextSequence: number;
   startedAt: number;
@@ -79,6 +101,7 @@ interface ReceivingFile {
 
 interface RecordingCandidate extends RecordingFile {
   modifiedAt: number;
+  relativePath: string;
 }
 
 function delay(milliseconds: number): Promise<void> {
@@ -119,6 +142,13 @@ export function sanitizeWifiRecordingFileName(fileName: string): string {
 export function isSafeWifiRecordingSourcePath(sourcePath: string): boolean {
   return sourcePath.length > 0 && !sourcePath.startsWith('/') && !sourcePath.includes('..') &&
     (sourcePath.toLowerCase().endsWith('.wav') || sourcePath.toLowerCase().endsWith('.m4a'));
+}
+
+export function isExactWifiRecordingMatch(incomingSourcePath: string, incomingSize: number,
+  incomingSha256: string, existingSourcePath: string, existingSize: number,
+  existingSha256: string): boolean {
+  return incomingSourcePath === existingSourcePath && incomingSize === existingSize &&
+    incomingSha256.toLowerCase() === existingSha256.toLowerCase();
 }
 
 function transferRateText(bytes: number, elapsedMs: number): string {
@@ -262,17 +292,24 @@ export class WifiRecordingTransferService {
   private receivingFile: ReceivingFile | undefined = undefined;
   private readyToken: number = 0;
   private finalAck: TransferAck | undefined = undefined;
+  private batchAckToken: number = 0;
   private remoteFailureMessage: string = '';
   private backgroundTaskActive: boolean = false;
   private sending: boolean = false;
   private closingPeer: boolean = false;
   private lastProgress: number = 0;
+  private existingRecordingHandler: WifiExistingRecordingHandler | undefined;
+  private batchCompletedHandler: WifiTransferBatchCompletedHandler | undefined;
 
   constructor(context: common.UIAbilityContext, updateHandler: WifiTransferUpdateHandler,
-    receivedHandler: WifiRecordingReceivedHandler) {
+    receivedHandler: WifiRecordingReceivedHandler,
+    existingRecordingHandler?: WifiExistingRecordingHandler,
+    batchCompletedHandler?: WifiTransferBatchCompletedHandler) {
     this.context = context;
     this.updateHandler = updateHandler;
     this.receivedHandler = receivedHandler;
+    this.existingRecordingHandler = existingRecordingHandler;
+    this.batchCompletedHandler = batchCompletedHandler;
   }
 
   describeCapability(): string {
@@ -286,22 +323,48 @@ export class WifiRecordingTransferService {
   }
 
   findLatestRecording(): RecordingFile | undefined {
-    const candidate = this.findLatestInDirectory(this.context.filesDir, '');
-    if (candidate === undefined) {
+    const candidates: Array<RecordingCandidate> = [];
+    this.collectRecordingCandidates(this.context.filesDir, '', candidates);
+    let latest: RecordingCandidate | undefined = undefined;
+    for (let index = 0; index < candidates.length; index += 1) {
+      const candidate = candidates[index];
+      if (latest === undefined || candidate.modifiedAt > latest.modifiedAt) {
+        latest = candidate;
+      }
+    }
+    if (latest === undefined) {
       return undefined;
     }
     return {
-      fileName: candidate.fileName,
-      path: candidate.path,
-      size: candidate.size,
-      durationMs: candidate.durationMs
+      fileName: latest.fileName,
+      path: latest.path,
+      size: latest.size,
+      durationMs: latest.durationMs
     };
+  }
+
+  findAllRecordings(): Array<RecordingFile> {
+    const candidates: Array<RecordingCandidate> = [];
+    this.collectRecordingCandidates(this.context.filesDir, '', candidates);
+    candidates.sort((left: RecordingCandidate, right: RecordingCandidate): number =>
+      left.relativePath.localeCompare(right.relativePath));
+    const result: Array<RecordingFile> = [];
+    for (let index = 0; index < candidates.length; index += 1) {
+      const candidate = candidates[index];
+      result.push({
+        fileName: candidate.fileName,
+        path: candidate.path,
+        size: candidate.size,
+        durationMs: candidate.durationMs
+      });
+    }
+    return result;
   }
 
   async prepareReceiver(): Promise<void> {
     this.assertReady();
     if (this.serverSocket !== undefined) {
-      this.update('手机 Wi-Fi 接收已就绪，请到手表发送最近录音', 0);
+      this.update('手机 Wi-Fi 接收已就绪，请到手表同步全部录音', 0);
       return;
     }
     await this.startBackgroundTransfer();
@@ -329,7 +392,7 @@ export class WifiRecordingTransferService {
         }]
       };
       this.registeredService = await mdns.addLocalService(this.context, advertised);
-      this.update('手机 Wi-Fi 接收已就绪，请到手表发送最近录音', 0);
+      this.update('手机 Wi-Fi 接收已就绪，请到手表同步全部录音', 0);
     } catch (error) {
       await this.shutdownTransport();
       await this.stopBackgroundTransfer();
@@ -345,53 +408,99 @@ export class WifiRecordingTransferService {
   }
 
   async send(recording: RecordingFile): Promise<void> {
+    await this.sendAll([recording]);
+  }
+
+  async sendAll(recordings: Array<RecordingFile>): Promise<WifiTransferBatchResult> {
     if (this.sending) {
-      throw new Error('录音正在通过 Wi-Fi 发送，请勿重复操作');
+      throw new Error('录音正在通过 Wi-Fi 批量发送，请勿重复操作');
     }
     this.assertReady();
-    if (!accessFileChecked(recording.path)) {
-      throw new Error('手表中找不到待发送录音');
-    }
-    const fileStat = statFileChecked(recording.path);
-    if (isDirectoryChecked(fileStat) || fileStat.size <= 0 || fileStat.size > MAX_FILE_BYTES) {
-      throw new Error('待发送录音为空或超过 512 MB 限制');
-    }
-    const sourcePath = this.relativeSourcePath(recording.path);
-    if (!isSafeWifiRecordingSourcePath(sourcePath)) {
-      throw new Error('待发送录音路径无效');
+    if (recordings.length === 0) {
+      throw new Error('没有找到可同步的完整录音');
     }
 
     this.sending = true;
+    const result: WifiTransferBatchResult = {
+      total: recordings.length,
+      transferred: 0,
+      alreadyPresent: 0
+    };
     try {
       await this.startBackgroundTransfer();
-      this.update('正在计算手表录音 SHA-256', 1);
-      const sourceHash = await hashFileChecked(recording.path);
       this.update('正在同一 Wi-Fi 中自动查找手机', 2);
+      this.batchAckToken = 0;
       const receiver = await this.discoverReceiver();
       await this.connectReceiver(receiver);
-      const transferToken = Math.max(1, Math.floor(Date.now() % 4294967295));
-      const metadata: TransferMetadata = {
+      const batchToken = Math.max(1, Math.floor(Date.now() % 4294967295));
+      for (let index = 0; index < recordings.length; index += 1) {
+        const transferred = await this.sendBatchRecording(recordings[index], index + 1,
+          recordings.length, batchToken);
+        if (transferred) {
+          result.transferred += 1;
+        } else {
+          result.alreadyPresent += 1;
+        }
+      }
+      const summary: TransferBatchSummary = {
         protocol: PROTOCOL_NAME,
         version: 1,
-        transferToken: transferToken,
-        fileName: recording.fileName,
-        sourcePath: sourcePath,
-        size: fileStat.size,
-        durationMs: recording.durationMs,
-        sha256: sourceHash,
-        chunkSize: WIFI_CHUNK_BYTES
+        batchToken: batchToken,
+        total: result.total,
+        transferred: result.transferred,
+        alreadyPresent: result.alreadyPresent
       };
-      this.readyToken = 0;
-      this.finalAck = undefined;
-      this.remoteFailureMessage = '';
-      await this.writePacket(FRAME_START, transferToken, 0, encodeJson(metadata));
-      await this.waitForReady(transferToken);
-      await this.sendFile(recording.path, metadata);
+      await this.writePacket(FRAME_BATCH_END, batchToken, recordings.length, encodeJson(summary));
+      await this.waitForBatchAck(batchToken);
+      this.update(`Wi-Fi 全量同步完成：新增 ${result.transferred} 个，已存在 ${result.alreadyPresent} 个`, 100);
+      return result;
     } finally {
       this.sending = false;
       await this.closePeer();
       await this.stopBackgroundTransfer();
     }
+  }
+
+  private async sendBatchRecording(recording: RecordingFile, batchIndex: number,
+    batchTotal: number, batchToken: number): Promise<boolean> {
+    if (!accessFileChecked(recording.path)) {
+      throw new Error(`手表中找不到待发送录音：${recording.fileName}`);
+    }
+    const fileStat = statFileChecked(recording.path);
+    if (isDirectoryChecked(fileStat) || fileStat.size <= 0 || fileStat.size > MAX_FILE_BYTES) {
+      throw new Error(`待发送录音为空或超过 512 MB 限制：${recording.fileName}`);
+    }
+    const sourcePath = this.relativeSourcePath(recording.path);
+    if (!isSafeWifiRecordingSourcePath(sourcePath)) {
+      throw new Error(`待发送录音路径无效：${recording.fileName}`);
+    }
+    this.updateBatchProgress(`正在计算 ${batchIndex}/${batchTotal} 的 SHA-256`, batchIndex, batchTotal, 1);
+    const sourceHash = await hashFileChecked(recording.path);
+    const transferToken = Math.max(1, Math.floor((batchToken + batchIndex) % 4294967295));
+    const metadata: TransferMetadata = {
+      protocol: PROTOCOL_NAME,
+      version: 1,
+      transferToken: transferToken,
+      fileName: recording.fileName,
+      sourcePath: sourcePath,
+      size: fileStat.size,
+      durationMs: recording.durationMs,
+      sha256: sourceHash,
+      chunkSize: WIFI_CHUNK_BYTES,
+      batchIndex: batchIndex,
+      batchTotal: batchTotal
+    };
+    this.readyToken = 0;
+    this.finalAck = undefined;
+    this.remoteFailureMessage = '';
+    await this.writePacket(FRAME_START, transferToken, 0, encodeJson(metadata));
+    if (!await this.waitForReady(metadata)) {
+      this.updateBatchProgress(`手机已有 ${batchIndex}/${batchTotal}：${recording.fileName}`,
+        batchIndex, batchTotal, 100);
+      return false;
+    }
+    await this.sendFile(recording.path, metadata);
+    return true;
   }
 
   stop(): void {
@@ -417,9 +526,9 @@ export class WifiRecordingTransferService {
     }
   }
 
-  private findLatestInDirectory(filesDirectory: string, relativeDirectory: string): RecordingCandidate | undefined {
+  private collectRecordingCandidates(filesDirectory: string, relativeDirectory: string,
+    result: Array<RecordingCandidate>): void {
     const directory = relativeDirectory.length > 0 ? `${filesDirectory}/${relativeDirectory}` : filesDirectory;
-    let latest: RecordingCandidate | undefined = undefined;
     const entries = listFilesChecked(directory);
     for (let index = 0; index < entries.length; index += 1) {
       const fileName = entries[index];
@@ -430,10 +539,7 @@ export class WifiRecordingTransferService {
       const path = `${filesDirectory}/${relativePath}`;
       const stat = statFileChecked(path);
       if (isDirectoryChecked(stat)) {
-        const nested = this.findLatestInDirectory(filesDirectory, relativePath);
-        if (nested !== undefined && (latest === undefined || nested.modifiedAt > latest.modifiedAt)) {
-          latest = nested;
-        }
+        this.collectRecordingCandidates(filesDirectory, relativePath, result);
         continue;
       }
       const lowerName = fileName.toLowerCase();
@@ -442,17 +548,15 @@ export class WifiRecordingTransferService {
         continue;
       }
       const modifiedAt = Math.round(stat.mtime * 1000);
-      if (latest === undefined || modifiedAt > latest.modifiedAt) {
-        latest = {
-          fileName: fileName,
-          path: path,
-          size: stat.size,
-          durationMs: 0,
-          modifiedAt: modifiedAt
-        };
-      }
+      result.push({
+        fileName: fileName,
+        path: path,
+        size: stat.size,
+        durationMs: 0,
+        modifiedAt: modifiedAt,
+        relativePath: relativePath
+      });
     }
-    return latest;
   }
 
   private relativeSourcePath(path: string): string {
@@ -576,7 +680,7 @@ export class WifiRecordingTransferService {
       }
       if (this.receivingFile !== undefined) {
         this.abortReceive('Wi-Fi 连接在文件完成前关闭');
-      } else if (this.sending && this.finalAck === undefined) {
+      } else if (this.sending && this.batchAckToken === 0) {
         this.remoteFailureMessage = '手机提前关闭了 Wi-Fi 连接';
       }
     };
@@ -601,7 +705,8 @@ export class WifiRecordingTransferService {
     let totalRead = 0;
     let sequence = 0;
     const startedAt = Date.now();
-    this.update(`开始 Wi-Fi 传输（${metadata.chunkSize / 1024} KiB/片）`, 4);
+    this.updateBatchProgress(`开始发送 ${metadata.batchIndex}/${metadata.batchTotal}（${metadata.chunkSize /
+      1024} KiB/片）`, metadata.batchIndex, metadata.batchTotal, 4);
     try {
       while (totalRead < metadata.size) {
         const buffer = new ArrayBuffer(Math.min(metadata.chunkSize, metadata.size - totalRead));
@@ -614,22 +719,24 @@ export class WifiRecordingTransferService {
         totalRead += bytesRead;
         if (totalRead === metadata.size || sequence % 8 === 0) {
           const progress = Math.min(98, Math.floor(totalRead * 100 / metadata.size));
-          this.update(`Wi-Fi 发送中 ${totalRead}/${metadata.size} 字节`, progress);
+          this.updateBatchProgress(`正在发送 ${metadata.batchIndex}/${metadata.batchTotal}：${totalRead}/${
+            metadata.size} 字节`, metadata.batchIndex, metadata.batchTotal, progress);
         }
       }
     } finally {
       closeFileChecked(input.fd);
     }
     await this.writePacket(FRAME_END, metadata.transferToken, sequence, encodeJson(metadata));
-    this.update('Wi-Fi 数据已发完，等待手机落盘与 SHA-256 确认', 99);
+    this.updateBatchProgress(`第 ${metadata.batchIndex}/${metadata.batchTotal} 个已发完，等待手机校验`,
+      metadata.batchIndex, metadata.batchTotal, 99);
     await this.waitForFinalAck(metadata.transferToken);
     const ack = this.finalAck;
     if (ack === undefined || ack.sha256.toLowerCase() !== metadata.sha256.toLowerCase() ||
       ack.size !== metadata.size) {
       throw new Error('手机最终确认与手表源文件不一致');
     }
-    this.update(`Wi-Fi 传输完成，手机已校验 ${ack.size} 字节（${transferRateText(ack.size,
-      Date.now() - startedAt)}）`, 100);
+    this.updateBatchProgress(`第 ${metadata.batchIndex}/${metadata.batchTotal} 个已校验（${transferRateText(
+      ack.size, Date.now() - startedAt)}）`, metadata.batchIndex, metadata.batchTotal, 100);
   }
 
   private async writePacket(type: number, transferToken: number, sequence: number,
@@ -698,6 +805,10 @@ export class WifiRecordingTransferService {
       await this.finishReceive(transferToken, sequence, decodeJson<TransferMetadata>(payload));
       return;
     }
+    if (type === FRAME_BATCH_END) {
+      await this.finishBatch(transferToken, sequence, decodeJson<TransferBatchSummary>(payload));
+      return;
+    }
     if (type === FRAME_READY) {
       const ready = decodeJson<TransferAck>(payload);
       if (ready.transferToken === transferToken) {
@@ -712,6 +823,13 @@ export class WifiRecordingTransferService {
       }
       return;
     }
+    if (type === FRAME_BATCH_ACK) {
+      const summary = decodeJson<TransferBatchSummary>(payload);
+      if (summary.batchToken === transferToken) {
+        this.batchAckToken = transferToken;
+      }
+      return;
+    }
     if (type === FRAME_ERROR) {
       const transferError = decodeJson<TransferError>(payload);
       this.remoteFailureMessage = transferError.message;
@@ -723,6 +841,9 @@ export class WifiRecordingTransferService {
     if (metadata.protocol !== PROTOCOL_NAME || metadata.version !== 1 || metadata.transferToken !== transferToken ||
       metadata.size <= 0 || metadata.size > MAX_FILE_BYTES || metadata.sha256.length !== 64 ||
       metadata.chunkSize < 1024 || metadata.chunkSize > WIFI_CHUNK_BYTES ||
+      !Number.isFinite(metadata.batchIndex) || !Number.isFinite(metadata.batchTotal) ||
+      Math.floor(metadata.batchIndex) !== metadata.batchIndex || Math.floor(metadata.batchTotal) !== metadata.batchTotal ||
+      metadata.batchIndex < 1 || metadata.batchTotal < 1 || metadata.batchIndex > metadata.batchTotal ||
       !isSafeWifiRecordingSourcePath(metadata.sourcePath)) {
       throw new Error('手表发送的 Wi-Fi 文件元数据无效');
     }
@@ -731,6 +852,17 @@ export class WifiRecordingTransferService {
       return;
     }
     this.closeReceivingFile('新的 Wi-Fi 传输已开始，旧临时文件已保留');
+    if (await this.findVerifiedExisting(metadata)) {
+      const ack: TransferAck = {
+        transferToken: transferToken,
+        size: metadata.size,
+        sha256: metadata.sha256.toLowerCase()
+      };
+      await this.writePacket(FRAME_ACK, transferToken, 0, encodeJson(ack));
+      this.updateBatchProgress(`手机已存在 ${metadata.batchIndex}/${metadata.batchTotal}：${metadata.fileName}`,
+        metadata.batchIndex, metadata.batchTotal, 100);
+      return;
+    }
     const syncRoot = `${this.context.filesDir}/${SYNC_RECEIVE_DIRECTORY}`;
     ensureDirectoryChecked(syncRoot);
     const requestId = `wifi_${Date.now()}_${transferToken}`;
@@ -751,12 +883,32 @@ export class WifiRecordingTransferService {
       expectedSize: metadata.size,
       expectedHash: metadata.sha256.toLowerCase(),
       expectedChunkSize: metadata.chunkSize,
+      batchIndex: metadata.batchIndex,
+      batchTotal: metadata.batchTotal,
       receivedSize: 0,
       nextSequence: 1,
       startedAt: Date.now()
     };
-    this.update(`开始通过 Wi-Fi 接收 ${metadata.size} 字节`, 0);
+    this.updateBatchProgress(`开始接收 ${metadata.batchIndex}/${metadata.batchTotal}：${metadata.size} 字节`,
+      metadata.batchIndex, metadata.batchTotal, 0);
     await this.sendReady(metadata);
+  }
+
+  private async findVerifiedExisting(metadata: TransferMetadata): Promise<boolean> {
+    if (this.existingRecordingHandler === undefined) {
+      return false;
+    }
+    const existing = this.existingRecordingHandler(metadata.sourcePath, metadata.size);
+    if (existing === undefined || !accessFileChecked(existing.path)) {
+      return false;
+    }
+    const stat = statFileChecked(existing.path);
+    if (isDirectoryChecked(stat) || stat.size !== metadata.size) {
+      return false;
+    }
+    const existingHash = await hashFileChecked(existing.path);
+    return isExactWifiRecordingMatch(metadata.sourcePath, metadata.size, metadata.sha256,
+      existing.sourcePath, existing.size, existingHash);
   }
 
   private async sendReady(metadata: TransferMetadata): Promise<void> {
@@ -792,7 +944,8 @@ export class WifiRecordingTransferService {
     receiving.nextSequence += 1;
     if (receiving.receivedSize === receiving.expectedSize || sequence % 8 === 0) {
       const progress = Math.min(99, Math.floor(receiving.receivedSize * 100 / receiving.expectedSize));
-      this.update(`Wi-Fi 接收中 ${receiving.receivedSize}/${receiving.expectedSize} 字节`, progress);
+      this.updateBatchProgress(`正在接收 ${receiving.batchIndex}/${receiving.batchTotal}：${
+        receiving.receivedSize}/${receiving.expectedSize} 字节`, receiving.batchIndex, receiving.batchTotal, progress);
     }
   }
 
@@ -815,14 +968,6 @@ export class WifiRecordingTransferService {
         throw new Error('Wi-Fi 接收文件 SHA-256 不一致，临时文件已保留');
       }
       fileIo.renameSync(receiving.partPath, receiving.finalPath);
-      const ack: TransferAck = {
-        transferToken: transferToken,
-        size: receiving.receivedSize,
-        sha256: receivedHash
-      };
-      await this.writePacket(FRAME_ACK, transferToken, sequence, encodeJson(ack));
-      this.update(`Wi-Fi 接收完成并校验一致（${transferRateText(receiving.receivedSize,
-        Date.now() - receiving.startedAt)}）`, 100);
       const recording: ReceivedRecordingFile = {
         fileName: receiving.fileName,
         path: receiving.finalPath,
@@ -834,10 +979,16 @@ export class WifiRecordingTransferService {
         syncKey: exactWatchFileKey(receiving.sourcePath, receiving.receivedSize),
         legacySyncKey: legacyWatchFileKey(receiving.fileName, receiving.receivedSize)
       };
-      await delay(200);
-      await this.shutdownTransport();
       this.receivedHandler(recording, receivedHash);
-      await this.stopBackgroundTransfer();
+      const ack: TransferAck = {
+        transferToken: transferToken,
+        size: receiving.receivedSize,
+        sha256: receivedHash
+      };
+      await this.writePacket(FRAME_ACK, transferToken, sequence, encodeJson(ack));
+      this.updateBatchProgress(`第 ${receiving.batchIndex}/${receiving.batchTotal} 个接收并校验完成（${
+        transferRateText(receiving.receivedSize, Date.now() - receiving.startedAt)}）`, receiving.batchIndex,
+      receiving.batchTotal, 100);
     } catch (error) {
       try {
         fileIo.closeSync(receiving.fd);
@@ -847,14 +998,45 @@ export class WifiRecordingTransferService {
     }
   }
 
-  private async waitForReady(transferToken: number): Promise<void> {
+  private async finishBatch(batchToken: number, sequence: number, summary: TransferBatchSummary): Promise<void> {
+    if (summary.protocol !== PROTOCOL_NAME || summary.version !== 1 || summary.batchToken !== batchToken ||
+      !Number.isFinite(summary.total) || !Number.isFinite(summary.transferred) ||
+      !Number.isFinite(summary.alreadyPresent) || Math.floor(summary.total) !== summary.total ||
+      Math.floor(summary.transferred) !== summary.transferred ||
+      Math.floor(summary.alreadyPresent) !== summary.alreadyPresent || sequence !== summary.total ||
+      summary.total <= 0 || summary.transferred < 0 || summary.alreadyPresent < 0 ||
+      summary.transferred + summary.alreadyPresent !== summary.total || this.receivingFile !== undefined) {
+      throw new Error('手表发送的 Wi-Fi 批次汇总无效');
+    }
+    await this.writePacket(FRAME_BATCH_ACK, batchToken, summary.total, encodeJson(summary));
+    this.update(`Wi-Fi 全量同步完成：新增 ${summary.transferred} 个，已存在 ${summary.alreadyPresent} 个`, 100);
+    if (this.batchCompletedHandler !== undefined) {
+      this.batchCompletedHandler({
+        total: summary.total,
+        transferred: summary.transferred,
+        alreadyPresent: summary.alreadyPresent
+      });
+    }
+    await delay(200);
+    await this.shutdownTransport();
+    await this.stopBackgroundTransfer();
+  }
+
+  private async waitForReady(metadata: TransferMetadata): Promise<boolean> {
     const startedAt = Date.now();
     while (Date.now() - startedAt < READY_TIMEOUT_MS) {
       if (this.remoteFailureMessage.length > 0) {
         throw new Error(this.remoteFailureMessage);
       }
-      if (this.readyToken === transferToken) {
-        return;
+      const ack = this.finalAck;
+      if (ack !== undefined && ack.transferToken === metadata.transferToken) {
+        if (ack.size !== metadata.size || ack.sha256.toLowerCase() !== metadata.sha256.toLowerCase()) {
+          throw new Error('手机已有文件的确认与手表源文件不一致');
+        }
+        return false;
+      }
+      if (this.readyToken === metadata.transferToken) {
+        return true;
       }
       await delay(20);
     }
@@ -873,6 +1055,20 @@ export class WifiRecordingTransferService {
       await delay(20);
     }
     throw new Error('手机未返回 Wi-Fi 落盘确认；手表源文件仍保留');
+  }
+
+  private async waitForBatchAck(batchToken: number): Promise<void> {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < READY_TIMEOUT_MS) {
+      if (this.batchAckToken === batchToken) {
+        return;
+      }
+      if (this.remoteFailureMessage.length > 0) {
+        throw new Error(this.remoteFailureMessage);
+      }
+      await delay(20);
+    }
+    throw new Error('手机未确认 Wi-Fi 批量同步完成；手表源文件仍保留');
   }
 
   private abortReceive(message: string): void {
@@ -983,6 +1179,15 @@ export class WifiRecordingTransferService {
     this.lastProgress = progress;
     hilog.info(LOG_DOMAIN, LOG_TAG, '%{public}s | progress=%{public}d', status, progress);
     this.updateHandler(status, progress);
+  }
+
+  private updateBatchProgress(status: string, batchIndex: number, batchTotal: number,
+    fileProgress: number): void {
+    const safeTotal = Math.max(1, batchTotal);
+    const safeIndex = Math.max(1, Math.min(batchIndex, safeTotal));
+    const safeFileProgress = Math.max(0, Math.min(fileProgress, 100));
+    const progress = Math.min(99, Math.floor(((safeIndex - 1) * 100 + safeFileProgress) / safeTotal));
+    this.update(status, progress);
   }
 
   private async startBackgroundTransfer(): Promise<void> {

@@ -457,7 +457,7 @@ export class WearEngineRecordingReceiver {
     this.remoteComplete = false;
     this.resetFileTransferState();
     this.startSyncHandshakeTimeout(requestId);
-    this.emitProgress(true, '正在拉起手表并请求一个文件…');
+    this.emitProgress(true, '正在拉起手表并请求全部未同步录音…');
     try {
       try {
         // On API 23, startRemoteApp can return UNKNOWN_ERROR when the watch app

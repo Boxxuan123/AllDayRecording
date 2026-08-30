@@ -29,15 +29,13 @@ export struct WatchWifiTransferPage {
           .fontSize(12)
           .fontColor($r('app.color.text_secondary'))
       } else {
-        Text(this.viewModel.wifiRecording?.fileName ?? '')
+        Text(`共 ${this.viewModel.wifiRecordingCount} 个完整录音`)
           .width(158)
-          .fontSize(11)
+          .fontSize(12)
           .fontColor($r('app.color.text_secondary'))
           .textAlign(TextAlign.Center)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-        Text(formatRecordingSize(this.viewModel.wifiRecording?.size ?? 0))
+        Text(`总计 ${formatRecordingSize(this.viewModel.wifiRecordingTotalBytes)}`)
           .fontSize(11)
           .fontColor($r('app.color.text_tertiary'))
       }
@@ -50,13 +48,13 @@ export struct WatchWifiTransferPage {
           .backgroundColor($r('app.color.surface_secondary'))
       }
 
-      Button(this.viewModel.wifiSending ? '正在发送…' : '发送最近录音', { type: ButtonType.Capsule })
+      Button(this.viewModel.wifiSending ? '正在同步…' : '同步全部录音', { type: ButtonType.Capsule })
         .width(132)
         .height(42)
         .fontSize(14)
         .backgroundColor($r('app.color.brand_success'))
-        .enabled(!this.viewModel.wifiSending && this.viewModel.wifiRecording !== undefined)
-        .onClick((): void => this.viewModel.sendLatestRecordingViaWifi())
+        .enabled(!this.viewModel.wifiSending && this.viewModel.wifiRecordingCount > 0)
+        .onClick((): void => this.viewModel.sendAllRecordingsViaWifi())
 
       Text(this.viewModel.wifiStatus)
         .width(158)
@@ -65,7 +63,7 @@ export struct WatchWifiTransferPage {
         .textAlign(TextAlign.Center)
         .maxLines(3)
 
-      Text('先在手机点 Wi-Fi 快传 · 下滑返回首页')
+      Text('已在手机存在的文件会校验后跳过 · 下滑返回首页')
         .fontSize(8)
         .fontColor($r('app.color.text_tertiary'))
     }

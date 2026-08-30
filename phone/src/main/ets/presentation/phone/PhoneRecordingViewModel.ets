@@ -7,6 +7,7 @@ import {
   ReceivedRecordingFile,
   RecordingFile,
   WifiRecordingTransferService,
+  WifiTransferBatchResult,
   WatchRecordingControlStatus,
   WatchSyncProgress,
   recordingErrorMessage,
@@ -410,9 +411,17 @@ export class PhoneRecordingViewModel {
         if (!this.lifecycle.isActive(token)) {
           return;
         }
-        const stored = recordingStore.record(recording);
+        const stored = recordingStore.recordVerified(recording);
         this.applyReceivedRecording(stored, recordingStore.list());
+      }, (sourcePath: string, size: number): ReceivedRecordingFile | undefined => {
+        return recordingStore.findWifiExisting(sourcePath, size);
+      }, (result: WifiTransferBatchResult): void => {
+        if (!this.lifecycle.isActive(token)) {
+          return;
+        }
         this.wifiReceiverReady = false;
+        this.wifiStatus = `Wi-Fi 全量同步完成：新增 ${result.transferred} 个，手机已有 ${
+          result.alreadyPresent} 个`;
       });
     this.wifiTransferService = service;
     this.wifiCapability = service.describeCapability();
@@ -429,7 +438,7 @@ export class PhoneRecordingViewModel {
     this.wifiCapability = service.describeCapability();
     await service.prepareReceiver();
     this.wifiReceiverReady = true;
-    this.wifiStatus = '手机接收已就绪，正在自动唤醒手表并发送最近完整录音…';
+    this.wifiStatus = '手机接收已就绪，正在自动唤醒手表并同步全部完整录音…';
     if (receiver === undefined) {
       throw new Error('Wear Engine 控制通道尚未连接');
     }

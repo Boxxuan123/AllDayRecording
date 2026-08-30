@@ -4,6 +4,7 @@ import {
   PresentationLifecycleCoordinator,
   RecordingFile,
   WifiRecordingTransferService,
+  WifiTransferBatchResult,
   recordingErrorMessage,
   wifiRecordingTransferErrorMessage
 } from 'common';
@@ -40,6 +41,8 @@ export class WatchRecordingViewModel {
   wifiProgress: number = 0;
   wifiSending: boolean = false;
   wifiRecording: RecordingFile | undefined = undefined;
+  wifiRecordingCount: number = 0;
+  wifiRecordingTotalBytes: number = 0;
 
   private context: common.UIAbilityContext | undefined = undefined;
   private recordingService: PcmSegmentedRecordingService | undefined = undefined;
@@ -119,7 +122,7 @@ export class WatchRecordingViewModel {
           return;
         }
         this.latestRecording = recording;
-        this.wifiRecording = recording;
+        this.refreshWifiRecording();
         this.completedSegments = completedCount;
         if (this.isRecording) {
           this.status = `第 ${completedCount} 段 ${sampleCount} 采样已封口`;
@@ -141,7 +144,7 @@ export class WatchRecordingViewModel {
       }
     }, (desiredState: string, requestId: string): Promise<WatchRecordingControlResult> =>
       this.applyPhoneRecordingControl(desiredState, requestId),
-    (_requestId: string): Promise<string> => this.performLatestWifiTransfer(true));
+    (_requestId: string): Promise<string> => this.performAllWifiTransfer(true));
     this.recordingStartFallback = new WatchRecordingStartFallback(context);
     WatchRecordingUiState.setForegroundListener((): void => {
       if (this.lifecycle.isActive(token)) {
@@ -247,11 +250,11 @@ export class WatchRecordingViewModel {
     });
   }
 
-  sendLatestRecordingViaWifi(): void {
+  sendAllRecordingsViaWifi(): void {
     if (this.wifiTransferService === undefined || this.wifiSending) {
       return;
     }
-    const task = this.performLatestWifiTransfer(false);
+    const task = this.performAllWifiTransfer(false);
     task.then((): void => {
     }, (): void => {
     });
@@ -263,9 +266,13 @@ export class WatchRecordingViewModel {
       return;
     }
     try {
+      const recordings = service.findAllRecordings();
       const latest = service.findLatestRecording();
-      if (latest !== undefined) {
-        this.wifiRecording = latest;
+      this.wifiRecording = latest;
+      this.wifiRecordingCount = recordings.length;
+      this.wifiRecordingTotalBytes = 0;
+      for (let index = 0; index < recordings.length; index += 1) {
+        this.wifiRecordingTotalBytes += recordings[index].size;
       }
     } catch (error) {
       this.wifiStatus = `录音扫描失败：${wifiRecordingTransferErrorMessage(error as Object)}`;
@@ -431,7 +438,7 @@ export class WatchRecordingViewModel {
     throw new Error('不支持的录音目标状态');
   }
 
-  private async performLatestWifiTransfer(automaticallyStarted: boolean): Promise<string> {
+  private async performAllWifiTransfer(automaticallyStarted: boolean): Promise<string> {
     const service = this.wifiTransferService;
     if (service === undefined) {
       throw new Error('手表 Wi-Fi 快传服务尚未就绪');
@@ -440,19 +447,20 @@ export class WatchRecordingViewModel {
       throw new Error('上一项 Wi-Fi 快传仍在进行');
     }
     this.refreshWifiRecording();
-    const recording = this.wifiRecording;
-    if (recording === undefined) {
-      this.wifiStatus = '没有找到可发送的完整录音';
+    const recordings = service.findAllRecordings();
+    if (recordings.length === 0) {
+      this.wifiStatus = '没有找到可同步的完整录音';
       throw new Error(this.wifiStatus);
     }
     this.wifiSending = true;
     this.wifiStatus = automaticallyStarted ?
-      '手机已自动发起，正在准备 Wi-Fi 快传，手表原文件会保留…' :
-      '正在准备 Wi-Fi 快传，手表原文件会保留…';
+      `手机已自动发起，正在准备同步全部 ${recordings.length} 个录音，手表原文件会保留…` :
+      `正在准备同步全部 ${recordings.length} 个录音，手表原文件会保留…`;
     const token = this.lifecycleToken;
     try {
-      await service.send(recording);
-      const message = 'Wi-Fi 快传完成，手机已校验，手表原文件已保留';
+      const result: WifiTransferBatchResult = await service.sendAll(recordings);
+      const message = `Wi-Fi 全量同步完成：新增 ${result.transferred} 个，手机已有 ${result.alreadyPresent} 个；` +
+        '手表原文件已保留';
       if (this.lifecycle.isActive(token)) {
         this.wifiStatus = message;
         this.wifiProgress = 100;
