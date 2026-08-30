@@ -23,6 +23,7 @@ Phone HAP -> Phone Root/ViewModel -> Phone Receiver / receive store
 ```
 
 - `entry/.../pages/Index.ets` 只挂载 `WatchRootPage`；`phone/.../pages/Index.ets` 只挂载 `PhoneRootPage`，不再做运行时设备分支。
+- Phone `EntryAbility` 固定加载 `pages/Index`，启动错误使用稳定日志标签 `PhoneEntryAbility` 和正式的 Phone root page 文案；协议中的 `control_probe` 与默认关闭的 Watch 诊断 Probe 保持原有语义。
 - 页面组件只展示状态并转发事件，不直接操作 CoreFileKit、Wear Engine 或录音后台任务。
 - ViewModel 负责页面生命周期与用户动作编排；持久化和协议状态由领域服务承担。
 - `common/src/main/ets/sync/transport/WearEngineTransport.ets` 是原始 Wear Engine 调用边界。

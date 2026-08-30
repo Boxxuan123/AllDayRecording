@@ -1,6 +1,6 @@
 # AllDayRecording 维护性下一步工作计划
 
-> 文档状态：`active`
+> 文档状态：`completed`
 > 建立日期：2026-08-30
 > 基线提交：`f4bf48e refactor: split phone and watch into separate HAPs`
 > 适用范围：维护性重构 Phase 0–6 完成后的收尾、可靠性修补与后续演进约束
@@ -50,7 +50,7 @@ Phase 0–6 已经完成主要结构目标：Watch、Phone 和 `common` 在源�
 ### 2.3 已知维护性债务
 
 - `common/BuildProfile.ets` 的构建污染已由 Phase N2 消除：该文件确认由 Hvigor 稳定生成，现已取消跟踪并使用根目录精确规则忽略。
-- Phone `EntryAbility` 的错误日志仍包含 `phase6Probe` 和 `Phone probe page`。
+- Phone `EntryAbility` 的实验日志命名已由 Phase N3 清理，当前使用稳定标签 `PhoneEntryAbility` 和正式的 Phone root page 加载错误文案。
 - Watch Sender 约 918 行、Phone Receiver 约 906 行、Watch ViewModel 约 591 行，仍属于复审热点；当前边界已经比重构前清楚，不应仅为降低行数制造包装层。
 
 ## 3. 明确不在本轮范围内的内容
@@ -232,6 +232,14 @@ build: keep generated build profile out of source changes
 chore: replace phase probe names in phone startup logs
 ```
 
+执行状态（2026-08-30）：已完成。Phone `EntryAbility` 的日志标签由 `phase6Probe` 改为
+`PhoneEntryAbility`，错误文案由实验性的 `Phone probe page` 改为正式的
+`Phone root page`；`pages/Index` 路由、回调和错误条件未变。复查确认协议中的
+`WATCH_CONTROL_PROBE/control_probe` 仍是现行 wire 语义，`diagnostics` 下的 SleepMode Probe
+仍是明确保留且生产 UI 不可达的诊断能力，两者均未误改。Host 53/53、Linter、Phone HAP、
+独立 clean Debug/Release 和双 HAP 交付边界均通过。详细证据见
+`doc/MAINTAINABILITY_PHASE_N3_STARTUP_LOG_NAMING.md`。
+
 ## 8. 后续大文件采用触发式拆分
 
 当前不单独启动大范围拆分。出现以下任一条件时，先补测试，再从对应 facade 中提取一个完整职责：
@@ -265,7 +273,7 @@ chore: replace phase probe names in phone startup logs
 
 ## 10. 提交与停止规则
 
-1. Phase N0、N1、N2 已完成；默认下一次只执行 Phase N3，且必须先获得单独批准。
+1. Phase N0–N3 已完成，本维护性收尾计划结束；默认不启动触发式大文件拆分或 Phase 7，任何后续阶段都必须单独批准。
 2. 每阶段开始前列出精确文件允许清单，不使用 `git add .`。
 3. 提交前检查 staged stat、name-status、diff check，以及敏感/本地/设备产物。
 4. 构建、测试、日志和设备备份不得进入 Git。
