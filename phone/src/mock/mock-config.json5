@@ -1,0 +1,5 @@
+{
+  "@ohos.util": {
+    "source": "./src/mock/ArkTS.mock.ets"
+  }
+}

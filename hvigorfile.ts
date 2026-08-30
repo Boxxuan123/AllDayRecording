@@ -20,7 +20,24 @@ const codeLinterPlugin: HvigorPlugin = {
   }
 };
 
+const hostTestPlugin: HvigorPlugin = {
+  pluginId: 'alldayrecording-host-tests',
+  apply(node) {
+    node.registerTask({
+      name: 'hostTest',
+      run() {
+        const projectRoot = node.getNodeDir().getPath();
+        const runner = path.resolve(projectRoot, 'tools/quality/run-host-tests.mjs');
+        execFileSync(process.execPath, [runner, projectRoot], {
+          cwd: projectRoot,
+          stdio: 'inherit'
+        });
+      }
+    });
+  }
+};
+
 export default {
   system: appTasks, /* Built-in plugin of Hvigor. It cannot be modified. */
-  plugins: [codeLinterPlugin]
+  plugins: [codeLinterPlugin, hostTestPlugin]
 }

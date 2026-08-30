@@ -82,7 +82,7 @@ Phase 5 已逐项捕获并传播 CoreFileKit、Preferences、AudioKit、后台�
 ## 7. 证据边界
 
 - `hvigorw codeLinter` 是实际 Code Linter 报告，不是任务占位符；任何 defect 或不完整检查均失败。
-- Phase 6 源码仍包含 46 个 `it(...)`（Watch 侧 43、Phone 侧 3），但本机 Hypium runner 在 ArkTS 编译后停在 `Darwin` 且没有结果文件，因此本候选没有新的“46/46 通过”声明；`ohosTest` HAP 构建只证明设备测试代码可打包。
+- `hvigorw hostTest` 会依次运行 Watch 与 Phone 宿主机测试，校验报告新鲜度、源码测试数和失败数，并对 Darwin runner 设置有界超时；当前报告为 Watch 43/43、Phone 3/3，合计 46/46 通过。受限环境仍会在 `Darwin` 后因本地 socket 不可用而超时；`ohosTest` HAP 构建仍只证明设备测试代码可打包。
 - clean Debug/Release `assembleApp` 成功只证明两个 HAP 能编译、打包和签名；Release `.app` 解包确认恰有 Watch `entry` 和 Phone `phone` 两个 HAP。
 - Release source map 检查中，Watch 包的 Phone Root/ViewModel/Receiver/Store 标识均为 0，Phone 包的 Watch Root/ViewModel/录音/Sender 标识均为 0；这证明当前构建图边界，不替代运行时验收。
 - WATCH 5 的开始/停止、熄屏、中断恢复和 Phone 同步/播放必须使用最终文件、摘要、大小/哈希与用户验收作为证据。

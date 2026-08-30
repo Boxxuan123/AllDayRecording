@@ -43,27 +43,19 @@ DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \
   --no-daemon codeLinter
 ```
 
-宿主机 Hypium 测试：
+宿主机 Hypium 测试门禁（依次运行 Watch 与 Phone，并校验当前报告、源码测试数和失败数）：
 
 ```sh
 PATH=/Applications/DevEco-Studio.app/Contents/tools/node/bin:/usr/bin:/bin:/usr/sbin:/sbin \
 DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \
 /Applications/DevEco-Studio.app/Contents/tools/hvigor/bin/hvigorw \
-  --mode module -p product=default -p module=entry@default \
-  -p buildMode=debug test --no-daemon
+  --no-daemon hostTest
 ```
 
-Phone 接收索引测试需另行运行：
-
-```sh
-PATH=/Applications/DevEco-Studio.app/Contents/tools/node/bin:/usr/bin:/bin:/usr/sbin:/sbin \
-DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \
-/Applications/DevEco-Studio.app/Contents/tools/hvigor/bin/hvigorw \
-  --mode module -p product=default -p module=phone@default \
-  -p buildMode=debug test --no-daemon
-```
-
-若 runner 在 `Darwin` 后无结果文件，该次不能计为测试通过；必须以实际 Hypium 报告为准。
+门禁默认给每个模块 60 秒，可通过 `HOST_TEST_TIMEOUT_MS` 设置其他正整数毫秒值。Hypium
+即使报告含失败也可能让底层 `test` 任务返回 0，因此不得绕过 `hostTest` 只看 Hvigor 的
+`BUILD SUCCESSFUL`。若 runner 在 `Darwin` 后超时，需在允许本地 socket 的环境重跑；没有由
+当前命令新生成且经门禁解析的报告，不能计为测试通过。
 
 设备测试 HAP 构建：
 
