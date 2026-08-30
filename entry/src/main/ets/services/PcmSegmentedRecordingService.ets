@@ -1,7 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo } from '@kit.CoreFileKit';
-import { RecordingFile } from '../models/RecordingModels';
+import { PCM_BYTES_PER_SAMPLE, RecordingFile } from 'common';
 import {
   AudioCaptureDiagnostics,
   AudioCaptureLifecycle
@@ -16,7 +16,6 @@ import {
 } from '../recording/PcmRecordingContract';
 import { PcmSessionSummaryStore } from '../recording/PcmSessionSummaryStore';
 import { WavSegmentSlot } from '../recording/WavSegmentSlot';
-import { PCM_BYTES_PER_SAMPLE } from '../shared/io/WavFormat';
 
 export interface PcmSegmentedRecordingCallbacks {
   onSegmentStarted: (segmentIndex: number, firstSample: number) => void;

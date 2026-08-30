@@ -1,4 +1,4 @@
-import { formatRecordingDuration } from '../shared/RecordingPresentation';
+import { formatRecordingDuration } from 'common';
 import { WatchRecordingViewModel } from './WatchRecordingViewModel';
 
 @Component

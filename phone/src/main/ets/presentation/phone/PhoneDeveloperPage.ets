@@ -1,5 +1,4 @@
-import { ReceivedRecordingFile } from '../../models/RecordingModels';
-import { formatRecordingSize } from '../shared/RecordingPresentation';
+import { ReceivedRecordingFile, formatRecordingSize } from 'common';
 import { PhoneRecordingViewModel } from './PhoneRecordingViewModel';
 import { PhoneSyncProgressView } from './PhoneSyncProgressView';
 

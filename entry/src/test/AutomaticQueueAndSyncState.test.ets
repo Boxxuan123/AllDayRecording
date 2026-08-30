@@ -1,27 +1,4 @@
 import { describe, it, expect } from '@ohos/hypium';
-import { RecordingFile, WatchSyncFileDescriptor } from '../main/ets/models/RecordingModels';
-import {
-  WATCH_RECORDING_ACK,
-  WATCH_SYNC_PROTOCOL_VERSION,
-  WatchSyncProtocolMessage
-} from '../main/ets/sync/protocol/WatchFileSyncProtocol';
-import {
-  PhoneRecordingControlCoordinator,
-  WatchRecordingControlCoordinator,
-  WATCH_CONTROL_BUSY,
-  WATCH_CONTROL_REPLAY
-} from '../main/ets/sync/control/WatchRecordingControlCoordinator';
-import {
-  PhoneReceiverLifecycleCoordinator,
-  PhoneSyncCoordinator
-} from '../main/ets/sync/phone/PhoneSyncCoordinator';
-import { SyncClock, SyncScheduledCallback } from '../main/ets/sync/state/SyncClock';
-import {
-  P2P_COMMUNICATION_FAILURE,
-  isP2pCommunicationError,
-  p2pResultMessage,
-  shouldRetryReceiverConnection
-} from '../main/ets/sync/transport/WearEngineTransportPolicy';
 import {
   AUTOMATIC_QUEUE_DAMAGED,
   AUTOMATIC_QUEUE_DUPLICATE,
@@ -30,14 +7,29 @@ import {
   AutomaticSyncQueue,
   AutomaticSyncQueueClock,
   AutomaticSyncQueueFileInfo,
-  AutomaticSyncQueueFileSystem
-} from '../main/ets/sync/watch/AutomaticSyncQueue';
-import {
+  AutomaticSyncQueueFileSystem,
+  P2P_COMMUNICATION_FAILURE,
+  PhoneRecordingControlCoordinator,
+  PhoneReceiverLifecycleCoordinator,
+  PhoneSyncCoordinator,
+  RecordingFile,
+  SyncClock,
+  SyncScheduledCallback,
+  WATCH_CONTROL_BUSY,
+  WATCH_CONTROL_REPLAY,
   WATCH_MANUAL_DUPLICATE,
   WATCH_MANUAL_QUEUED,
+  WATCH_RECORDING_ACK,
+  WATCH_SYNC_PROTOCOL_VERSION,
   WatchFileAckCoordinator,
-  WatchSyncCoordinator
-} from '../main/ets/sync/watch/WatchSyncCoordinator';
+  WatchRecordingControlCoordinator,
+  WatchSyncCoordinator,
+  WatchSyncFileDescriptor,
+  WatchSyncProtocolMessage,
+  isP2pCommunicationError,
+  p2pResultMessage,
+  shouldRetryReceiverConnection
+} from 'common';
 
 interface FakeScheduledTask {
   id: number;

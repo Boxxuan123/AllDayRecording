@@ -3,7 +3,7 @@ import {
   PCM_BYTES_PER_SAMPLE,
   PCM_CHANNEL_COUNT,
   PCM_SAMPLE_RATE_HZ
-} from '../shared/io/WavFormat';
+} from 'common';
 
 const PCM_RECORDING_SESSION_PREFIX: string = 'pcm_gap_test_';
 export const PCM_RECORDING_SUMMARY_FILE_NAME: string = 'session_summary.json';

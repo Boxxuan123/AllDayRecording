@@ -3,7 +3,7 @@ import {
   WATCH_SYNC_PROTOCOL_VERSION,
   exactWatchFileKey,
   legacyWatchFileKey
-} from '../../../main/ets/sync/protocol/WatchFileSyncProtocol';
+} from 'common';
 
 export default function applicationProtocolContractTest() {
   describe('ApplicationProtocolContract', () => {

@@ -1,0 +1,11 @@
+{
+  "name": "phone",
+  "version": "1.0.0",
+  "description": "Phone synchronization and playback HAP.",
+  "main": "",
+  "author": "",
+  "license": "",
+  "dependencies": {
+    "common": "file:../common"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "接收、管理并播放手表录音"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "同步并管理手表录音"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "全天录音"
+    },
+    {
+      "name": "tab_home",
+      "value": "首页"
+    },
+    {
+      "name": "tab_recordings",
+      "value": "录音记录"
+    },
+    {
+      "name": "tab_settings",
+      "value": "设置"
+    }
+  ]
+}

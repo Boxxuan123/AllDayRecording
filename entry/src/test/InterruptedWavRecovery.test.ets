@@ -3,7 +3,7 @@ import { describe, it, expect } from '@ohos/hypium';
 import {
   InterruptedWavRecoveryService
 } from '../main/ets/services/InterruptedWavRecoveryService';
-import { writeEntireBuffer } from '../main/ets/shared/io/WavFormat';
+import { writeEntireBuffer } from 'common';
 import {
   createTestDirectory,
   ensureTestDirectory,

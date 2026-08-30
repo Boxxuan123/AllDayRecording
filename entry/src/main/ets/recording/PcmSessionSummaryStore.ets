@@ -1,5 +1,4 @@
-import { RecordingFile } from '../models/RecordingModels';
-import { writeJsonAtomically } from '../shared/io/AtomicJsonStore';
+import { RecordingFile, writeJsonAtomically } from 'common';
 import {
   PCM_RECORDING_SUMMARY_FILE_NAME,
   PcmSegmentEvidence,

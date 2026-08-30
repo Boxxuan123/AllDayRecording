@@ -31,12 +31,28 @@
       "srcPath": "./entry",
       "targets": [
         {
+          "name": "watch",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "phone",
+      "srcPath": "./phone",
+      "targets": [
+        {
           "name": "default",
           "applyToProducts": [
             "default"
           ]
         }
       ]
+    },
+    {
+      "name": "common",
+      "srcPath": "./common"
     }
   ]
 }

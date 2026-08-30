@@ -24,6 +24,24 @@
   ],
   "targets": [
     {
+      "name": "watch",
+      "config": {
+        "deviceType": [
+          "wearable"
+        ]
+      },
+      "source": {
+        "abilities": [
+          {
+            "name": "EntryAbility"
+          }
+        ]
+      },
+      "output": {
+        "artifactName": "AllDayRecording-watch"
+      }
+    },
+    {
       "name": "default"
     },
     {

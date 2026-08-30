@@ -1,7 +1,12 @@
 import { describe, it, expect } from '@ohos/hypium';
-import { ReceivedRecordingFile } from '../main/ets/models/RecordingModels';
-import { ReceivedRecordingStore, SYNC_RECEIVE_DIRECTORY } from '../main/ets/services/ReceivedRecordingStore';
-import { exactWatchFileKey } from '../main/ets/sync/protocol/WatchFileSyncProtocol';
+import {
+  ReceivedRecordingFile,
+  exactWatchFileKey
+} from 'common';
+import {
+  ReceivedRecordingStore,
+  SYNC_RECEIVE_DIRECTORY
+} from '../main/ets/services/ReceivedRecordingStore';
 import {
   createTestDirectory,
   ensureTestDirectory,

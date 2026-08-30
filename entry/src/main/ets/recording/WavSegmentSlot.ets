@@ -1,13 +1,14 @@
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo } from '@kit.CoreFileKit';
-import { RecordingFile } from '../models/RecordingModels';
-import { publishPartFile, syncAndClose } from '../shared/io/AtomicFileWriter';
 import {
   PCM_BYTES_PER_SAMPLE,
   PCM_SAMPLE_RATE_HZ,
+  RecordingFile,
   createPcmWavHeader,
+  publishPartFile,
+  syncAndClose,
   writeEntireBuffer
-} from '../shared/io/WavFormat';
+} from 'common';
 import { pcmSegmentFileName } from './PcmRecordingContract';
 
 export interface WavSegmentFileOperations {

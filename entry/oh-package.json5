@@ -1,9 +1,11 @@
 {
   "name": "entry",
   "version": "1.0.0",
-  "description": "Shared HarmonyOS entry module for WATCH 5 recording and phone synchronization.",
+  "description": "WATCH 5 recording HAP.",
   "main": "",
   "author": "",
   "license": "",
-  "dependencies": {}
+  "dependencies": {
+    "common": "file:../common"
+  }
 }

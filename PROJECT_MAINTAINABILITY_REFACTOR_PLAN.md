@@ -303,6 +303,8 @@ Pages -> ViewModels/Coordinators -> Domain services -> Transport/Storage adapter
 
 ### Phase 6：评估物理拆分 Phone/Watch 模块
 
+执行状态（2026-08-30）：已完成并获用户真机验收。安装前 Phone（PLR-AL00）与 WATCH 5（RTS-AL00）均为同一 `bundleName`、`appIdentifier` 和 `entry` 模块，兼容 API 23、目标 API 26；同一模块多 target 无法从 Phone HAP 中裁掉录音权限和 `audioRecording` Ability，两个同名模块又会被 Hvigor 拒绝。最终采用 Watch `entry` + Phone `phone` 两个设备类型互斥的 Entry HAP，并增加 `common` HAR；真实 Phone 页面、Receiver、索引和资源迁入 `phone`，Watch Sender 与录音留在 `entry`。应用提升到 `1.0.1 / 1000001` 以满足 Entry 模块变化的升级校验，`bundleName`、Client ID 和签名配置不变。Code Linter、独立 clean Debug/Release `assembleApp`、双 HAP 解包声明和跨端 source map 边界均通过。用户决定不做 Phone `entry -> phone` 数据迁移，以两端安装前双份只读备份作为回退：WATCH 两份各 29 个文件、24,625,471 字节，Phone 两份各 25 个文件、30,716,796 字节，逐文件 SHA-256 清单一致；随后用户确认双端覆盖安装完成且验收通过。宿主机测试源码仍为 46 项，但 runner 未生成 Phase 6 新报告，因此不虚报通过数。证据见 `doc/MAINTAINABILITY_PHASE_6_HAP_SPLIT_FEASIBILITY.md`。
+
 目标：在逻辑边界稳定后，判断是否把单一 `entry` 拆成按设备交付的 HAP。
 
 先做只读/构建可行性审计：
@@ -333,8 +335,8 @@ Pages -> ViewModels/Coordinators -> Domain services -> Transport/Storage adapter
 | 层级 | 必须验证的内容 | 不能替代的证据 |
 | --- | --- | --- |
 | 纯逻辑 | 协议、状态转换、队列、索引、WAV、恢复 | “能够编译”不能替代测试报告 |
-| Debug 构建 | ArkTS、资源、HAP、签名、API 23 最低版本 | Debug 成功不能替代 Release |
-| Release 构建 | 串行 clean 后完整 Release HAP | Release 成功不能替代真机 |
+| Debug 构建 | ArkTS、资源、双 HAP、`.app`、签名、API 23 最低版本 | Debug 成功不能替代 Release |
+| Release 构建 | 串行 clean 后完整双 HAP `.app` | Release 成功不能替代真机 |
 | Watch 5 | 开始/停止、至少两个完整分片、最后短分片、熄屏、恢复 | 页面计时不能替代最终文件检查 |
 | Phone/Watch | 自动同步、手动补拉、ACK 重试、播放 | 进度 UI 不能替代最终字节完整性 |
 | 数据保护 | 安装前后文件数、字节数、SHA-256 清单 | 单次导出不能替代独立复核 |
@@ -345,11 +347,10 @@ Pages -> ViewModels/Coordinators -> Domain services -> Transport/Storage adapter
 PATH=/Applications/DevEco-Studio.app/Contents/tools/node/bin:/usr/bin:/bin:/usr/sbin:/sbin \
 DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \
 /Applications/DevEco-Studio.app/Contents/tools/hvigor/bin/hvigorw \
-clean assembleHap --mode module -p product=default -p module=entry@default \
--p buildMode=debug --no-daemon
+clean assembleApp -p product=default -p buildMode=debug --no-daemon
 ```
 
-Release 必须在 Debug 完成后再次 clean，避免共享 `entry/build` 造成产物混淆。测试命令以 Phase 0 实际注册并能生成报告的任务为准，不能预先把不存在的任务写成已验证流程。
+Release 必须在 Debug 完成后再次 clean，避免共享模块构建目录造成产物混淆。Phase 6 后测试需分别运行 `entry@default` 与 `phone@default`；只有实际生成的 Hypium 报告才能计为通过。
 
 ## 8. 提交与审查规则
 
@@ -386,7 +387,7 @@ Release 必须在 Debug 完成后再次 clean，避免共享 `entry/build` 造�
 | Phase 3 Phone/Watch 页面与状态拆分 | 已完成 | `doc/MAINTAINABILITY_PHASE_3_PRESENTATION.md` | `2cfa334` |
 | Phase 4 录音领域与诊断隔离 | 已完成 | `doc/MAINTAINABILITY_PHASE_4_RECORDING_DOMAIN.md` | `550fb46`、`7543eda` |
 | Phase 5 质量门禁与文档 | 已完成 | `doc/MAINTAINABILITY_PHASE_5_QUALITY_GATES.md` | `53e42a0` |
-| Phase 6 Phone/Watch 物理模块评估 | 未开始 |  |  |
+| Phase 6 Phone/Watch 物理模块评估 | 已完成（本地门禁、双端只读基线、覆盖安装与用户真机验收通过） | `doc/MAINTAINABILITY_PHASE_6_HAP_SPLIT_FEASIBILITY.md` |  |
 | Phase 7 内容完整性协议升级 | 未批准 |  |  |
 
 ## 11. 整体完成标准
@@ -398,5 +399,5 @@ Release 必须在 Debug 完成后再次 clean，避免共享 `entry/build` 造�
 - 关键状态机、文件格式、恢复、队列和索引都有可重复测试。
 - lint/test/Debug/Release 验证可由固定命令执行，并保存实际结果。
 - Watch API 23 兼容性、圆屏 UI、熄屏录音、文件恢复和 Phone/Watch 闭环有各自独立验收证据。
-- 重构前的录音和同步数据得到保全；所有行为或协议变化都有单独迁移计划。
+- 重构前的录音和同步数据得到保全；所有行为或协议变化都有单独迁移计划，或有用户明确接受且已记录备份回退的数据决策。
 - 当前文档与实际代码一致，历史实验结论有明确状态标记。

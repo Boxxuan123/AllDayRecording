@@ -1,5 +1,7 @@
 /node_modules
 /oh_modules
+**/oh_modules
+/.ohpm
 /local.properties
 /build-profile.json5
 /.idea

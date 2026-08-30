@@ -1,12 +1,12 @@
 import { describe, it, expect } from '@ohos/hypium';
-import { WatchSyncProgress } from '../main/ets/models/RecordingModels';
 import {
   PhoneSyncUiState,
   PresentationLifecycleCoordinator,
+  WatchSyncProgress,
   formatRecordingDuration,
   formatRecordingReceivedAt,
   formatRecordingSize
-} from '../main/ets/presentation/shared/RecordingPresentation';
+} from 'common';
 
 export default function presentationStateTest() {
   describe('PresentationState', () => {

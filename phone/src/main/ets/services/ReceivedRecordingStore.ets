@@ -1,13 +1,15 @@
 import { fileIo } from '@kit.CoreFileKit';
-import { ReceivedRecordingFile, WatchSyncFileDescriptor } from '../models/RecordingModels';
 import {
   JSON_LOAD_SUCCESS,
   JsonTextReadOperation,
   JsonTextWriteOperation,
+  ReceivedRecordingFile,
+  WatchSyncFileDescriptor,
+  exactWatchFileKey,
+  legacyWatchFileKey,
   loadVersionedJson,
   writeVersionedJson
-} from '../shared/io/AtomicJsonStore';
-import { exactWatchFileKey, legacyWatchFileKey } from '../sync/protocol/WatchFileSyncProtocol';
+} from 'common';
 
 export const SYNC_RECEIVE_DIRECTORY: string = 'synced_from_watch';
 const MANIFEST_FILE_NAME: string = 'received_index_v1.json';

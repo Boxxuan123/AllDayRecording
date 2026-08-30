@@ -1,4 +1,4 @@
-import { formatRecordingSize } from '../shared/RecordingPresentation';
+import { formatRecordingSize } from 'common';
 import { PhoneRecordingViewModel } from './PhoneRecordingViewModel';
 
 @Component

@@ -1,19 +1,20 @@
 import { fileIo } from '@kit.CoreFileKit';
 import {
-  PCM_RECORDING_SEGMENT_BYTES,
-  isPcmRecordingSessionName
-} from '../recording/PcmRecordingContract';
-import { publishPartFile, syncAndClose } from '../shared/io/AtomicFileWriter';
-import { writeJsonAtomically } from '../shared/io/AtomicJsonStore';
-import {
   PCM_BITS_PER_SAMPLE as BITS_PER_SAMPLE,
   PCM_BYTES_PER_SAMPLE as BYTES_PER_SAMPLE,
   PCM_CHANNEL_COUNT as CHANNEL_COUNT,
   PCM_SAMPLE_RATE_HZ as SAMPLE_RATE,
   WAV_HEADER_BYTES,
   createPcmWavHeader,
-  writeEntireBuffer
-} from '../shared/io/WavFormat';
+  publishPartFile,
+  syncAndClose,
+  writeEntireBuffer,
+  writeJsonAtomically
+} from 'common';
+import {
+  PCM_RECORDING_SEGMENT_BYTES,
+  isPcmRecordingSessionName
+} from '../recording/PcmRecordingContract';
 
 const PART_SUFFIX: string = '.wav.part';
 

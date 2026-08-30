@@ -3,7 +3,7 @@ import { media } from '@kit.MediaKit';
 import { common, wantAgent } from '@kit.AbilityKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { RecordingFile } from '../../models/RecordingModels';
+import { RecordingFile } from 'common';
 import { requireRecordingDiagnosticsEnabled } from '../RecordingDiagnosticsPolicy';
 
 export function avRecorderGapBaselineDiagnosticName(): string {

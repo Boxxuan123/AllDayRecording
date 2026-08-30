@@ -9,7 +9,7 @@ import {
   encodeWatchSyncMessage,
   exactWatchFileKey,
   legacyWatchFileKey
-} from '../main/ets/sync/protocol/WatchFileSyncProtocol';
+} from 'common';
 
 export default function watchSyncProtocolTest() {
   describe('WatchSyncProtocol', () => {

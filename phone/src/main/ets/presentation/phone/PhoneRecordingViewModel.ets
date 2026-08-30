@@ -1,17 +1,19 @@
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { ReceivedRecordingFile, RecordingFile, WatchRecordingControlStatus,
-  WatchSyncProgress } from '../../models/RecordingModels';
-import { AudioPlaybackService } from '../../services/AudioPlaybackService';
+import {
+  AudioPlaybackService,
+  PhoneSyncUiState,
+  PresentationLifecycleCoordinator,
+  ReceivedRecordingFile,
+  RecordingFile,
+  WatchRecordingControlStatus,
+  WatchSyncProgress,
+  recordingErrorMessage
+} from 'common';
 import {
   WearEngineRecordingReceiver,
   wearEngineErrorMessage
 } from '../../services/RecordingTransferService';
-import {
-  PhoneSyncUiState,
-  PresentationLifecycleCoordinator,
-  recordingErrorMessage
-} from '../shared/RecordingPresentation';
 
 @Observed
 export class PhoneRecordingViewModel {

@@ -1,5 +1,4 @@
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
-import { deviceInfo } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import {
@@ -37,10 +36,7 @@ export default class EntryAbility extends UIAbility {
       }
       hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
       try {
-        const colorMode = deviceInfo.deviceType === 'wearable' ?
-          ConfigurationConstant.ColorMode.COLOR_MODE_DARK :
-          ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET;
-        this.context.getApplicationContext().setColorMode(colorMode);
+        this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_DARK);
       } catch (colorModeError) {
         hilog.error(DOMAIN, 'testTag', 'Failed to set colorMode. Cause: %{public}s',
           JSON.stringify(colorModeError));

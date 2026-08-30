@@ -1,25 +1,25 @@
 import { abilityAccessCtrl, common, Permissions } from '@kit.AbilityKit';
-import { RecordingFile } from '../../models/RecordingModels';
-import { AudioPlaybackService } from '../../services/AudioPlaybackService';
 import {
-  InterruptedWavRecoveryResult,
-  InterruptedWavRecoveryService
-} from '../../services/InterruptedWavRecoveryService';
-import { PcmSegmentedRecordingService } from '../../services/PcmSegmentedRecordingService';
+  AudioPlaybackService,
+  PresentationLifecycleCoordinator,
+  RecordingFile,
+  recordingErrorMessage
+} from 'common';
 import {
   WearEngineRecordingSender,
   WatchRecordingControlResult,
   wearEngineErrorMessage
 } from '../../services/RecordingTransferService';
 import {
+  InterruptedWavRecoveryResult,
+  InterruptedWavRecoveryService
+} from '../../services/InterruptedWavRecoveryService';
+import { PcmSegmentedRecordingService } from '../../services/PcmSegmentedRecordingService';
+import {
   PendingWatchRecordingStart,
   WatchRecordingStartFallback,
   WatchRecordingUiState
 } from '../../services/WatchRecordingStartFallback';
-import {
-  PresentationLifecycleCoordinator,
-  recordingErrorMessage
-} from '../shared/RecordingPresentation';
 
 @Observed
 export class WatchRecordingViewModel {

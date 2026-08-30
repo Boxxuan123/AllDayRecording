@@ -2,24 +2,20 @@ import { describe, it, expect } from '@ohos/hypium';
 import { fileIo } from '@kit.CoreFileKit';
 import {
   AtomicFileOperations,
-  copyFileAtomically,
-  writeBufferAtomically
-} from '../main/ets/shared/io/AtomicFileWriter';
-import {
   JSON_LOAD_DAMAGED,
   JSON_LOAD_INVALID_CONTENT,
   JSON_LOAD_INVALID_VERSION,
   JSON_LOAD_MISSING,
   JSON_LOAD_SUCCESS,
   VersionedJsonDocument,
+  WAV_HEADER_BYTES,
+  copyFileAtomically,
+  createPcmWavHeader,
   loadVersionedJson,
+  writeBufferAtomically,
   writeJsonAtomically,
   writeVersionedJson
-} from '../main/ets/shared/io/AtomicJsonStore';
-import {
-  WAV_HEADER_BYTES,
-  createPcmWavHeader
-} from '../main/ets/shared/io/WavFormat';
+} from 'common';
 import {
   createTestDirectory,
   readTestText,

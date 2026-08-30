@@ -5,7 +5,7 @@ import {
 } from '../main/ets/diagnostics/RecordingDiagnosticsPolicy';
 import { sleepModeProbeDiagnosticName } from '../main/ets/diagnostics/SleepModeProbeService';
 import { avRecorderGapBaselineDiagnosticName } from '../main/ets/diagnostics/legacy/AvRecorderGapBaseline';
-import { RecordingFile } from '../main/ets/models/RecordingModels';
+import { RecordingFile } from 'common';
 import {
   PCM_RECORDING_SEGMENT_SAMPLES,
   PcmSessionMetrics,
