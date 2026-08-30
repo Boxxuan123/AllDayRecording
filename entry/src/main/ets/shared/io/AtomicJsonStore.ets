@@ -23,11 +23,19 @@ export type JsonTextReadOperation = (path: string) => string;
 export type JsonTextWriteOperation = (path: string, content: string) => void;
 
 function defaultExists(path: string): boolean {
-  return fileIo.accessSync(path);
+  try {
+    return fileIo.accessSync(path);
+  } catch (error) {
+    throw jsonFileError(error);
+  }
 }
 
 function defaultReadText(path: string): string {
-  return fileIo.readTextSync(path);
+  try {
+    return fileIo.readTextSync(path);
+  } catch (error) {
+    throw jsonFileError(error);
+  }
 }
 
 function defaultWriteText(path: string, content: string): void {
@@ -71,4 +79,8 @@ export function writeVersionedJson<T extends VersionedJsonDocument>(path: string
     throw new Error('JSON 清单版本或内容无效');
   }
   writeJsonAtomically(path, document, writeText);
+}
+
+function jsonFileError(error: Object): Error {
+  return error instanceof Error ? error : new Error(JSON.stringify(error));
 }

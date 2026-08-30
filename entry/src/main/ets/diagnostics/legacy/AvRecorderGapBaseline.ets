@@ -55,13 +55,13 @@ export class AvRecorderGapBaseline {
     this.segmentDurationMs = segmentDurationMs;
     this.sessionStartedAt = Date.now();
     this.sessionDirectory = `${this.context.filesDir}/gap_test_${this.sessionStartedAt}`;
-    fileIo.mkdirSync(this.sessionDirectory);
     this.nextSegmentIndex = 1;
     this.completedCount = 0;
     this.lastCompleted = undefined;
     this.sessionActive = true;
 
     try {
+      fileIo.mkdirSync(this.sessionDirectory);
       await this.startNextSegment();
       await this.startBackgroundRecording();
       this.scheduleRotation();
@@ -142,13 +142,13 @@ export class AvRecorderGapBaseline {
     const baseName = `segment_${indexText}_start_${requestedAt}.m4a`;
     this.finalOutputPath = `${this.sessionDirectory}/${baseName}`;
     this.outputPath = `${this.finalOutputPath}.part`;
-    const outputFile = fileIo.openSync(this.outputPath,
-      fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC);
-    this.outputFd = outputFile.fd;
 
     let recorder: media.AVRecorder | undefined = undefined;
     let recordingStarted: boolean = false;
     try {
+      const outputFile = fileIo.openSync(this.outputPath,
+        fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC);
+      this.outputFd = outputFile.fd;
       recorder = await media.createAVRecorder();
       const config: media.AVRecorderConfig = {
         audioSourceType: media.AudioSourceType.AUDIO_SOURCE_TYPE_MIC,
@@ -191,35 +191,39 @@ export class AvRecorderGapBaseline {
       throw new Error('当前没有可封口的录音段');
     }
 
-    const startedAt = this.segmentStartedAt;
-    const partPath = this.outputPath;
-    const finalPath = this.finalOutputPath;
-    let stoppedAt: number = Date.now();
     try {
-      await recorder.stop();
-      stoppedAt = Date.now();
-    } finally {
+      const startedAt = this.segmentStartedAt;
+      const partPath = this.outputPath;
+      const finalPath = this.finalOutputPath;
+      let stoppedAt: number = Date.now();
       try {
-        await recorder.release();
+        await recorder.stop();
+        stoppedAt = Date.now();
       } finally {
-        this.recorder = undefined;
-        this.closeOutput();
+        try {
+          await recorder.release();
+        } finally {
+          this.recorder = undefined;
+          this.closeOutput();
+        }
       }
-    }
 
-    const partStat = fileIo.statSync(partPath);
-    if (partStat.size <= 0) {
-      throw new Error('分段录音文件为空');
+      const partStat = fileIo.statSync(partPath);
+      if (partStat.size <= 0) {
+        throw new Error('分段录音文件为空');
+      }
+      fileIo.renameSync(partPath, finalPath);
+      const finalStat = fileIo.statSync(finalPath);
+      const pathParts = finalPath.split('/');
+      return {
+        fileName: pathParts[pathParts.length - 1],
+        path: finalPath,
+        size: finalStat.size,
+        durationMs: Math.max(0, stoppedAt - startedAt)
+      };
+    } catch (error) {
+      throw diagnosticFileError(error);
     }
-    fileIo.renameSync(partPath, finalPath);
-    const finalStat = fileIo.statSync(finalPath);
-    const pathParts = finalPath.split('/');
-    return {
-      fileName: pathParts[pathParts.length - 1],
-      path: finalPath,
-      size: finalStat.size,
-      durationMs: Math.max(0, stoppedAt - startedAt)
-    };
   }
 
   private publishCompletedSegment(recording: RecordingFile): void {
@@ -301,21 +305,25 @@ export class AvRecorderGapBaseline {
     if (!canIUse('SystemCapability.ResourceSchedule.BackgroundTaskManager.ContinuousTask')) {
       throw new Error('当前手表不支持录音持续任务');
     }
-    const notificationWantAgent = await wantAgent.getWantAgent({
-      wants: [{
-        bundleName: this.context.applicationInfo.name,
-        abilityName: 'EntryAbility'
-      }],
-      actionType: wantAgent.OperationType.START_ABILITY,
-      requestCode: 1001,
-      actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
-    });
-    await backgroundTaskManager.startBackgroundRunning(
-      this.context,
-      backgroundTaskManager.BackgroundMode.AUDIO_RECORDING,
-      notificationWantAgent
-    );
-    this.backgroundTaskActive = true;
+    try {
+      const notificationWantAgent = await wantAgent.getWantAgent({
+        wants: [{
+          bundleName: this.context.applicationInfo.name,
+          abilityName: 'EntryAbility'
+        }],
+        actionType: wantAgent.OperationType.START_ABILITY,
+        requestCode: 1001,
+        actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
+      });
+      await backgroundTaskManager.startBackgroundRunning(
+        this.context,
+        backgroundTaskManager.BackgroundMode.AUDIO_RECORDING,
+        notificationWantAgent
+      );
+      this.backgroundTaskActive = true;
+    } catch (error) {
+      throw diagnosticFileError(error);
+    }
   }
 
   private async stopBackgroundRecording(): Promise<void> {
@@ -341,8 +349,17 @@ export class AvRecorderGapBaseline {
 
   private closeOutput(): void {
     if (this.outputFd >= 0) {
-      fileIo.closeSync(this.outputFd);
+      const outputFd = this.outputFd;
       this.outputFd = -1;
+      try {
+        fileIo.closeSync(outputFd);
+      } catch (error) {
+        throw diagnosticFileError(error);
+      }
     }
   }
+}
+
+function diagnosticFileError(error: Object): Error {
+  return error instanceof Error ? error : new Error(JSON.stringify(error));
 }

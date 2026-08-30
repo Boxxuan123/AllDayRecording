@@ -1,2 +1,26 @@
 // Compatibility facade for call sites that have not moved to the Phase 2 sync tree yet.
-export * from '../sync/protocol/WatchFileSyncProtocol';
+export {
+  WATCH_SYNC_PROTOCOL_VERSION,
+  WATCH_SYNC_INVENTORY_PAGE,
+  WATCH_SYNC_REQUEST,
+  WATCH_SYNC_READY,
+  WATCH_SYNC_QUEUED,
+  WATCH_SYNC_BEGIN,
+  WATCH_SYNC_FILE,
+  WATCH_SYNC_FILE_PROGRESS,
+  WATCH_SYNC_FILE_RECEIVED,
+  WATCH_SYNC_COMPLETE,
+  WATCH_SYNC_ERROR,
+  WATCH_AUTO_FILE,
+  WATCH_SYNC_FILE_FAILED,
+  WATCH_PHONE_READY,
+  WATCH_CONTROL_PROBE,
+  WATCH_CONTROL_READY,
+  WATCH_RECORDING_COMMAND,
+  WATCH_RECORDING_ACK,
+  WatchSyncProtocolMessage,
+  exactWatchFileKey,
+  legacyWatchFileKey,
+  encodeWatchSyncMessage,
+  decodeWatchSyncMessage
+} from '../sync/protocol/WatchFileSyncProtocol';

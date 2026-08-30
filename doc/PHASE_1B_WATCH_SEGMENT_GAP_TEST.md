@@ -1,5 +1,7 @@
 # Phase 1B：Watch 5 自动分段连续性测试
 
+> 文档状态：`experiment` — 本文记录 AVRecorder 5/10 秒轮换实验，不是当前生产录音方案；当前生产链为连续 AudioCapturer 与 60 秒 WAV 分片。
+
 ## 目的
 
 本阶段不接入 Wear Engine，不测试手机传输，只回答一个问题：Watch 5 使用 AVRecorder 每 5 秒或 10 秒停止、封口并启动下一段时，相邻 M4A 之间实际丢失多少音频。

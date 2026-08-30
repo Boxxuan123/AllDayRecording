@@ -13,32 +13,60 @@ export interface AtomicFileOperations {
 
 class CoreAtomicFileOperations implements AtomicFileOperations {
   openForWrite(path: string): number {
-    return fileIo.openSync(path,
-      fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC).fd;
+    try {
+      return fileIo.openSync(path,
+        fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC).fd;
+    } catch (error) {
+      throw fileError(error);
+    }
   }
 
   openForSync(path: string): number {
-    return fileIo.openSync(path, fileIo.OpenMode.READ_WRITE).fd;
+    try {
+      return fileIo.openSync(path, fileIo.OpenMode.READ_WRITE).fd;
+    } catch (error) {
+      throw fileError(error);
+    }
   }
 
   write(fd: number, buffer: ArrayBuffer): number {
-    return fileIo.writeSync(fd, buffer);
+    try {
+      return fileIo.writeSync(fd, buffer);
+    } catch (error) {
+      throw fileError(error);
+    }
   }
 
   sync(fd: number): void {
-    fileIo.fsyncSync(fd);
+    try {
+      fileIo.fsyncSync(fd);
+    } catch (error) {
+      throw fileError(error);
+    }
   }
 
   close(fd: number): void {
-    fileIo.closeSync(fd);
+    try {
+      fileIo.closeSync(fd);
+    } catch (error) {
+      throw fileError(error);
+    }
   }
 
   rename(sourcePath: string, targetPath: string): void {
-    fileIo.renameSync(sourcePath, targetPath);
+    try {
+      fileIo.renameSync(sourcePath, targetPath);
+    } catch (error) {
+      throw fileError(error);
+    }
   }
 
   copy(sourceFd: number, targetPath: string): void {
-    fileIo.copyFileSync(sourceFd, targetPath);
+    try {
+      fileIo.copyFileSync(sourceFd, targetPath);
+    } catch (error) {
+      throw fileError(error);
+    }
   }
 }
 

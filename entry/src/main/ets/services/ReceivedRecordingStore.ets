@@ -169,108 +169,124 @@ export class ReceivedRecordingStore {
   }
 
   private scanExistingSyncFiles(target: Array<ReceivedRecordingFile>): void {
-    if (!fileIo.accessSync(this.syncRoot)) {
-      return;
+    try {
+      if (!fileIo.accessSync(this.syncRoot)) {
+        return;
+      }
+      this.scanSyncDirectory(this.syncRoot, '', target);
+    } catch (error) {
+      throw receivedStoreError(error);
     }
-    this.scanSyncDirectory(this.syncRoot, '', target);
   }
 
   private scanSyncDirectory(directory: string, relativeDirectory: string,
     target: Array<ReceivedRecordingFile>): void {
-    const entries = this.listDirectory(directory);
-    for (let index = 0; index < entries.length; index += 1) {
-      const name = entries[index];
-      if (name === MANIFEST_FILE_NAME) {
-        continue;
+    try {
+      const entries = this.listDirectory(directory);
+      for (let index = 0; index < entries.length; index += 1) {
+        const name = entries[index];
+        if (name === MANIFEST_FILE_NAME) {
+          continue;
+        }
+        const path = `${directory}/${name}`;
+        const relativePath = relativeDirectory.length > 0 ? `${relativeDirectory}/${name}` : name;
+        const stat = fileIo.statSync(path);
+        if (stat.isDirectory()) {
+          this.scanSyncDirectory(path, relativePath, target);
+          continue;
+        }
+        if (!this.isAudioFile(name) || stat.size <= 0 || this.containsPath(target, path)) {
+          continue;
+        }
+        const requestSeparator = relativePath.indexOf('/');
+        const requestId = requestSeparator > 0 ? relativePath.substring(0, requestSeparator) : 'history';
+        const fileName = name.replace(/^\d+_/, '');
+        target.push({
+          fileName: fileName,
+          path: path,
+          size: stat.size,
+          durationMs: 0,
+          requestId: requestId,
+          sourcePath: '历史同步记录（来源目录未保存）',
+          receivedAt: Math.round(stat.mtime * 1000),
+          legacySyncKey: legacyWatchFileKey(fileName, stat.size)
+        });
       }
-      const path = `${directory}/${name}`;
-      const relativePath = relativeDirectory.length > 0 ? `${relativeDirectory}/${name}` : name;
-      const stat = fileIo.statSync(path);
-      if (stat.isDirectory()) {
-        this.scanSyncDirectory(path, relativePath, target);
-        continue;
-      }
-      if (!this.isAudioFile(name) || stat.size <= 0 || this.containsPath(target, path)) {
-        continue;
-      }
-      const requestSeparator = relativePath.indexOf('/');
-      const requestId = requestSeparator > 0 ? relativePath.substring(0, requestSeparator) : 'history';
-      const fileName = name.replace(/^\d+_/, '');
-      target.push({
-        fileName: fileName,
-        path: path,
-        size: stat.size,
-        durationMs: 0,
-        requestId: requestId,
-        sourcePath: '历史同步记录（来源目录未保存）',
-        receivedAt: Math.round(stat.mtime * 1000),
-        legacySyncKey: legacyWatchFileKey(fileName, stat.size)
-      });
+    } catch (error) {
+      throw receivedStoreError(error);
     }
   }
 
   private scanLegacyManualFiles(target: Array<ReceivedRecordingFile>): void {
-    const entries = this.listDirectory(this.filesDirectory);
-    for (let index = 0; index < entries.length; index += 1) {
-      const name = entries[index];
-      if (!name.startsWith('received_') || !this.isAudioFile(name)) {
-        continue;
+    try {
+      const entries = this.listDirectory(this.filesDirectory);
+      for (let index = 0; index < entries.length; index += 1) {
+        const name = entries[index];
+        if (!name.startsWith('received_') || !this.isAudioFile(name)) {
+          continue;
+        }
+        const path = `${this.filesDirectory}/${name}`;
+        if (this.containsPath(target, path)) {
+          continue;
+        }
+        const stat = fileIo.statSync(path);
+        if (!stat.isFile() || stat.size <= 0) {
+          continue;
+        }
+        target.push({
+          fileName: name,
+          path: path,
+          size: stat.size,
+          durationMs: 0,
+          requestId: 'manual',
+          sourcePath: '手表手动发送',
+          receivedAt: Math.round(stat.mtime * 1000),
+          legacySyncKey: legacyWatchFileKey(name, stat.size)
+        });
       }
-      const path = `${this.filesDirectory}/${name}`;
-      if (this.containsPath(target, path)) {
-        continue;
-      }
-      const stat = fileIo.statSync(path);
-      if (!stat.isFile() || stat.size <= 0) {
-        continue;
-      }
-      target.push({
-        fileName: name,
-        path: path,
-        size: stat.size,
-        durationMs: 0,
-        requestId: 'manual',
-        sourcePath: '手表手动发送',
-        receivedAt: Math.round(stat.mtime * 1000),
-        legacySyncKey: legacyWatchFileKey(name, stat.size)
-      });
+    } catch (error) {
+      throw receivedStoreError(error);
     }
   }
 
   private writeManifest(): void {
-    if (!fileIo.accessSync(this.syncRoot)) {
-      fileIo.mkdirSync(this.syncRoot);
-    }
-    const entries: Array<ReceivedRecordingManifestEntry> = [];
-    const prefix = `${this.filesDirectory}/`;
-    for (let index = 0; index < this.recordings.length; index += 1) {
-      const recording = this.recordings[index];
-      if (!recording.path.startsWith(prefix) || !fileIo.accessSync(recording.path)) {
-        continue;
+    try {
+      if (!fileIo.accessSync(this.syncRoot)) {
+        fileIo.mkdirSync(this.syncRoot);
       }
-      entries.push({
-        fileName: recording.fileName,
-        localPath: recording.path.substring(prefix.length),
-        size: recording.size,
-        durationMs: recording.durationMs,
-        requestId: recording.requestId,
-        sourcePath: recording.sourcePath,
-        receivedAt: recording.receivedAt,
-        syncKey: recording.syncKey,
-        legacySyncKey: recording.legacySyncKey
-      });
-    }
-    const manifest: ReceivedRecordingManifest = {
-      version: MANIFEST_VERSION,
-      updatedAt: Date.now(),
-      recordings: entries
-    };
-    if (this.writeText === undefined) {
-      writeVersionedJson<ReceivedRecordingManifest>(this.manifestPath, MANIFEST_VERSION,
-        manifest, isReceivedRecordingManifest);
-    } else {
-      writeVersionedJson<ReceivedRecordingManifest>(this.manifestPath, MANIFEST_VERSION,
-        manifest, isReceivedRecordingManifest, this.writeText);
+      const entries: Array<ReceivedRecordingManifestEntry> = [];
+      const prefix = `${this.filesDirectory}/`;
+      for (let index = 0; index < this.recordings.length; index += 1) {
+        const recording = this.recordings[index];
+        if (!recording.path.startsWith(prefix) || !fileIo.accessSync(recording.path)) {
+          continue;
+        }
+        entries.push({
+          fileName: recording.fileName,
+          localPath: recording.path.substring(prefix.length),
+          size: recording.size,
+          durationMs: recording.durationMs,
+          requestId: recording.requestId,
+          sourcePath: recording.sourcePath,
+          receivedAt: recording.receivedAt,
+          syncKey: recording.syncKey,
+          legacySyncKey: recording.legacySyncKey
+        });
+      }
+      const manifest: ReceivedRecordingManifest = {
+        version: MANIFEST_VERSION,
+        updatedAt: Date.now(),
+        recordings: entries
+      };
+      if (this.writeText === undefined) {
+        writeVersionedJson<ReceivedRecordingManifest>(this.manifestPath, MANIFEST_VERSION,
+          manifest, isReceivedRecordingManifest);
+      } else {
+        writeVersionedJson<ReceivedRecordingManifest>(this.manifestPath, MANIFEST_VERSION,
+          manifest, isReceivedRecordingManifest, this.writeText);
+      }
+    } catch (error) {
+      throw receivedStoreError(error);
     }
   }
 
@@ -292,6 +308,10 @@ export class ReceivedRecordingStore {
     const lowerName = fileName.toLowerCase();
     return lowerName.endsWith('.wav') || lowerName.endsWith('.m4a');
   }
+}
+
+function receivedStoreError(error: Object): Error {
+  return error instanceof Error ? error : new Error(JSON.stringify(error));
 }
 
 export function loadReceivedRecordings(filesDirectory: string): Array<ReceivedRecordingFile> {

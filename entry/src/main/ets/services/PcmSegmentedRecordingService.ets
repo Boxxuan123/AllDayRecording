@@ -71,7 +71,11 @@ export class PcmSegmentedRecordingService {
     this.resetSessionState();
     this.sessionStartedAt = Date.now();
     this.sessionDirectory = pcmRecordingSessionDirectory(this.context.filesDir, this.sessionStartedAt);
-    fileIo.mkdirSync(this.sessionDirectory);
+    try {
+      fileIo.mkdirSync(this.sessionDirectory);
+    } catch (error) {
+      throw new Error(`无法创建录音目录：${this.businessErrorMessage(error)}`);
+    }
 
     try {
       this.activeSlot = this.createWavSlot(this.nextSegmentIndex, 0);

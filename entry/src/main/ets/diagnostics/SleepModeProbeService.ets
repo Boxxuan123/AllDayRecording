@@ -63,11 +63,10 @@ export class SleepModeProbeService {
 
     this.eventCount = 0;
     this.logPath = `${this.filesDirectory}/sleep_mode_probe_${Date.now()}.jsonl`;
-    const output = fileIo.openSync(this.logPath,
-      fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.APPEND);
-    this.logFd = output.fd;
-
     try {
+      const output = fileIo.openSync(this.logPath,
+        fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.APPEND);
+      this.logFd = output.fd;
       const subscriber = await commonEventManager.createSubscriber({ events: events });
       await commonEventManager.subscribeToEvent(subscriber, this.eventHandler);
       this.subscriber = subscriber;

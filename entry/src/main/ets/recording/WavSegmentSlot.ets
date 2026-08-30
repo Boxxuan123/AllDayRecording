@@ -23,16 +23,28 @@ export interface WavSegmentFileOperations {
 
 class CoreWavSegmentFileOperations implements WavSegmentFileOperations {
   openForWrite(path: string): number {
-    return fileIo.openSync(path,
-      fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC).fd;
+    try {
+      return fileIo.openSync(path,
+        fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC).fd;
+    } catch (error) {
+      throw slotError(error);
+    }
   }
 
   write(fd: number, buffer: ArrayBuffer): number {
-    return fileIo.writeSync(fd, buffer);
+    try {
+      return fileIo.writeSync(fd, buffer);
+    } catch (error) {
+      throw slotError(error);
+    }
   }
 
   seekToStart(fd: number): void {
-    fileIo.lseek(fd, 0, fileIo.WhenceType.SEEK_SET);
+    try {
+      fileIo.lseek(fd, 0, fileIo.WhenceType.SEEK_SET);
+    } catch (error) {
+      throw slotError(error);
+    }
   }
 
   syncAndClose(fd: number): void {
@@ -44,15 +56,27 @@ class CoreWavSegmentFileOperations implements WavSegmentFileOperations {
   }
 
   statSize(path: string): number {
-    return fileIo.statSync(path).size;
+    try {
+      return fileIo.statSync(path).size;
+    } catch (error) {
+      throw slotError(error);
+    }
   }
 
   close(fd: number): void {
-    fileIo.closeSync(fd);
+    try {
+      fileIo.closeSync(fd);
+    } catch (error) {
+      throw slotError(error);
+    }
   }
 
   unlink(path: string): void {
-    fileIo.unlinkSync(path);
+    try {
+      fileIo.unlinkSync(path);
+    } catch (error) {
+      throw slotError(error);
+    }
   }
 }
 

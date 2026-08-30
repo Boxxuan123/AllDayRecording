@@ -42,10 +42,14 @@ export class AudioCaptureLifecycle {
         capturerFlags: 0
       }
     };
-    const capturer = await audio.createAudioCapturer(options);
-    this.capturer = capturer;
-    this.bufferSizeBytes = await capturer.getBufferSize();
-    capturer.on('readData', this.readDataHandler);
+    try {
+      const capturer = await audio.createAudioCapturer(options);
+      this.capturer = capturer;
+      this.bufferSizeBytes = await capturer.getBufferSize();
+      capturer.on('readData', this.readDataHandler);
+    } catch (error) {
+      throw captureError(error);
+    }
   }
 
   async start(): Promise<void> {
@@ -81,7 +85,11 @@ export class AudioCaptureLifecycle {
 
   detachReadData(): void {
     const capturer = this.requiredCapturer();
-    capturer.off('readData', this.readDataHandler);
+    try {
+      capturer.off('readData', this.readDataHandler);
+    } catch (error) {
+      throw captureError(error);
+    }
   }
 
   async release(): Promise<void> {
@@ -114,4 +122,8 @@ export class AudioCaptureLifecycle {
     }
     return this.capturer;
   }
+}
+
+function captureError(error: Object): Error {
+  return error instanceof Error ? error : new Error(JSON.stringify(error));
 }

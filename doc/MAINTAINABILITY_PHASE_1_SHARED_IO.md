@@ -1,5 +1,7 @@
 # Phase 1：共享持久化与 WAV 基础设施
 
+> 文档状态：`superseded` — 这是 Phase 1 完成时的历史快照；当前结构与命令以 `doc/CURRENT_ARCHITECTURE.md` 和根目录 `README.md` 为准。
+
 ## 1. 状态与范围
 
 执行日期：2026-08-29

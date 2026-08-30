@@ -1,5 +1,7 @@
 # AllDayRecording 可维护性重构 Phase 0 基线
 
+> 文档状态：`superseded` — 这是 Phase 0 完成时的历史快照；当前结构与命令以 `doc/CURRENT_ARCHITECTURE.md` 和根目录 `README.md` 为准。
+
 ## 1. 结论
 
 Phase 0 已于 2026-08-29 完成本地基线冻结：

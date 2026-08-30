@@ -1,5 +1,7 @@
 # Phase 2：Wear Engine 传输与同步状态机拆分
 
+> 文档状态：`superseded` — 这是 Phase 2 完成时的历史快照；当前同步边界以 `doc/CURRENT_ARCHITECTURE.md` 为准。
+
 ## 1. 当前状态
 
 截至 2026-08-29，Phase 2 的代码拆分、本地验证和 WATCH 5 真机回归均已完成；用户确认本阶段真机测试通过。

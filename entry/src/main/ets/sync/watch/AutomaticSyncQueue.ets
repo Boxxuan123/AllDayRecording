@@ -57,11 +57,19 @@ export interface AutomaticSyncQueueClock {
 
 class SystemAutomaticSyncQueueFileSystem implements AutomaticSyncQueueFileSystem {
   exists(path: string): boolean {
-    return fileIo.accessSync(path);
+    try {
+      return fileIo.accessSync(path);
+    } catch (error) {
+      throw queueFileError(error);
+    }
   }
 
   readText(path: string): string {
-    return fileIo.readTextSync(path);
+    try {
+      return fileIo.readTextSync(path);
+    } catch (error) {
+      throw queueFileError(error);
+    }
   }
 
   writeText(path: string, content: string): void {
@@ -70,12 +78,20 @@ class SystemAutomaticSyncQueueFileSystem implements AutomaticSyncQueueFileSystem
   }
 
   stat(path: string): AutomaticSyncQueueFileInfo {
-    const result = fileIo.statSync(path);
-    return {
-      size: result.size,
-      isFile: result.isFile()
-    };
+    try {
+      const result = fileIo.statSync(path);
+      return {
+        size: result.size,
+        isFile: result.isFile()
+      };
+    } catch (error) {
+      throw queueFileError(error);
+    }
   }
+}
+
+function queueFileError(error: Object): Error {
+  return error instanceof Error ? error : new Error(JSON.stringify(error));
 }
 
 class SystemAutomaticSyncQueueClock implements AutomaticSyncQueueClock {

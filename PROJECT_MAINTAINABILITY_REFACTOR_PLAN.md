@@ -278,6 +278,8 @@ Pages -> ViewModels/Coordinators -> Domain services -> Transport/Storage adapter
 
 ### Phase 5：接通质量门禁并修正文档
 
+执行状态（2026-08-30）：实现和本地验证已完成，待用户完成 Phone/WATCH 5 快速回归后提交。`hvigorw codeLinter` 已实际读取 `code-linter.json5` 并以 defect/不完整报告阻断；生产 Debug/Release 构建中的 `Function may throw exceptions` 已从 69 个降为 0。README、当前架构、历史文档状态和过期同步/索引/分片描述已更新，详细证据见 `doc/MAINTAINABILITY_PHASE_5_QUALITY_GATES.md`。
+
 目标：让后续膨胀和文档漂移能被自动发现。
 
 任务：
@@ -382,8 +384,8 @@ Release 必须在 Debug 完成后再次 clean，避免共享 `entry/build` 造�
 | Phase 1 共享文件/WAV 基础设施 | 已完成 | `doc/MAINTAINABILITY_PHASE_1_SHARED_IO.md` | `8f7443c`、`c6f4fb7` |
 | Phase 2 Wear Engine 与同步状态机拆分 | 已完成 | `doc/MAINTAINABILITY_PHASE_2_SYNC.md` | `081109d`、`2c68691` |
 | Phase 3 Phone/Watch 页面与状态拆分 | 已完成 | `doc/MAINTAINABILITY_PHASE_3_PRESENTATION.md` | `2cfa334` |
-| Phase 4 录音领域与诊断隔离 | 已完成 | `doc/MAINTAINABILITY_PHASE_4_RECORDING_DOMAIN.md` | `550fb46` |
-| Phase 5 质量门禁与文档 | 未开始 |  |  |
+| Phase 4 录音领域与诊断隔离 | 已完成 | `doc/MAINTAINABILITY_PHASE_4_RECORDING_DOMAIN.md` | `550fb46`、`7543eda` |
+| Phase 5 质量门禁与文档 | 待真机验收 | `doc/MAINTAINABILITY_PHASE_5_QUALITY_GATES.md` | 待提交 |
 | Phase 6 Phone/Watch 物理模块评估 | 未开始 |  |  |
 | Phase 7 内容完整性协议升级 | 未批准 |  |  |
 

@@ -18,10 +18,9 @@ export class AudioPlaybackService {
       throw new Error('当前手表不支持 AVPlayer 本地播放能力');
     }
     await this.release();
-    const inputFile = fileIo.openSync(path, fileIo.OpenMode.READ_ONLY);
+    const inputFile = openPlaybackFile(path);
     this.inputFd = inputFile.fd;
-    const size = fileIo.statSync(path).size;
-
+    const size = statPlaybackFile(path);
     try {
       const player = await media.createAVPlayer();
       this.player = player;
@@ -85,8 +84,37 @@ export class AudioPlaybackService {
       }
     }
     if (this.inputFd >= 0) {
-      fileIo.closeSync(this.inputFd);
+      const inputFd = this.inputFd;
       this.inputFd = -1;
+      closePlaybackFile(inputFd);
     }
   }
+}
+
+function openPlaybackFile(path: string): fileIo.File {
+  try {
+    return fileIo.openSync(path, fileIo.OpenMode.READ_ONLY);
+  } catch (error) {
+    throw playbackFileError(error);
+  }
+}
+
+function statPlaybackFile(path: string): number {
+  try {
+    return fileIo.statSync(path).size;
+  } catch (error) {
+    throw playbackFileError(error);
+  }
+}
+
+function closePlaybackFile(fd: number): void {
+  try {
+    fileIo.closeSync(fd);
+  } catch (error) {
+    throw playbackFileError(error);
+  }
+}
+
+function playbackFileError(error: Object): Error {
+  return error instanceof Error ? error : new Error(JSON.stringify(error));
 }

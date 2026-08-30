@@ -103,29 +103,37 @@ export class WatchRecordingStartFallback {
   }
 
   async takePending(): Promise<PendingWatchRecordingStart | undefined> {
-    const store = await preferences.getPreferences(this.context, PREFERENCES_NAME);
-    const requestIdValue = await store.get(PENDING_REQUEST_ID_KEY, '');
-    const createdAtValue = await store.get(PENDING_CREATED_AT_KEY, 0);
-    const requestId = typeof requestIdValue === 'string' ? requestIdValue : '';
-    const createdAt = typeof createdAtValue === 'number' ? createdAtValue : 0;
-    if (requestId.length === 0) {
-      return undefined;
+    try {
+      const store = await preferences.getPreferences(this.context, PREFERENCES_NAME);
+      const requestIdValue = await store.get(PENDING_REQUEST_ID_KEY, '');
+      const createdAtValue = await store.get(PENDING_CREATED_AT_KEY, 0);
+      const requestId = typeof requestIdValue === 'string' ? requestIdValue : '';
+      const createdAt = typeof createdAtValue === 'number' ? createdAtValue : 0;
+      if (requestId.length === 0) {
+        return undefined;
+      }
+      await this.clearPending();
+      if (createdAt <= 0 || Date.now() - createdAt > PENDING_EXPIRY_MS) {
+        return undefined;
+      }
+      return {
+        requestId: requestId,
+        createdAt: createdAt
+      };
+    } catch (error) {
+      throw fallbackError(error);
     }
-    await this.clearPending();
-    if (createdAt <= 0 || Date.now() - createdAt > PENDING_EXPIRY_MS) {
-      return undefined;
-    }
-    return {
-      requestId: requestId,
-      createdAt: createdAt
-    };
   }
 
   async clearPending(): Promise<void> {
-    const store = await preferences.getPreferences(this.context, PREFERENCES_NAME);
-    await store.delete(PENDING_REQUEST_ID_KEY);
-    await store.delete(PENDING_CREATED_AT_KEY);
-    await store.flush();
+    try {
+      const store = await preferences.getPreferences(this.context, PREFERENCES_NAME);
+      await store.delete(PENDING_REQUEST_ID_KEY);
+      await store.delete(PENDING_CREATED_AT_KEY);
+      await store.flush();
+    } catch (error) {
+      throw fallbackError(error);
+    }
     try {
       await notificationManager.cancel(START_NOTIFICATION_ID);
     } catch (error) {
@@ -134,43 +142,51 @@ export class WatchRecordingStartFallback {
   }
 
   private async savePending(pending: PendingWatchRecordingStart): Promise<void> {
-    const store = await preferences.getPreferences(this.context, PREFERENCES_NAME);
-    await store.put(PENDING_REQUEST_ID_KEY, pending.requestId);
-    await store.put(PENDING_CREATED_AT_KEY, pending.createdAt);
-    await store.flush();
+    try {
+      const store = await preferences.getPreferences(this.context, PREFERENCES_NAME);
+      await store.put(PENDING_REQUEST_ID_KEY, pending.requestId);
+      await store.put(PENDING_CREATED_AT_KEY, pending.createdAt);
+      await store.flush();
+    } catch (error) {
+      throw fallbackError(error);
+    }
   }
 
   private async publishStartNotification(): Promise<void> {
-    const notificationWantAgent = await wantAgent.getWantAgent({
-      wants: [{
-        bundleName: this.context.applicationInfo.name,
-        moduleName: 'entry',
-        abilityName: 'EntryAbility',
-        action: WATCH_RECORDING_START_ACTION
-      }],
-      actionType: wantAgent.OperationType.START_ABILITY,
-      requestCode: START_NOTIFICATION_REQUEST_CODE,
-      actionFlags: [wantAgent.WantAgentFlags.CANCEL_PRESENT_FLAG]
-    });
-    const request: notificationManager.NotificationRequest = {
-      id: START_NOTIFICATION_ID,
-      content: {
-        notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
-        normal: {
-          title: '手机请求开始录音',
-          text: '点此进入手表应用并自动开始录音'
-        }
-      },
-      wantAgent: notificationWantAgent,
-      actionButtons: [{
-        title: '开始录音',
-        wantAgent: notificationWantAgent
-      }],
-      tapDismissed: true,
-      isAlertOnce: true,
-      autoDeletedTime: Date.now() + PENDING_EXPIRY_MS
-    };
-    await notificationManager.publish(request);
+    try {
+      const notificationWantAgent = await wantAgent.getWantAgent({
+        wants: [{
+          bundleName: this.context.applicationInfo.name,
+          moduleName: 'entry',
+          abilityName: 'EntryAbility',
+          action: WATCH_RECORDING_START_ACTION
+        }],
+        actionType: wantAgent.OperationType.START_ABILITY,
+        requestCode: START_NOTIFICATION_REQUEST_CODE,
+        actionFlags: [wantAgent.WantAgentFlags.CANCEL_PRESENT_FLAG]
+      });
+      const request: notificationManager.NotificationRequest = {
+        id: START_NOTIFICATION_ID,
+        content: {
+          notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
+          normal: {
+            title: '手机请求开始录音',
+            text: '点此进入手表应用并自动开始录音'
+          }
+        },
+        wantAgent: notificationWantAgent,
+        actionButtons: [{
+          title: '开始录音',
+          wantAgent: notificationWantAgent
+        }],
+        tapDismissed: true,
+        isAlertOnce: true,
+        autoDeletedTime: Date.now() + PENDING_EXPIRY_MS
+      };
+      await notificationManager.publish(request);
+    } catch (error) {
+      throw fallbackError(error);
+    }
   }
 
   private async vibrateBestEffort(): Promise<void> {
@@ -188,4 +204,8 @@ export class WatchRecordingStartFallback {
       // The visible notification remains the authoritative user-action path.
     }
   }
+}
+
+function fallbackError(error: Object): Error {
+  return error instanceof Error ? error : new Error(JSON.stringify(error));
 }

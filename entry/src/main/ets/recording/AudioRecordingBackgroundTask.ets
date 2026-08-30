@@ -18,21 +18,25 @@ export class AudioRecordingBackgroundTask {
     if (!canIUse('SystemCapability.ResourceSchedule.BackgroundTaskManager.ContinuousTask')) {
       throw new Error('当前手表不支持录音持续任务');
     }
-    const notificationWantAgent = await wantAgent.getWantAgent({
-      wants: [{
-        bundleName: this.context.applicationInfo.name,
-        abilityName: 'EntryAbility'
-      }],
-      actionType: wantAgent.OperationType.START_ABILITY,
-      requestCode: this.requestCode,
-      actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
-    });
-    await backgroundTaskManager.startBackgroundRunning(
-      this.context,
-      backgroundTaskManager.BackgroundMode.AUDIO_RECORDING,
-      notificationWantAgent
-    );
-    this.active = true;
+    try {
+      const notificationWantAgent = await wantAgent.getWantAgent({
+        wants: [{
+          bundleName: this.context.applicationInfo.name,
+          abilityName: 'EntryAbility'
+        }],
+        actionType: wantAgent.OperationType.START_ABILITY,
+        requestCode: this.requestCode,
+        actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
+      });
+      await backgroundTaskManager.startBackgroundRunning(
+        this.context,
+        backgroundTaskManager.BackgroundMode.AUDIO_RECORDING,
+        notificationWantAgent
+      );
+      this.active = true;
+    } catch (error) {
+      throw backgroundTaskError(error);
+    }
   }
 
   async stop(): Promise<void> {
@@ -47,4 +51,8 @@ export class AudioRecordingBackgroundTask {
       this.active = false;
     }
   }
+}
+
+function backgroundTaskError(error: Object): Error {
+  return error instanceof Error ? error : new Error(JSON.stringify(error));
 }

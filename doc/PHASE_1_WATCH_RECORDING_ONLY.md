@@ -1,5 +1,7 @@
 # Phase 1A：手表本地录音 PoC
 
+> 文档状态：`superseded` — AAC/M4A 单文件 PoC 已被当前连续 PCM/WAV 生产录音链替代。
+
 ## 目标
 
 在不依赖手机、Wear Engine、配对状态或跨设备权限的前提下，只验证手表端本地录音能力：

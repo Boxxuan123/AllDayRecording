@@ -1,5 +1,7 @@
 # Phase 3：手机/手表表现层拆分
 
+> 文档状态：`superseded` — 这是 Phase 3 完成时的历史快照；当前表现层边界以 `doc/CURRENT_ARCHITECTURE.md` 为准。
+
 ## 1. 当前状态
 
 截至 2026-08-30，Phase 3 已完成。用户已确认 WATCH 5 真机视觉与录音流程回归通过，代码提交为 `2cfa334`。Codex 本阶段未安装或访问 WATCH 5，也未读取或改动设备录音文件。

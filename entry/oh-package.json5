@@ -1,7 +1,7 @@
 {
   "name": "entry",
   "version": "1.0.0",
-  "description": "Please describe the basic information.",
+  "description": "Shared HarmonyOS entry module for WATCH 5 recording and phone synchronization.",
   "main": "",
   "author": "",
   "license": "",

@@ -1,5 +1,7 @@
 # Phase 1C：AudioCapturer 连续 PCM 双缓冲分段
 
+> 文档状态：`experiment` — 本文保留 5 秒分片验证数据；当前生产实现沿用连续采集设计，但分片为 60 秒，5 秒仅是内存队列上限。
+
 ## 目标
 
 Phase 1B 已在 Watch 5 亮屏条件下证明：每 5 秒停止并重建 `AVRecorder` 会稳定丢失约 0.45 秒音频。本阶段不再重启麦克风采集器，只验证 `AudioCapturer` 连续输出 PCM 时，按精确采样编号轮换 WAV 能否消除边界空洞。

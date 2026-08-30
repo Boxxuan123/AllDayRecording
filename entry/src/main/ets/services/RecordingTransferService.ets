@@ -169,7 +169,7 @@ function scanSyncableFiles(filesDirectory: string, knownFileKeys: Array<string>)
 
 function collectSyncableFiles(filesDirectory: string, relativeDirectory: string, result: SyncScanResult): void {
   const directory = relativeDirectory.length > 0 ? `${filesDirectory}/${relativeDirectory}` : filesDirectory;
-  const entries = fileIo.listFileSync(directory);
+  const entries = listFilesChecked(directory);
   for (let index = 0; index < entries.length; index += 1) {
     const fileName = entries[index];
     if (relativeDirectory.length === 0 && fileName === SYNC_RECEIVE_DIRECTORY) {
@@ -177,8 +177,8 @@ function collectSyncableFiles(filesDirectory: string, relativeDirectory: string,
     }
     const relativePath = relativeDirectory.length > 0 ? `${relativeDirectory}/${fileName}` : fileName;
     const path = `${filesDirectory}/${relativePath}`;
-    const stat = fileIo.statSync(path);
-    if (stat.isDirectory()) {
+    const stat = statFileChecked(path);
+    if (isDirectoryChecked(stat)) {
       collectSyncableFiles(filesDirectory, relativePath, result);
       continue;
     }
@@ -201,9 +201,69 @@ function collectSyncableFiles(filesDirectory: string, relativeDirectory: string,
 }
 
 function ensureDirectory(path: string): void {
-  if (!fileIo.accessSync(path)) {
-    fileIo.mkdirSync(path);
+  if (!pathExistsChecked(path)) {
+    createDirectoryChecked(path);
   }
+}
+
+function listFilesChecked(path: string): Array<string> {
+  try {
+    return fileIo.listFileSync(path);
+  } catch (error) {
+    throw transferFileError(error);
+  }
+}
+
+function statFileChecked(path: string): fileIo.Stat {
+  try {
+    return fileIo.statSync(path);
+  } catch (error) {
+    throw transferFileError(error);
+  }
+}
+
+function isDirectoryChecked(stat: fileIo.Stat): boolean {
+  try {
+    return stat.isDirectory();
+  } catch (error) {
+    throw transferFileError(error);
+  }
+}
+
+function pathExistsChecked(path: string): boolean {
+  try {
+    return fileIo.accessSync(path);
+  } catch (error) {
+    throw transferFileError(error);
+  }
+}
+
+function createDirectoryChecked(path: string): void {
+  try {
+    fileIo.mkdirSync(path);
+  } catch (error) {
+    throw transferFileError(error);
+  }
+}
+
+function openReadOnlyChecked(path: string): fileIo.File {
+  try {
+    return fileIo.openSync(path, fileIo.OpenMode.READ_ONLY);
+  } catch (error) {
+    throw transferFileError(error);
+  }
+}
+
+function closeFileChecked(fd: number): void {
+  try {
+    fileIo.closeSync(fd);
+  } catch (error) {
+    throw transferFileError(error);
+  }
+}
+
+function transferFileError(error: Object): Error {
+  return error instanceof Error ? error : new Error(JSON.stringify(error));
 }
 
 function safeFileName(fileName: string): string {
@@ -805,7 +865,7 @@ export class WearEngineRecordingSender {
     }
 
     const ackKey = watchFileTransferKey(descriptor);
-    const inputFile = fileIo.openSync(recording.path, fileIo.OpenMode.READ_ONLY);
+    const inputFile = openReadOnlyChecked(recording.path);
     try {
       await new Promise<void>((resolve, reject) => {
         this.fileAckCoordinator.begin(descriptor, resolve, reject);
@@ -835,7 +895,7 @@ export class WearEngineRecordingSender {
       this.reportFileTransferProgress(transport, descriptor, 100, 'completed', true);
     } finally {
       this.clearFileTransferAck();
-      fileIo.closeSync(inputFile.fd);
+      closeFileChecked(inputFile.fd);
     }
   }
 
@@ -891,7 +951,7 @@ export class WearEngineRecordingSender {
       throw new Error('录音文件为空或超过 10 MB 限制');
     }
 
-    const inputFile = fileIo.openSync(recording.path, fileIo.OpenMode.READ_ONLY);
+    const inputFile = openReadOnlyChecked(recording.path);
     try {
       await new Promise<void>((resolve, reject) => {
         this.transportEngine.transferFile(transport, inputFile,
@@ -915,7 +975,7 @@ export class WearEngineRecordingSender {
           });
       });
     } finally {
-      fileIo.closeSync(inputFile.fd);
+      closeFileChecked(inputFile.fd);
     }
   }
 
@@ -1632,7 +1692,7 @@ export class WearEngineRecordingReceiver {
     } catch (error) {
       this.statusHandler(`接收失败：${error instanceof Error ? error.message : '无法保存录音'}`);
     } finally {
-      fileIo.closeSync(incoming.file.fd);
+      closeFileChecked(incoming.file.fd);
     }
   }
 
