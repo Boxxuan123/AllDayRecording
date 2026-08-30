@@ -25,6 +25,31 @@ export {
 } from './src/main/ets/services/WifiRecordingTransferService';
 
 export {
+  WIFI_TRANSFER_SESSION_TTL_MS,
+  WIFI_SECURE_PAYLOAD_OVERHEAD_BYTES,
+  WIFI_WATCH_TO_PHONE,
+  WIFI_PHONE_TO_WATCH,
+  WifiTransferSessionCredentials,
+  WifiAuthInit,
+  WifiAuthChallenge,
+  WifiAuthResponse,
+  WifiAuthAccept,
+  WifiTransferSecurityContext,
+  isWifiTransferCryptoAvailable,
+  wifiBytesToHex,
+  wifiHexToBytes,
+  isValidWifiTransferCredentials,
+  isValidWifiAuthNonce,
+  wifiConstantTimeHexEqual,
+  buildWifiFrameNonce,
+  buildWifiFrameAad,
+  createWifiTransferCredentials,
+  createWifiAuthNonce,
+  createWifiTransferSecurityContext,
+  wifiSecurityProtocolName
+} from './src/main/ets/security/WifiTransferSecurity';
+
+export {
   PhoneSyncUiState,
   PresentationLifecycleCoordinator,
   recordingErrorMessage,

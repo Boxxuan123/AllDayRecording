@@ -48,13 +48,12 @@ export struct WatchWifiTransferPage {
           .backgroundColor($r('app.color.surface_secondary'))
       }
 
-      Button(this.viewModel.wifiSending ? '正在同步…' : '同步全部录音', { type: ButtonType.Capsule })
-        .width(132)
-        .height(42)
-        .fontSize(14)
-        .backgroundColor($r('app.color.brand_success'))
-        .enabled(!this.viewModel.wifiSending && this.viewModel.wifiRecordingCount > 0)
-        .onClick((): void => this.viewModel.sendAllRecordingsViaWifi())
+      Text(this.viewModel.wifiSending ? '正在进行加密同步…' : '请在配对手机上点击 Wi-Fi 快传')
+        .width(146)
+        .fontSize(12)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.brand_success'))
+        .textAlign(TextAlign.Center)
 
       Text(this.viewModel.wifiStatus)
         .width(158)
@@ -63,7 +62,7 @@ export struct WatchWifiTransferPage {
         .textAlign(TextAlign.Center)
         .maxLines(3)
 
-      Text('已在手机存在的文件会校验后跳过 · 下滑返回首页')
+      Text('一次性凭据只经 Wear Engine 下发 · 下滑返回首页')
         .fontSize(8)
         .fontColor($r('app.color.text_tertiary'))
     }

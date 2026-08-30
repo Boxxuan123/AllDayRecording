@@ -139,7 +139,7 @@ export class PhoneRecordingViewModel {
         if (wasReceiverReady) {
           this.wifiStatus = `停止 Wi-Fi 接收失败：${detail}`;
         } else if (this.wifiReceiverReady) {
-          this.wifiStatus = `自动启动手表失败：${detail}；手机接收仍开启，可在手表 Wi-Fi 页面手动发送`;
+          this.wifiStatus = `安全批次下发失败：${detail}；请停止接收后从手机重新发起`;
         } else {
           this.wifiStatus = `Wi-Fi 快传失败：${detail}`;
           this.wifiProgress = 0;
@@ -436,13 +436,13 @@ export class PhoneRecordingViewModel {
       return;
     }
     this.wifiCapability = service.describeCapability();
-    await service.prepareReceiver();
-    this.wifiReceiverReady = true;
-    this.wifiStatus = '手机接收已就绪，正在自动唤醒手表并同步全部完整录音…';
     if (receiver === undefined) {
       throw new Error('Wear Engine 控制通道尚未连接');
     }
-    await receiver.requestWatchWifiTransfer();
+    const credentials = await service.prepareReceiver();
+    this.wifiReceiverReady = true;
+    this.wifiStatus = '手机接收已就绪，正在自动唤醒手表并同步全部完整录音…';
+    await receiver.requestWatchWifiTransfer(credentials);
   }
 
   private async togglePlaybackAsync(playback: AudioPlaybackService): Promise<void> {

@@ -47,6 +47,9 @@ export interface WatchSyncProtocolMessage {
   success?: boolean;
   sessionId?: string;
   sentAt?: number;
+  wifiBatchToken?: string;
+  wifiTemporaryKey?: string;
+  wifiSessionExpiresAt?: number;
 }
 
 function hashFileIdentity(value: string, seed: number): string {

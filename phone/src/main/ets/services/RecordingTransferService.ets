@@ -11,6 +11,7 @@ import {
   PhoneRecordingControlState,
   PhoneSyncCoordinator,
   ReceivedRecordingFile,
+  WifiTransferSessionCredentials,
   WatchRecordingControlStatus,
   WatchSyncFileDescriptor,
   WatchSyncProgress,
@@ -43,6 +44,7 @@ import {
   decodeWatchSyncMessage,
   destroyWearEngineChannel,
   exactWatchFileKey,
+  isValidWifiTransferCredentials,
   legacyWatchFileKey,
   p2pResultMessage,
   shouldRetryReceiverConnection,
@@ -151,6 +153,7 @@ export class WearEngineRecordingReceiver {
     WIFI_TRANSFER_HANDSHAKE_TIMEOUT_MS, WIFI_TRANSFER_COMMAND_TIMEOUT_MS);
   private wifiTransferResolveHandler: WatchWifiTransferResolve | undefined = undefined;
   private wifiTransferRejectHandler: WatchWifiTransferReject | undefined = undefined;
+  private wifiTransferCredentials: WifiTransferSessionCredentials | undefined = undefined;
   private startTask: Promise<void> | undefined = undefined;
   private receiverLifecycle: PhoneReceiverLifecycleCoordinator = new PhoneReceiverLifecycleCoordinator();
   private recordingStore: ReceivedRecordingStore;
@@ -373,7 +376,7 @@ export class WearEngineRecordingReceiver {
     }
   }
 
-  async requestWatchWifiTransfer(): Promise<void> {
+  async requestWatchWifiTransfer(credentials: WifiTransferSessionCredentials): Promise<void> {
     const client = this.p2pClient;
     const peer = this.peer;
     const appParam = this.appParam;
@@ -383,17 +386,21 @@ export class WearEngineRecordingReceiver {
     if (this.wifiTransferControl.isActive()) {
       throw new Error('上一项 Wi-Fi 快传控制仍在进行');
     }
+    if (!isValidWifiTransferCredentials(credentials)) {
+      throw new Error('Wi-Fi 一次性安全凭据无效或已过期');
+    }
     const transport: P2pTransport = {
       client: client,
       peer: peer,
       appParam: appParam
     };
     const requestId = `wifi_${Date.now()}`;
+    this.wifiTransferCredentials = credentials;
     await new Promise<void>((resolve: WatchWifiTransferResolve, reject: WatchWifiTransferReject): void => {
       this.wifiTransferResolveHandler = resolve;
       this.wifiTransferRejectHandler = reject;
       this.wifiTransferControl.begin(requestId, 'wifi_transfer', (_expired: PhoneRecordingControlState): void => {
-        this.rejectWifiTransferRequest('手表 Wi-Fi 快传控制器在 20 秒内未就绪；手机接收仍可供手表手动发送');
+        this.rejectWifiTransferRequest('手表 Wi-Fi 快传控制器在 20 秒内未就绪；请从手机重新发起新批次');
       });
       const task = this.beginWatchWifiTransfer(transport);
       task.then((): void => {
@@ -436,6 +443,9 @@ export class WearEngineRecordingReceiver {
     const appParam = this.appParam;
     if (client === undefined || peer === undefined || appParam === undefined) {
       throw new Error('手机接收通道尚未连接');
+    }
+    if (this.wifiTransferControl.isActive()) {
+      throw new Error('Wi-Fi 快传进行中，普通同步已取消');
     }
     const transport: P2pTransport = {
       client: client,
@@ -794,19 +804,27 @@ export class WearEngineRecordingReceiver {
       appParam: appParam
     };
     const requestId = this.wifiTransferControl.requestId();
+    const credentials = this.wifiTransferCredentials;
+    if (credentials === undefined || !isValidWifiTransferCredentials(credentials)) {
+      this.rejectWifiTransferRequest('Wi-Fi 一次性安全凭据已过期，请重新点击手机按钮');
+      return;
+    }
     this.wifiTransferControl.markCommandSent();
     const command: WatchSyncProtocolMessage = {
       version: WATCH_SYNC_PROTOCOL_VERSION,
       type: WATCH_WIFI_TRANSFER_COMMAND,
       requestId: requestId,
-      sentAt: Date.now()
+      sentAt: Date.now(),
+      wifiBatchToken: credentials.batchToken,
+      wifiTemporaryKey: credentials.temporaryKey,
+      wifiSessionExpiresAt: credentials.expiresAt
     };
     try {
       await this.transportEngine.sendProtocolMessage(transport, command);
       if (this.wifiTransferControl.matches(requestId)) {
         this.wifiTransferControl.clearTimeout();
         this.wifiTransferControl.beginPendingUserAction((_expired: PhoneRecordingControlState): void => {
-          this.rejectWifiTransferRequest('手表 Wi-Fi 快传在 150 秒内未完成；手机接收仍可供手表手动发送');
+          this.rejectWifiTransferRequest('手表安全 Wi-Fi 快传在 150 秒内未完成；请从手机重新发起新批次');
         });
       }
     } catch (error) {
@@ -829,6 +847,7 @@ export class WearEngineRecordingReceiver {
     const resolve = this.wifiTransferResolveHandler;
     this.wifiTransferResolveHandler = undefined;
     this.wifiTransferRejectHandler = undefined;
+    this.wifiTransferCredentials = undefined;
     if (resolve !== undefined) {
       resolve();
     }
@@ -839,6 +858,7 @@ export class WearEngineRecordingReceiver {
     const reject = this.wifiTransferRejectHandler;
     this.wifiTransferResolveHandler = undefined;
     this.wifiTransferRejectHandler = undefined;
+    this.wifiTransferCredentials = undefined;
     if (reject !== undefined) {
       reject(new Error(message));
     }

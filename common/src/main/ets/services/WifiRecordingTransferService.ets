@@ -6,6 +6,24 @@ import { fileIo, hash } from '@kit.CoreFileKit';
 import { mdns, socket } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { ReceivedRecordingFile, RecordingFile } from '../models/RecordingModels';
+import {
+  WIFI_PHONE_TO_WATCH,
+  WIFI_SECURE_PAYLOAD_OVERHEAD_BYTES,
+  WIFI_WATCH_TO_PHONE,
+  WifiAuthAccept,
+  WifiAuthChallenge,
+  WifiAuthInit,
+  WifiAuthResponse,
+  WifiTransferSecurityContext,
+  WifiTransferSessionCredentials,
+  createWifiAuthNonce,
+  createWifiTransferCredentials,
+  createWifiTransferSecurityContext,
+  isValidWifiAuthNonce,
+  isValidWifiTransferCredentials,
+  isWifiTransferCryptoAvailable,
+  wifiSecurityProtocolName
+} from '../security/WifiTransferSecurity';
 import { exactWatchFileKey, legacyWatchFileKey } from '../sync/protocol/WatchFileSyncProtocol';
 
 const SERVICE_TYPE: string = '_alldayrecording._tcp';
@@ -17,12 +35,13 @@ const PACKET_LENGTH_BYTES: number = 4;
 const FRAME_HEADER_BYTES: number = 9;
 const PACKET_OVERHEAD_BYTES: number = PACKET_LENGTH_BYTES + FRAME_HEADER_BYTES;
 const WIFI_CHUNK_BYTES: number = 128 * 1024;
-const MAX_PACKET_BYTES: number = WIFI_CHUNK_BYTES + FRAME_HEADER_BYTES;
+const MAX_PACKET_BYTES: number = WIFI_CHUNK_BYTES + WIFI_SECURE_PAYLOAD_OVERHEAD_BYTES + FRAME_HEADER_BYTES;
 const MAX_FILE_BYTES: number = 512 * 1024 * 1024;
 const DISCOVERY_TIMEOUT_MS: number = 12000;
 const CONNECT_TIMEOUT_MS: number = 8000;
 const READY_TIMEOUT_MS: number = 15000;
 const ACK_TIMEOUT_MS: number = 120000;
+const AUTH_TIMEOUT_MS: number = 7000;
 const BACKGROUND_TASK_REQUEST_CODE: number = 1254;
 const LOG_DOMAIN: number = 0x5746;
 const LOG_TAG: string = 'WifiRecordingTransfer';
@@ -35,6 +54,10 @@ const FRAME_ERROR: number = 5;
 const FRAME_READY: number = 6;
 const FRAME_BATCH_END: number = 7;
 const FRAME_BATCH_ACK: number = 8;
+const FRAME_AUTH_INIT: number = 9;
+const FRAME_AUTH_CHALLENGE: number = 10;
+const FRAME_AUTH_RESPONSE: number = 11;
+const FRAME_AUTH_ACCEPT: number = 12;
 
 export type WifiTransferUpdateHandler = (status: string, progress: number) => void;
 export type WifiRecordingReceivedHandler = (recording: ReceivedRecordingFile, sha256: string) => void;
@@ -102,6 +125,12 @@ interface ReceivingFile {
 interface RecordingCandidate extends RecordingFile {
   modifiedAt: number;
   relativePath: string;
+}
+
+interface ReceiverAuthAttempt {
+  batchToken: string;
+  clientNonce: string;
+  serverNonce: string;
 }
 
 function delay(milliseconds: number): Promise<void> {
@@ -300,6 +329,14 @@ export class WifiRecordingTransferService {
   private lastProgress: number = 0;
   private existingRecordingHandler: WifiExistingRecordingHandler | undefined;
   private batchCompletedHandler: WifiTransferBatchCompletedHandler | undefined;
+  private pendingReceiverCredentials: WifiTransferSessionCredentials | undefined = undefined;
+  private pendingReceiverSecurity: WifiTransferSecurityContext | undefined = undefined;
+  private activeSecurity: WifiTransferSecurityContext | undefined = undefined;
+  private peerAuthenticated: boolean = false;
+  private receiverAuthAttempt: ReceiverAuthAttempt | undefined = undefined;
+  private senderAuthChallenge: WifiAuthChallenge | undefined = undefined;
+  private senderAuthAccept: WifiAuthAccept | undefined = undefined;
+  private authTimeoutId: number = -1;
 
   constructor(context: common.UIAbilityContext, updateHandler: WifiTransferUpdateHandler,
     receivedHandler: WifiRecordingReceivedHandler,
@@ -319,7 +356,10 @@ export class WifiRecordingTransferService {
     if (!canIUse('SystemCapability.Communication.NetManager.MDNS')) {
       return '系统未提供局域网自动发现能力';
     }
-    return 'Wi-Fi 快传可用（两端需连接同一 WLAN）';
+    if (!isWifiTransferCryptoAvailable()) {
+      return '系统未提供 AES-GCM/HMAC 安全能力';
+    }
+    return '安全 Wi-Fi 快传可用（Wear Engine 配对认证 + AES-GCM）';
   }
 
   findLatestRecording(): RecordingFile | undefined {
@@ -361,11 +401,14 @@ export class WifiRecordingTransferService {
     return result;
   }
 
-  async prepareReceiver(): Promise<void> {
+  async prepareReceiver(): Promise<WifiTransferSessionCredentials> {
     this.assertReady();
+    const credentials = await createWifiTransferCredentials();
+    const security = await createWifiTransferSecurityContext(credentials);
+    this.replacePendingReceiverSession(credentials, security);
     if (this.serverSocket !== undefined) {
-      this.update('手机 Wi-Fi 接收已就绪，请到手表同步全部录音', 0);
-      return;
+      this.update('手机安全 Wi-Fi 接收已就绪，等待已配对手表认证', 0);
+      return credentials;
     }
     await this.startBackgroundTransfer();
     try {
@@ -392,7 +435,8 @@ export class WifiRecordingTransferService {
         }]
       };
       this.registeredService = await mdns.addLocalService(this.context, advertised);
-      this.update('手机 Wi-Fi 接收已就绪，请到手表同步全部录音', 0);
+      this.update('手机安全 Wi-Fi 接收已就绪，等待已配对手表认证', 0);
+      return credentials;
     } catch (error) {
       await this.shutdownTransport();
       await this.stopBackgroundTransfer();
@@ -407,17 +451,24 @@ export class WifiRecordingTransferService {
     this.update('已停止 Wi-Fi 接收', 0);
   }
 
-  async send(recording: RecordingFile): Promise<void> {
-    await this.sendAll([recording]);
+  async send(recording: RecordingFile, credentials: WifiTransferSessionCredentials): Promise<void> {
+    await this.sendAll([recording], credentials);
   }
 
-  async sendAll(recordings: Array<RecordingFile>): Promise<WifiTransferBatchResult> {
+  async sendAll(recordings: Array<RecordingFile>,
+    credentials: WifiTransferSessionCredentials): Promise<WifiTransferBatchResult> {
     if (this.sending) {
       throw new Error('录音正在通过 Wi-Fi 批量发送，请勿重复操作');
     }
     this.assertReady();
     if (recordings.length === 0) {
       throw new Error('没有找到可同步的完整录音');
+    }
+    if (recordings.length > 65535) {
+      throw new Error('单次 Wi-Fi 安全批次最多同步 65535 个录音');
+    }
+    if (!isValidWifiTransferCredentials(credentials)) {
+      throw new Error('手机下发的 Wi-Fi 临时安全凭据无效或已过期');
     }
 
     this.sending = true;
@@ -427,11 +478,14 @@ export class WifiRecordingTransferService {
       alreadyPresent: 0
     };
     try {
+      this.activateSenderSession(await createWifiTransferSecurityContext(credentials));
+      this.remoteFailureMessage = '';
       await this.startBackgroundTransfer();
       this.update('正在同一 Wi-Fi 中自动查找手机', 2);
       this.batchAckToken = 0;
       const receiver = await this.discoverReceiver();
       await this.connectReceiver(receiver);
+      await this.authenticateSender(credentials);
       const batchToken = Math.max(1, Math.floor(Date.now() % 4294967295));
       for (let index = 0; index < recordings.length; index += 1) {
         const transferred = await this.sendBatchRecording(recordings[index], index + 1,
@@ -450,7 +504,7 @@ export class WifiRecordingTransferService {
         transferred: result.transferred,
         alreadyPresent: result.alreadyPresent
       };
-      await this.writePacket(FRAME_BATCH_END, batchToken, recordings.length, encodeJson(summary));
+      await this.writeSecurePacket(FRAME_BATCH_END, batchToken, recordings.length, encodeJson(summary));
       await this.waitForBatchAck(batchToken);
       this.update(`Wi-Fi 全量同步完成：新增 ${result.transferred} 个，已存在 ${result.alreadyPresent} 个`, 100);
       return result;
@@ -458,6 +512,7 @@ export class WifiRecordingTransferService {
       this.sending = false;
       await this.closePeer();
       await this.stopBackgroundTransfer();
+      this.clearActiveSecurity();
     }
   }
 
@@ -476,7 +531,9 @@ export class WifiRecordingTransferService {
     }
     this.updateBatchProgress(`正在计算 ${batchIndex}/${batchTotal} 的 SHA-256`, batchIndex, batchTotal, 1);
     const sourceHash = await hashFileChecked(recording.path);
-    const transferToken = Math.max(1, Math.floor((batchToken + batchIndex) % 4294967295));
+    // The batch index is unique within the one-time security session. Using it
+    // directly prevents an AES-GCM nonce collision at a numeric wrap boundary.
+    const transferToken = batchIndex;
     const metadata: TransferMetadata = {
       protocol: PROTOCOL_NAME,
       version: 1,
@@ -493,7 +550,7 @@ export class WifiRecordingTransferService {
     this.readyToken = 0;
     this.finalAck = undefined;
     this.remoteFailureMessage = '';
-    await this.writePacket(FRAME_START, transferToken, 0, encodeJson(metadata));
+    await this.writeSecurePacket(FRAME_START, transferToken, 0, encodeJson(metadata));
     if (!await this.waitForReady(metadata)) {
       this.updateBatchProgress(`手机已有 ${batchIndex}/${batchTotal}：${recording.fileName}`,
         batchIndex, batchTotal, 100);
@@ -523,6 +580,9 @@ export class WifiRecordingTransferService {
     }
     if (!canIUse('SystemCapability.Communication.NetManager.MDNS')) {
       throw new Error('当前系统未提供局域网自动发现能力');
+    }
+    if (!isWifiTransferCryptoAvailable()) {
+      throw new Error('当前系统未提供 Wi-Fi 加密认证所需的密码能力');
     }
   }
 
@@ -657,13 +717,25 @@ export class WifiRecordingTransferService {
   }
 
   private async attachServerConnection(connection: socket.TCPSocketConnection): Promise<void> {
-    await this.closePeer();
+    if (this.serverConnection !== undefined || this.pendingReceiverSecurity === undefined ||
+      this.pendingReceiverCredentials === undefined) {
+      try {
+        await connection.close();
+      } catch (error) {
+      }
+      return;
+    }
     this.serverConnection = connection;
     this.attachPeerCallbacks(connection);
-    this.update('手表已通过 Wi-Fi 连接，等待文件元数据', 0);
+    this.startAuthTimeout();
+    this.update('检测到 Wi-Fi 连接，正在验证已配对手表的一次性凭据', 0);
   }
 
   private attachPeerCallbacks(peer: socket.TCPSocket | socket.TCPSocketConnection): void {
+    this.peerAuthenticated = false;
+    this.receiverAuthAttempt = undefined;
+    this.senderAuthChallenge = undefined;
+    this.senderAuthAccept = undefined;
     this.streamBuffer = new Uint8Array(0);
     this.incomingQueue = Promise.resolve();
     this.messageCallback = (info: socket.SocketMessageInfo): void => {
@@ -671,7 +743,7 @@ export class WifiRecordingTransferService {
       this.incomingQueue = this.incomingQueue.then(async (): Promise<void> => {
         await this.consumeIncoming(copiedData);
       }).catch((error: Object): void => {
-        this.abortReceive(errorMessage(error));
+        this.handleIncomingFailure(errorMessage(error));
       });
     };
     this.closeCallback = (): void => {
@@ -682,6 +754,8 @@ export class WifiRecordingTransferService {
         this.abortReceive('Wi-Fi 连接在文件完成前关闭');
       } else if (this.sending && this.batchAckToken === 0) {
         this.remoteFailureMessage = '手机提前关闭了 Wi-Fi 连接';
+      } else if (!this.peerAuthenticated && this.serverConnection !== undefined) {
+        this.rejectUnauthenticatedPeer('未完成一次性安全握手');
       }
     };
     this.peerErrorCallback = (error: BusinessError): void => {
@@ -691,6 +765,8 @@ export class WifiRecordingTransferService {
       const message = errorMessage(error);
       if (this.receivingFile !== undefined) {
         this.abortReceive(message);
+      } else if (!this.peerAuthenticated && this.serverConnection !== undefined) {
+        this.rejectUnauthenticatedPeer(message);
       } else {
         this.remoteFailureMessage = message;
       }
@@ -715,7 +791,7 @@ export class WifiRecordingTransferService {
           throw new Error('读取手表录音时提前到达文件末尾');
         }
         sequence += 1;
-        await this.writePacket(FRAME_DATA, metadata.transferToken, sequence, buffer.slice(0, bytesRead));
+        await this.writeSecurePacket(FRAME_DATA, metadata.transferToken, sequence, buffer.slice(0, bytesRead));
         totalRead += bytesRead;
         if (totalRead === metadata.size || sequence % 8 === 0) {
           const progress = Math.min(98, Math.floor(totalRead * 100 / metadata.size));
@@ -726,7 +802,7 @@ export class WifiRecordingTransferService {
     } finally {
       closeFileChecked(input.fd);
     }
-    await this.writePacket(FRAME_END, metadata.transferToken, sequence, encodeJson(metadata));
+    await this.writeSecurePacket(FRAME_END, metadata.transferToken, sequence, encodeJson(metadata));
     this.updateBatchProgress(`第 ${metadata.batchIndex}/${metadata.batchTotal} 个已发完，等待手机校验`,
       metadata.batchIndex, metadata.batchTotal, 99);
     await this.waitForFinalAck(metadata.transferToken);
@@ -739,7 +815,7 @@ export class WifiRecordingTransferService {
       ack.size, Date.now() - startedAt)}）`, metadata.batchIndex, metadata.batchTotal, 100);
   }
 
-  private async writePacket(type: number, transferToken: number, sequence: number,
+  private async writeRawPacket(type: number, transferToken: number, sequence: number,
     payload: ArrayBuffer): Promise<void> {
     const packet = encodePacket(type, transferToken, sequence, payload);
     if (this.clientSocket !== undefined) {
@@ -759,6 +835,17 @@ export class WifiRecordingTransferService {
       return;
     }
     throw new Error('Wi-Fi TCP 尚未连接');
+  }
+
+  private async writeSecurePacket(type: number, transferToken: number, sequence: number,
+    payload: ArrayBuffer): Promise<void> {
+    const security = this.activeSecurity;
+    if (!this.peerAuthenticated || security === undefined) {
+      throw new Error('Wi-Fi 对端尚未通过已配对设备认证');
+    }
+    const direction = this.sending ? WIFI_WATCH_TO_PHONE : WIFI_PHONE_TO_WATCH;
+    const encrypted = await security.encrypt(direction, type, transferToken, sequence, payload);
+    await this.writeRawPacket(type, transferToken, sequence, encrypted);
   }
 
   private async consumeIncoming(data: ArrayBuffer): Promise<void> {
@@ -793,6 +880,45 @@ export class WifiRecordingTransferService {
     const transferToken = view.getUint32(1, false);
     const sequence = view.getUint32(5, false);
     const payload = framePayload(frame);
+    if (type === FRAME_AUTH_INIT) {
+      if (this.peerAuthenticated || transferToken !== 0 || sequence !== 0) {
+        throw new Error('已认证连接收到无效的 Wi-Fi 安全握手帧');
+      }
+      await this.beginReceiverAuthentication(decodeJson<WifiAuthInit>(payload));
+      return;
+    }
+    if (type === FRAME_AUTH_CHALLENGE) {
+      if (!this.sending || this.peerAuthenticated || transferToken !== 0 || sequence !== 0) {
+        throw new Error('未授权客户端发送了错误的安全握手帧');
+      }
+      this.senderAuthChallenge = decodeJson<WifiAuthChallenge>(payload);
+      return;
+    }
+    if (type === FRAME_AUTH_RESPONSE) {
+      if (this.peerAuthenticated || transferToken !== 0 || sequence !== 0) {
+        throw new Error('已认证连接收到重复的 Wi-Fi 安全响应');
+      }
+      await this.completeReceiverAuthentication(decodeJson<WifiAuthResponse>(payload));
+      return;
+    }
+    if (type === FRAME_AUTH_ACCEPT) {
+      if (!this.sending || this.peerAuthenticated || transferToken !== 0 || sequence !== 0) {
+        throw new Error('未授权客户端发送了错误的安全确认帧');
+      }
+      this.senderAuthAccept = decodeJson<WifiAuthAccept>(payload);
+      return;
+    }
+    const security = this.activeSecurity;
+    if (!this.peerAuthenticated || security === undefined) {
+      throw new Error('Wi-Fi 连接未通过已配对设备认证，已拒绝数据帧');
+    }
+    const direction = this.sending ? WIFI_PHONE_TO_WATCH : WIFI_WATCH_TO_PHONE;
+    const decryptedPayload = await security.decrypt(direction, type, transferToken, sequence, payload);
+    await this.handleSecureFrame(type, transferToken, sequence, decryptedPayload);
+  }
+
+  private async handleSecureFrame(type: number, transferToken: number, sequence: number,
+    payload: ArrayBuffer): Promise<void> {
     if (type === FRAME_START) {
       await this.beginReceive(transferToken, decodeJson<TransferMetadata>(payload));
       return;
@@ -834,7 +960,139 @@ export class WifiRecordingTransferService {
       const transferError = decodeJson<TransferError>(payload);
       this.remoteFailureMessage = transferError.message;
       this.update(`对端 Wi-Fi 处理失败：${transferError.message}`, 0);
+      return;
     }
+    throw new Error(`收到未知的 Wi-Fi 加密帧：${type}`);
+  }
+
+  private async beginReceiverAuthentication(init: WifiAuthInit): Promise<void> {
+    const credentials = this.pendingReceiverCredentials;
+    const security = this.pendingReceiverSecurity;
+    if (this.sending || credentials === undefined || security === undefined ||
+      !isValidWifiTransferCredentials(credentials) || init.protocol !== wifiSecurityProtocolName() ||
+      init.version !== 2 || init.batchToken !== credentials.batchToken || !isValidWifiAuthNonce(init.clientNonce)) {
+      throw new Error('Wi-Fi 客户端没有有效的 Wear Engine 一次性授权');
+    }
+    const previous = this.receiverAuthAttempt;
+    if (previous !== undefined && (previous.batchToken !== init.batchToken ||
+      previous.clientNonce !== init.clientNonce)) {
+      throw new Error('同一连接尝试切换 Wi-Fi 安全批次');
+    }
+    const serverNonce = previous === undefined ? await createWifiAuthNonce() : previous.serverNonce;
+    this.receiverAuthAttempt = {
+      batchToken: init.batchToken,
+      clientNonce: init.clientNonce,
+      serverNonce: serverNonce
+    };
+    const challenge: WifiAuthChallenge = {
+      protocol: wifiSecurityProtocolName(),
+      version: 2,
+      batchToken: init.batchToken,
+      clientNonce: init.clientNonce,
+      serverNonce: serverNonce,
+      proof: await security.createServerProof(init.clientNonce, serverNonce)
+    };
+    await this.writeRawPacket(FRAME_AUTH_CHALLENGE, 0, 0, encodeJson(challenge));
+  }
+
+  private async completeReceiverAuthentication(response: WifiAuthResponse): Promise<void> {
+    const attempt = this.receiverAuthAttempt;
+    const credentials = this.pendingReceiverCredentials;
+    const security = this.pendingReceiverSecurity;
+    if (this.sending || attempt === undefined || credentials === undefined || security === undefined ||
+      response.protocol !== wifiSecurityProtocolName() || response.version !== 2 ||
+      response.batchToken !== attempt.batchToken || response.clientNonce !== attempt.clientNonce ||
+      response.serverNonce !== attempt.serverNonce || !await security.verifyClientProof(
+        response.clientNonce, response.serverNonce, response.proof)) {
+      throw new Error('Wi-Fi 客户端未能证明其来自已配对 Wear Engine 设备');
+    }
+    this.pendingReceiverCredentials = undefined;
+    this.pendingReceiverSecurity = undefined;
+    this.activeSecurity = security;
+    this.peerAuthenticated = true;
+    this.clearAuthTimeout();
+    const accept: WifiAuthAccept = {
+      protocol: wifiSecurityProtocolName(),
+      version: 2,
+      batchToken: response.batchToken,
+      clientNonce: response.clientNonce,
+      serverNonce: response.serverNonce,
+      proof: await security.createAcceptProof(response.clientNonce, response.serverNonce)
+    };
+    await this.writeRawPacket(FRAME_AUTH_ACCEPT, 0, 0, encodeJson(accept));
+    this.update('已确认连接来自 Wear Engine 配对手表，开始接收加密录音', 0);
+  }
+
+  private async authenticateSender(credentials: WifiTransferSessionCredentials): Promise<void> {
+    const security = this.activeSecurity;
+    if (security === undefined) {
+      throw new Error('手表 Wi-Fi 临时安全会话尚未建立');
+    }
+    const clientNonce = await createWifiAuthNonce();
+    this.senderAuthChallenge = undefined;
+    this.senderAuthAccept = undefined;
+    const init: WifiAuthInit = {
+      protocol: wifiSecurityProtocolName(),
+      version: 2,
+      batchToken: credentials.batchToken,
+      clientNonce: clientNonce
+    };
+    await this.writeRawPacket(FRAME_AUTH_INIT, 0, 0, encodeJson(init));
+    const challenge = await this.waitForSenderChallenge();
+    if (challenge.protocol !== wifiSecurityProtocolName() || challenge.version !== 2 ||
+      challenge.batchToken !== credentials.batchToken || challenge.clientNonce !== clientNonce ||
+      !isValidWifiAuthNonce(challenge.serverNonce) || !await security.verifyServerProof(
+        clientNonce, challenge.serverNonce, challenge.proof)) {
+      throw new Error('手机未能证明其持有 Wear Engine 下发的临时密钥');
+    }
+    const response: WifiAuthResponse = {
+      protocol: wifiSecurityProtocolName(),
+      version: 2,
+      batchToken: credentials.batchToken,
+      clientNonce: clientNonce,
+      serverNonce: challenge.serverNonce,
+      proof: await security.createClientProof(clientNonce, challenge.serverNonce)
+    };
+    await this.writeRawPacket(FRAME_AUTH_RESPONSE, 0, 0, encodeJson(response));
+    const accept = await this.waitForSenderAccept();
+    if (accept.protocol !== wifiSecurityProtocolName() || accept.version !== 2 ||
+      accept.batchToken !== credentials.batchToken || accept.clientNonce !== clientNonce ||
+      accept.serverNonce !== challenge.serverNonce || !await security.verifyAcceptProof(
+        clientNonce, challenge.serverNonce, accept.proof)) {
+      throw new Error('手机没有确认本次一次性 Wi-Fi 安全会话');
+    }
+    this.peerAuthenticated = true;
+    this.senderAuthChallenge = undefined;
+    this.senderAuthAccept = undefined;
+    this.update('已通过 Wear Engine 一次性凭据完成双向认证，开始加密传输', 3);
+  }
+
+  private async waitForSenderChallenge(): Promise<WifiAuthChallenge> {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < AUTH_TIMEOUT_MS) {
+      if (this.senderAuthChallenge !== undefined) {
+        return this.senderAuthChallenge;
+      }
+      if (this.remoteFailureMessage.length > 0) {
+        throw new Error(this.remoteFailureMessage);
+      }
+      await delay(20);
+    }
+    throw new Error('手机未在 7 秒内返回 Wi-Fi 安全挑战');
+  }
+
+  private async waitForSenderAccept(): Promise<WifiAuthAccept> {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < AUTH_TIMEOUT_MS) {
+      if (this.senderAuthAccept !== undefined) {
+        return this.senderAuthAccept;
+      }
+      if (this.remoteFailureMessage.length > 0) {
+        throw new Error(this.remoteFailureMessage);
+      }
+      await delay(20);
+    }
+    throw new Error('手机未在 7 秒内确认 Wi-Fi 安全会话');
   }
 
   private async beginReceive(transferToken: number, metadata: TransferMetadata): Promise<void> {
@@ -858,7 +1116,7 @@ export class WifiRecordingTransferService {
         size: metadata.size,
         sha256: metadata.sha256.toLowerCase()
       };
-      await this.writePacket(FRAME_ACK, transferToken, 0, encodeJson(ack));
+      await this.writeSecurePacket(FRAME_ACK, transferToken, 0, encodeJson(ack));
       this.updateBatchProgress(`手机已存在 ${metadata.batchIndex}/${metadata.batchTotal}：${metadata.fileName}`,
         metadata.batchIndex, metadata.batchTotal, 100);
       return;
@@ -917,7 +1175,7 @@ export class WifiRecordingTransferService {
       size: metadata.size,
       sha256: metadata.sha256.toLowerCase()
     };
-    await this.writePacket(FRAME_READY, metadata.transferToken, 0, encodeJson(ready));
+    await this.writeSecurePacket(FRAME_READY, metadata.transferToken, 0, encodeJson(ready));
   }
 
   private writeReceiveChunk(transferToken: number, sequence: number, payload: ArrayBuffer): void {
@@ -985,7 +1243,7 @@ export class WifiRecordingTransferService {
         size: receiving.receivedSize,
         sha256: receivedHash
       };
-      await this.writePacket(FRAME_ACK, transferToken, sequence, encodeJson(ack));
+      await this.writeSecurePacket(FRAME_ACK, transferToken, sequence, encodeJson(ack));
       this.updateBatchProgress(`第 ${receiving.batchIndex}/${receiving.batchTotal} 个接收并校验完成（${
         transferRateText(receiving.receivedSize, Date.now() - receiving.startedAt)}）`, receiving.batchIndex,
       receiving.batchTotal, 100);
@@ -1008,7 +1266,7 @@ export class WifiRecordingTransferService {
       summary.transferred + summary.alreadyPresent !== summary.total || this.receivingFile !== undefined) {
       throw new Error('手表发送的 Wi-Fi 批次汇总无效');
     }
-    await this.writePacket(FRAME_BATCH_ACK, batchToken, summary.total, encodeJson(summary));
+    await this.writeSecurePacket(FRAME_BATCH_ACK, batchToken, summary.total, encodeJson(summary));
     this.update(`Wi-Fi 全量同步完成：新增 ${summary.transferred} 个，已存在 ${summary.alreadyPresent} 个`, 100);
     if (this.batchCompletedHandler !== undefined) {
       this.batchCompletedHandler({
@@ -1071,6 +1329,83 @@ export class WifiRecordingTransferService {
     throw new Error('手机未确认 Wi-Fi 批量同步完成；手表源文件仍保留');
   }
 
+  private replacePendingReceiverSession(credentials: WifiTransferSessionCredentials,
+    security: WifiTransferSecurityContext): void {
+    if (this.pendingReceiverSecurity !== undefined) {
+      this.pendingReceiverSecurity.destroy();
+    }
+    this.pendingReceiverCredentials = credentials;
+    this.pendingReceiverSecurity = security;
+    this.receiverAuthAttempt = undefined;
+  }
+
+  private activateSenderSession(security: WifiTransferSecurityContext): void {
+    this.clearActiveSecurity();
+    this.activeSecurity = security;
+    this.peerAuthenticated = false;
+  }
+
+  private clearActiveSecurity(): void {
+    const security = this.activeSecurity;
+    this.activeSecurity = undefined;
+    this.peerAuthenticated = false;
+    this.receiverAuthAttempt = undefined;
+    this.senderAuthChallenge = undefined;
+    this.senderAuthAccept = undefined;
+    if (security !== undefined) {
+      security.destroy();
+    }
+  }
+
+  private clearAllSecurity(): void {
+    this.clearAuthTimeout();
+    this.clearActiveSecurity();
+    const pending = this.pendingReceiverSecurity;
+    this.pendingReceiverSecurity = undefined;
+    this.pendingReceiverCredentials = undefined;
+    if (pending !== undefined) {
+      pending.destroy();
+    }
+  }
+
+  private startAuthTimeout(): void {
+    this.clearAuthTimeout();
+    this.authTimeoutId = setTimeout((): void => {
+      if (!this.peerAuthenticated) {
+        this.rejectUnauthenticatedPeer('7 秒内未完成 Wear Engine 一次性凭据认证');
+      }
+    }, AUTH_TIMEOUT_MS);
+  }
+
+  private clearAuthTimeout(): void {
+    if (this.authTimeoutId >= 0) {
+      clearTimeout(this.authTimeoutId);
+      this.authTimeoutId = -1;
+    }
+  }
+
+  private handleIncomingFailure(message: string): void {
+    if (this.sending) {
+      this.remoteFailureMessage = message;
+      this.update(`Wi-Fi 安全传输失败：${message}`, 0);
+      return;
+    }
+    if (!this.peerAuthenticated) {
+      this.rejectUnauthenticatedPeer(message);
+      return;
+    }
+    this.abortReceive(message);
+  }
+
+  private rejectUnauthenticatedPeer(message: string): void {
+    this.clearAuthTimeout();
+    this.receiverAuthAttempt = undefined;
+    this.closePeer().then((): void => {
+    }, (): void => {
+    });
+    this.update(`已拒绝未经 Wear Engine 授权的 Wi-Fi 连接：${message}`, 0);
+  }
+
   private abortReceive(message: string): void {
     const receiving = this.receivingFile;
     if (receiving !== undefined) {
@@ -1113,6 +1448,7 @@ export class WifiRecordingTransferService {
     const connection = this.serverConnection;
     this.clientSocket = undefined;
     this.serverConnection = undefined;
+    this.clearAuthTimeout();
     this.closingPeer = true;
     try {
       if (client !== undefined) {
@@ -1144,6 +1480,8 @@ export class WifiRecordingTransferService {
       this.closeCallback = undefined;
       this.peerErrorCallback = undefined;
       this.streamBuffer = new Uint8Array(0);
+      this.peerAuthenticated = false;
+      this.receiverAuthAttempt = undefined;
       this.closingPeer = false;
     }
   }
@@ -1173,6 +1511,7 @@ export class WifiRecordingTransferService {
     }
     this.serverConnectCallback = undefined;
     this.serverErrorCallback = undefined;
+    this.clearAllSecurity();
   }
 
   private update(status: string, progress: number): void {

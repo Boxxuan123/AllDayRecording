@@ -60,6 +60,12 @@ export class WatchSyncCoordinator {
     this.activeManualRequestId = '';
   }
 
+  cancelAll(): void {
+    this.stateValue = WATCH_SYNC_IDLE;
+    this.activeManualRequestId = '';
+    this.pendingManualRequest = undefined;
+  }
+
   takePendingManual(): WatchManualSyncRequest | undefined {
     if (this.stateValue !== WATCH_SYNC_IDLE || this.pendingManualRequest === undefined) {
       return undefined;

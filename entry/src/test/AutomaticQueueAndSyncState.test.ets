@@ -376,6 +376,19 @@ export default function automaticQueueAndSyncStateTest() {
       expect(coordinator.requestManual('manual_2', []).action).assertEqual(WATCH_MANUAL_QUEUED);
       expect(coordinator.requestManual('manual_2', []).action).assertEqual(WATCH_MANUAL_DUPLICATE);
     });
+
+    it('cancelsActiveAndPendingOrdinarySyncForWifiExclusiveTransfer', 0, () => {
+      const coordinator = new WatchSyncCoordinator();
+      expect(coordinator.beginAutomatic()).assertTrue();
+      expect(coordinator.requestManual('manual_waiting', []).action).assertEqual(WATCH_MANUAL_QUEUED);
+
+      coordinator.cancelAll();
+
+      expect(coordinator.isBusy()).assertFalse();
+      expect(coordinator.hasPendingManual()).assertFalse();
+      expect(coordinator.takePendingManual() === undefined).assertTrue();
+      expect(coordinator.beginAutomatic()).assertTrue();
+    });
   });
 
   describe('WatchAutomaticRetryCoordinator', () => {

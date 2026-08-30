@@ -4,6 +4,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import { wearEngine } from '@kit.WearEngine';
 import {
   RecordingFile,
+  WifiTransferSessionCredentials,
   WatchSyncFileDescriptor,
   WATCH_AUTO_FILE,
   WATCH_CONTROL_BUSY,
@@ -52,6 +53,7 @@ import {
   exactWatchFileKey,
   isP2pCommunicationError,
   isP2pCommunicationFailureResult,
+  isValidWifiTransferCredentials,
   p2pResultMessage,
   shouldRetryP2pFileTransfer,
   watchFileTransferKey,
@@ -81,7 +83,8 @@ export interface WatchRecordingControlResult {
 export type WatchRecordingControlHandler =
   (desiredState: string, requestId: string) => Promise<WatchRecordingControlResult>;
 
-export type WatchWifiTransferHandler = (requestId: string) => Promise<string>;
+export type WatchWifiTransferHandler =
+  (requestId: string, credentials: WifiTransferSessionCredentials) => Promise<string>;
 
 interface SyncSourceFile extends RecordingFile {
   relativePath: string;
@@ -93,6 +96,12 @@ interface SyncScanResult {
   alreadyReceivedCount: number;
   remainingCount: number;
   scannedCount: number;
+}
+
+interface ActiveOrdinaryTransfer {
+  transport: P2pTransport;
+  file: fileIo.File;
+  reject: (error: Error) => void;
 }
 
 type P2pTransport = WearEngineConnection;
@@ -228,6 +237,8 @@ export class WearEngineRecordingSender {
     TRANSFER_PROGRESS_STALL_TIMEOUT_MS, TRANSFER_FILE_ACK_TIMEOUT_MS);
   private activeFileLastProgressSent: number = -1;
   private activeFileLastProgressSentAt: number = 0;
+  private wifiTransferExclusive: boolean = false;
+  private activeOrdinaryTransfer: ActiveOrdinaryTransfer | undefined = undefined;
   private messageReceiver = (incoming: wearEngine.P2pMessage): void => {
     this.receiveMessage(incoming);
   };
@@ -274,6 +285,7 @@ export class WearEngineRecordingSender {
   }
 
   async stop(): Promise<void> {
+    this.wifiTransferExclusive = false;
     this.automaticRetryCoordinator.cancelScheduled();
     const client = this.p2pClient;
     const peer = this.peer;
@@ -295,6 +307,7 @@ export class WearEngineRecordingSender {
   }
 
   async send(recording: RecordingFile): Promise<void> {
+    this.assertOrdinaryTransferAllowed();
     if (this.syncCoordinator.isBusy()) {
       throw new Error('正在同步其他录音，请稍后再手动发送');
     }
@@ -312,7 +325,9 @@ export class WearEngineRecordingSender {
       return;
     }
     this.updateStatus(result === AUTOMATIC_QUEUE_ENQUEUED ?
-      `已封口，等待自动同步（${this.automaticQueue.count()}）` :
+      (this.wifiTransferExclusive ?
+        `已封口，Wi-Fi 快传结束后自动同步（${this.automaticQueue.count()}）` :
+        `已封口，等待自动同步（${this.automaticQueue.count()}）`) :
       '录音已封口，但自动队列清单保存失败；录音文件已保留');
     this.requestAutomaticDrain();
   }
@@ -463,9 +478,25 @@ export class WearEngineRecordingSender {
       await this.sendWifiTransferAck(transport, command.requestId, false, '手表 Wi-Fi 快传控制器尚未就绪');
       return;
     }
+    if (command.wifiBatchToken === undefined || command.wifiTemporaryKey === undefined ||
+      command.wifiSessionExpiresAt === undefined) {
+      await this.sendWifiTransferAck(transport, command.requestId, false,
+        '手机没有通过 Wear Engine 下发 Wi-Fi 一次性安全凭据');
+      return;
+    }
+    const credentials: WifiTransferSessionCredentials = {
+      batchToken: command.wifiBatchToken,
+      temporaryKey: command.wifiTemporaryKey,
+      expiresAt: command.wifiSessionExpiresAt
+    };
+    if (!isValidWifiTransferCredentials(credentials)) {
+      await this.sendWifiTransferAck(transport, command.requestId, false, 'Wi-Fi 一次性安全凭据无效或已过期');
+      return;
+    }
     this.wifiTransferCoordinator.begin();
     try {
-      const result = await this.wifiTransferHandler(command.requestId);
+      await this.beginWifiTransferExclusive();
+      const result = await this.wifiTransferHandler(command.requestId, credentials);
       const ack = await this.sendWifiTransferAck(transport, command.requestId, true, result);
       this.wifiTransferCoordinator.complete(command.requestId, ack);
       this.updateStatus(result);
@@ -475,6 +506,7 @@ export class WearEngineRecordingSender {
       this.wifiTransferCoordinator.complete(command.requestId, ack);
       this.updateStatus(`Wi-Fi 快传失败：${message}`);
     } finally {
+      this.endWifiTransferExclusive();
       this.wifiTransferCoordinator.finishWithoutAck();
     }
   }
@@ -560,6 +592,17 @@ export class WearEngineRecordingSender {
   }
 
   private async processSyncRequest(requestId: string, knownFileKeys: Array<string>): Promise<void> {
+    if (this.wifiTransferExclusive) {
+      const detail = 'Wi-Fi 快传进行中，已取消本次普通同步；手表原文件和自动队列均保留';
+      try {
+        const transport = await this.getTransport();
+        await this.sendSyncError(transport, requestId, detail);
+      } catch (error) {
+        // The Wi-Fi transfer remains authoritative even if the cancellation hint is not delivered.
+      }
+      this.updateStatus(detail);
+      return;
+    }
     const decision: WatchManualSyncDecision = this.syncCoordinator.requestManual(requestId, knownFileKeys);
     if (decision.action === WATCH_MANUAL_DUPLICATE) {
       return;
@@ -615,6 +658,7 @@ export class WearEngineRecordingSender {
         `${scan.alreadyReceivedCount > 0 ? `，已识别手机保存 ${scan.alreadyReceivedCount} 个` : ''}`);
 
       for (let index = 0; index < scan.files.length; index += 1) {
+        this.assertOrdinaryTransferAllowed();
         const source = scan.files[index];
         const descriptor: WatchSyncFileDescriptor = {
           requestId: requestId,
@@ -639,6 +683,9 @@ export class WearEngineRecordingSender {
           this.removeAutomaticFile(source.path);
           this.updateStatus(`同步 ${sentCount}/${scan.files.length}，手表原文件保留`);
         } catch (error) {
+          if (this.wifiTransferExclusive) {
+            throw new Error('普通同步已取消，已切换到 Wi-Fi 快传');
+          }
           if (isP2pCommunicationError(error)) {
             throw new Error(wearEngineErrorMessage(error));
           }
@@ -672,7 +719,7 @@ export class WearEngineRecordingSender {
   }
 
   private requestAutomaticDrain(): void {
-    if (this.automaticQueue.count() === 0) {
+    if (this.wifiTransferExclusive || this.automaticQueue.count() === 0) {
       return;
     }
     if (this.automaticRetryCoordinator.scheduleIfCoolingDown(() => {
@@ -695,12 +742,14 @@ export class WearEngineRecordingSender {
   }
 
   private async drainAutomaticQueue(): Promise<void> {
-    if (this.automaticQueue.count() === 0 || !this.syncCoordinator.beginAutomatic()) {
+    if (this.wifiTransferExclusive || this.automaticQueue.count() === 0 ||
+      !this.syncCoordinator.beginAutomatic()) {
       return;
     }
     try {
       let transport = await this.getTransport();
-      while (this.syncCoordinator.isAutomatic() && !this.syncCoordinator.hasPendingManual() &&
+      while (!this.wifiTransferExclusive && this.syncCoordinator.isAutomatic() &&
+        !this.syncCoordinator.hasPendingManual() &&
         this.automaticQueue.count() > 0) {
         const source: AutomaticSyncQueueEntry | undefined = this.automaticQueue.first();
         if (source === undefined) {
@@ -751,6 +800,9 @@ export class WearEngineRecordingSender {
   }
 
   private startPendingSyncIfIdle(): boolean {
+    if (this.wifiTransferExclusive) {
+      return false;
+    }
     const pending = this.syncCoordinator.takePendingManual();
     if (pending === undefined) {
       return false;
@@ -877,6 +929,7 @@ export class WearEngineRecordingSender {
     let lastError: Object = new Error('Wear Engine 文件传输失败');
     for (let attempt = 1; attempt <= TRANSFER_RETRY_ATTEMPTS; attempt += 1) {
       try {
+        this.assertOrdinaryTransferAllowed();
         await this.transferRecording(currentTransport, recording);
         return currentTransport;
       } catch (error) {
@@ -903,7 +956,9 @@ export class WearEngineRecordingSender {
     let lastError: Object = new Error('Wear Engine 文件传输失败');
     for (let attempt = 1; attempt <= TRANSFER_RETRY_ATTEMPTS; attempt += 1) {
       try {
+        this.assertOrdinaryTransferAllowed();
         await this.transportEngine.sendProtocolMessage(currentTransport, fileMessage);
+        this.assertOrdinaryTransferAllowed();
         await this.transferRecordingAwaitingAck(currentTransport, recording, descriptor);
         return currentTransport;
       } catch (error) {
@@ -934,9 +989,17 @@ export class WearEngineRecordingSender {
 
     const ackKey = watchFileTransferKey(descriptor);
     const inputFile = openReadOnlyChecked(recording.path);
+    const activeTransfer: ActiveOrdinaryTransfer = {
+      transport: transport,
+      file: inputFile,
+      reject: (error: Error): void => {
+        this.fileAckCoordinator.failForKey(ackKey, error);
+      }
+    };
     try {
       await new Promise<void>((resolve, reject) => {
         this.fileAckCoordinator.begin(descriptor, resolve, reject);
+        this.activeOrdinaryTransfer = activeTransfer;
         this.activeFileLastProgressSent = -1;
         this.activeFileLastProgressSentAt = 0;
         this.reportFileTransferProgress(transport, descriptor, 0, 'transferring', true);
@@ -962,6 +1025,7 @@ export class WearEngineRecordingSender {
       });
       this.reportFileTransferProgress(transport, descriptor, 100, 'completed', true);
     } finally {
+      this.clearActiveOrdinaryTransfer(activeTransfer);
       this.clearFileTransferAck();
       closeFileChecked(inputFile.fd);
     }
@@ -1020,8 +1084,16 @@ export class WearEngineRecordingSender {
     }
 
     const inputFile = openReadOnlyChecked(recording.path);
+    const activeTransfer: ActiveOrdinaryTransfer = {
+      transport: transport,
+      file: inputFile,
+      reject: (_error: Error): void => {
+      }
+    };
     try {
       await new Promise<void>((resolve, reject) => {
+        activeTransfer.reject = reject;
+        this.activeOrdinaryTransfer = activeTransfer;
         this.transportEngine.transferFile(transport, inputFile,
           (error: BusinessError, result: wearEngine.P2pResult) => {
             if (error) {
@@ -1043,7 +1115,51 @@ export class WearEngineRecordingSender {
           });
       });
     } finally {
+      this.clearActiveOrdinaryTransfer(activeTransfer);
       closeFileChecked(inputFile.fd);
+    }
+  }
+
+  private async beginWifiTransferExclusive(): Promise<void> {
+    this.wifiTransferExclusive = true;
+    this.automaticRetryCoordinator.cancelScheduled();
+    try {
+      await this.cancelActiveOrdinaryTransfer();
+      this.syncCoordinator.cancelAll();
+      this.updateStatus('已取消普通 Wear Engine 文件传输，切换为 Wi-Fi 独占快传');
+    } catch (error) {
+      this.wifiTransferExclusive = false;
+      this.requestAutomaticDrain();
+      throw new Error(`无法安全取消普通传输，未启动 Wi-Fi：${wearEngineErrorMessage(error)}`);
+    }
+  }
+
+  private endWifiTransferExclusive(): void {
+    this.wifiTransferExclusive = false;
+    this.requestAutomaticDrain();
+  }
+
+  private async cancelActiveOrdinaryTransfer(): Promise<void> {
+    const active = this.activeOrdinaryTransfer;
+    if (active === undefined) {
+      return;
+    }
+    if (!this.fileAckCoordinator.waitingForAck()) {
+      await this.transportEngine.cancelFileTransfer(active.transport, active.file);
+    }
+    active.reject(new Error('普通传输已取消，已切换到 Wi-Fi 快传'));
+    await waitForReceiverRetry(0);
+  }
+
+  private clearActiveOrdinaryTransfer(active: ActiveOrdinaryTransfer): void {
+    if (this.activeOrdinaryTransfer === active) {
+      this.activeOrdinaryTransfer = undefined;
+    }
+  }
+
+  private assertOrdinaryTransferAllowed(): void {
+    if (this.wifiTransferExclusive) {
+      throw new Error('Wi-Fi 快传进行中，普通 Wear Engine 文件传输已暂停');
     }
   }
 

@@ -137,6 +137,16 @@ export class WearEngineTransport {
     }
   }
 
+  async cancelFileTransfer(connection: WearEngineConnection, file: fileIo.File): Promise<void> {
+    try {
+      const result = await connection.client.cancelFileTransfer(
+        connection.peer.randomId, connection.appParam, { file: file });
+      validateP2pResult(result);
+    } catch (error) {
+      throw transportError(error);
+    }
+  }
+
   async startRemoteApp(connection: WearEngineConnection): Promise<wearEngine.P2pResult> {
     try {
       return connection.client.startRemoteApp(

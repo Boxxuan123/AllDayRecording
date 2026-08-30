@@ -3,6 +3,7 @@ import {
   AudioPlaybackService,
   PresentationLifecycleCoordinator,
   RecordingFile,
+  WifiTransferSessionCredentials,
   WifiRecordingTransferService,
   WifiTransferBatchResult,
   recordingErrorMessage,
@@ -144,7 +145,8 @@ export class WatchRecordingViewModel {
       }
     }, (desiredState: string, requestId: string): Promise<WatchRecordingControlResult> =>
       this.applyPhoneRecordingControl(desiredState, requestId),
-    (_requestId: string): Promise<string> => this.performAllWifiTransfer(true));
+    (_requestId: string, credentials: WifiTransferSessionCredentials): Promise<string> =>
+      this.performAllWifiTransfer(credentials));
     this.recordingStartFallback = new WatchRecordingStartFallback(context);
     WatchRecordingUiState.setForegroundListener((): void => {
       if (this.lifecycle.isActive(token)) {
@@ -247,16 +249,6 @@ export class WatchRecordingViewModel {
         this.status = `发送失败，原文件已保留：${wearEngineErrorMessage(error)}`;
         this.isSending = false;
       }
-    });
-  }
-
-  sendAllRecordingsViaWifi(): void {
-    if (this.wifiTransferService === undefined || this.wifiSending) {
-      return;
-    }
-    const task = this.performAllWifiTransfer(false);
-    task.then((): void => {
-    }, (): void => {
     });
   }
 
@@ -438,7 +430,7 @@ export class WatchRecordingViewModel {
     throw new Error('不支持的录音目标状态');
   }
 
-  private async performAllWifiTransfer(automaticallyStarted: boolean): Promise<string> {
+  private async performAllWifiTransfer(credentials: WifiTransferSessionCredentials): Promise<string> {
     const service = this.wifiTransferService;
     if (service === undefined) {
       throw new Error('手表 Wi-Fi 快传服务尚未就绪');
@@ -453,12 +445,10 @@ export class WatchRecordingViewModel {
       throw new Error(this.wifiStatus);
     }
     this.wifiSending = true;
-    this.wifiStatus = automaticallyStarted ?
-      `手机已自动发起，正在准备同步全部 ${recordings.length} 个录音，手表原文件会保留…` :
-      `正在准备同步全部 ${recordings.length} 个录音，手表原文件会保留…`;
+    this.wifiStatus = `已收到配对手机的一次性安全凭据，正在加密同步全部 ${recordings.length} 个录音…`;
     const token = this.lifecycleToken;
     try {
-      const result: WifiTransferBatchResult = await service.sendAll(recordings);
+      const result: WifiTransferBatchResult = await service.sendAll(recordings, credentials);
       const message = `Wi-Fi 全量同步完成：新增 ${result.transferred} 个，手机已有 ${result.alreadyPresent} 个；` +
         '手表原文件已保留';
       if (this.lifecycle.isActive(token)) {
