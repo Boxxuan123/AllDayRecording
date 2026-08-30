@@ -49,7 +49,7 @@ Phase 0–6 已经完成主要结构目标：Watch、Phone 和 `common` 在源�
 
 ### 2.3 已知维护性债务
 
-- `common/BuildProfile.ets` 被 Git 跟踪，但 Release 构建会改写其中的模式常量与格式，使正常构建污染工作区。
+- `common/BuildProfile.ets` 的构建污染已由 Phase N2 消除：该文件确认由 Hvigor 稳定生成，现已取消跟踪并使用根目录精确规则忽略。
 - Phone `EntryAbility` 的错误日志仍包含 `phase6Probe` 和 `Phone probe page`。
 - Watch Sender 约 918 行、Phone Receiver 约 906 行、Watch ViewModel 约 591 行，仍属于复审热点；当前边界已经比重构前清楚，不应仅为降低行数制造包装层。
 
@@ -199,6 +199,13 @@ Debug/Release 与双 HAP 产物边界均通过。详细证据见
 build: keep generated build profile out of source changes
 ```
 
+执行状态（2026-08-31）：已完成。确认 `common/BuildProfile.ets` 由 HAR 的
+`CreateHarBuildProfile` 任务生成，生产、测试和构建脚本均未导入；从文件不存在的状态执行
+构建可稳定重建。该文件已取消跟踪，`.gitignore` 只增加
+`/common/BuildProfile.ets` 精确规则。目标索引状态下独立 clean Debug/Release 构建均成功且
+没有产生未暂存差异，`common` HAR、Watch HAP、Phone HAP 与双 HAP `.app` 均正常生成。
+详细证据见 `doc/MAINTAINABILITY_PHASE_N2_BUILD_CLEANLINESS.md`。
+
 ## 7. Phase N3：清理遗留命名并同步文档
 
 ### 目标
@@ -258,7 +265,7 @@ chore: replace phase probe names in phone startup logs
 
 ## 10. 提交与停止规则
 
-1. Phase N0、N1 已完成；默认下一次只执行 Phase N2，且必须先获得单独批准。
+1. Phase N0、N1、N2 已完成；默认下一次只执行 Phase N3，且必须先获得单独批准。
 2. 每阶段开始前列出精确文件允许清单，不使用 `git add .`。
 3. 提交前检查 staged stat、name-status、diff check，以及敏感/本地/设备产物。
 4. 构建、测试、日志和设备备份不得进入 Git。

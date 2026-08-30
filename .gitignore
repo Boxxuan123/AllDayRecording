@@ -9,6 +9,7 @@
 /.DS_Store
 *.log
 **/build
+/common/BuildProfile.ets
 /.hvigor
 .cxx
 /.clangd
