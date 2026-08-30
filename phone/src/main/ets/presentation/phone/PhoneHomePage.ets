@@ -66,8 +66,8 @@ export struct PhoneHomePage {
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
 
-        Text(this.viewModel.receivedRecordingCount > 0 ?
-          `手机已保存 ${this.viewModel.receivedRecordingCount} 个录音，可在“录音记录”中同步和试听。` :
+        Text(this.viewModel.receivedRecordingGroups.length > 0 ?
+          `手机已保存 ${this.viewModel.receivedRecordingGroups.length} 条录音，可在“录音记录”中同步和试听。` :
           '完成录音后，可在“录音记录”中同步到手机。')
           .width('100%')
           .fontSize(14)

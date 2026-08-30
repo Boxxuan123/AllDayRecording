@@ -4,6 +4,7 @@ import pcmRecordingDomainTest from './PcmRecordingDomain.test';
 import presentationStateTest from './PresentationState.test';
 import sharedIoTest from './SharedIo.test';
 import watchSyncProtocolTest from './WatchSyncProtocol.test';
+import wifiRecordingTransferPolicyTest from './WifiRecordingTransferPolicy.test';
 
 export default function testsuite() {
   watchSyncProtocolTest();
@@ -12,4 +13,5 @@ export default function testsuite() {
   presentationStateTest();
   interruptedWavRecoveryTest();
   pcmRecordingDomainTest();
+  wifiRecordingTransferPolicyTest();
 }

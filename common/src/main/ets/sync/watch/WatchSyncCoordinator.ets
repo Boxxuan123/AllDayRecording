@@ -7,6 +7,8 @@ export const WATCH_SYNC_AUTOMATIC: string = 'automatic';
 export const WATCH_MANUAL_START: string = 'start';
 export const WATCH_MANUAL_QUEUED: string = 'queued';
 export const WATCH_MANUAL_DUPLICATE: string = 'duplicate';
+export const WATCH_AUTOMATIC_RETRY_INITIAL_DELAY_MS: number = 35 * 1000;
+export const WATCH_AUTOMATIC_RETRY_MAX_DELAY_MS: number = 5 * 60 * 1000;
 
 export interface WatchManualSyncRequest {
   requestId: string;
@@ -87,6 +89,67 @@ export class WatchSyncCoordinator {
 
   state(): string {
     return this.stateValue;
+  }
+}
+
+export class WatchAutomaticRetryCoordinator {
+  private clock: SyncClock;
+  private initialDelayMs: number;
+  private maximumDelayMs: number;
+  private failureCountValue: number = 0;
+  private retryAtValue: number = 0;
+  private scheduledTask: SyncScheduledTask = -1;
+
+  constructor(initialDelayMs: number = WATCH_AUTOMATIC_RETRY_INITIAL_DELAY_MS,
+    maximumDelayMs: number = WATCH_AUTOMATIC_RETRY_MAX_DELAY_MS, clock?: SyncClock) {
+    this.initialDelayMs = initialDelayMs;
+    this.maximumDelayMs = maximumDelayMs;
+    this.clock = clock !== undefined ? clock : new SystemSyncClock();
+  }
+
+  defer(): number {
+    this.cancelScheduled();
+    this.failureCountValue += 1;
+    const exponent = Math.min(this.failureCountValue - 1, 16);
+    const delayMs = Math.min(this.initialDelayMs * Math.pow(2, exponent), this.maximumDelayMs);
+    this.retryAtValue = this.clock.now() + delayMs;
+    return delayMs;
+  }
+
+  scheduleIfCoolingDown(callback: () => void): boolean {
+    const delayMs = this.remainingMs();
+    if (delayMs <= 0) {
+      return false;
+    }
+    if (this.scheduledTask >= 0) {
+      return true;
+    }
+    this.scheduledTask = this.clock.schedule(delayMs, () => {
+      this.scheduledTask = -1;
+      callback();
+    });
+    return true;
+  }
+
+  markSuccess(): void {
+    this.cancelScheduled();
+    this.failureCountValue = 0;
+    this.retryAtValue = 0;
+  }
+
+  cancelScheduled(): void {
+    if (this.scheduledTask >= 0) {
+      this.clock.cancel(this.scheduledTask);
+      this.scheduledTask = -1;
+    }
+  }
+
+  remainingMs(): number {
+    return Math.max(0, this.retryAtValue - this.clock.now());
+  }
+
+  failureCount(): number {
+    return this.failureCountValue;
   }
 }
 

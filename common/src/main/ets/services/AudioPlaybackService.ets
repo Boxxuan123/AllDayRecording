@@ -8,27 +8,56 @@ export class AudioPlaybackService {
   private player: media.AVPlayer | undefined = undefined;
   private inputFd: number = -1;
   private stateHandler: PlaybackStateHandler;
+  private sequencePaths: Array<string> = [];
+  private sequenceIndex: number = 0;
+  private playbackGeneration: number = 0;
 
   constructor(stateHandler: PlaybackStateHandler) {
     this.stateHandler = stateHandler;
   }
 
   async play(path: string): Promise<void> {
+    await this.playSequence([path]);
+  }
+
+  async playSequence(paths: Array<string>): Promise<void> {
     if (!canIUse('SystemCapability.Multimedia.Media.AVPlayer')) {
-      throw new Error('当前手表不支持 AVPlayer 本地播放能力');
+      throw new Error('当前设备不支持 AVPlayer 本地播放能力');
+    }
+    if (paths.length === 0) {
+      throw new Error('没有可播放的录音文件');
     }
     await this.release();
+    this.sequencePaths = paths.slice();
+    this.sequenceIndex = 0;
+    const generation = this.playbackGeneration;
+    await this.playCurrentSequenceItem(generation);
+  }
+
+  private async playCurrentSequenceItem(generation: number): Promise<void> {
+    if (generation !== this.playbackGeneration || this.sequenceIndex >= this.sequencePaths.length) {
+      return;
+    }
+    const path = this.sequencePaths[this.sequenceIndex];
     const inputFile = openPlaybackFile(path);
     this.inputFd = inputFile.fd;
     const size = statPlaybackFile(path);
     try {
       const player = await media.createAVPlayer();
+      if (generation !== this.playbackGeneration) {
+        await player.release();
+        return;
+      }
       this.player = player;
-      await this.setSourceAndWaitForInitialized(player, this.inputFd, size);
+      await this.setSourceAndWaitForInitialized(player, this.inputFd, size, generation);
+      if (generation !== this.playbackGeneration || this.player !== player) {
+        return;
+      }
       await player.prepare();
       player.setVolume(1.0);
       await player.play();
-      this.stateHandler(true, '正在播放，请确认媒体音量');
+      this.stateHandler(true, this.sequencePaths.length > 1 ?
+        `正在播放第 ${this.sequenceIndex + 1}/${this.sequencePaths.length} 段` : '正在播放，请确认媒体音量');
     } catch (error) {
       const playbackError = error as BusinessError;
       await this.release();
@@ -39,7 +68,8 @@ export class AudioPlaybackService {
     }
   }
 
-  private setSourceAndWaitForInitialized(player: media.AVPlayer, fd: number, size: number): Promise<void> {
+  private setSourceAndWaitForInitialized(player: media.AVPlayer, fd: number, size: number,
+    generation: number): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       let waitingForInitialized = true;
 
@@ -48,10 +78,14 @@ export class AudioPlaybackService {
           waitingForInitialized = false;
           resolve();
         } else if (state === 'playing') {
-          this.stateHandler(true, '正在播放，请确认媒体音量');
+          this.stateHandler(true, this.sequencePaths.length > 1 ?
+            `正在播放第 ${this.sequenceIndex + 1}/${this.sequencePaths.length} 段` :
+            '正在播放，请确认媒体音量');
         } else if (state === 'completed') {
-          this.stateHandler(false, '播放完成');
-          this.release();
+          this.handleSequenceItemCompleted(player, generation).then((): void => {
+          }, (error: Object): void => {
+            this.handleSequenceFailure(player, generation, playbackErrorMessage(error));
+          });
         } else if (state === 'error' && waitingForInitialized) {
           waitingForInitialized = false;
           reject(new Error('播放器初始化失败'));
@@ -65,16 +99,50 @@ export class AudioPlaybackService {
           reject(new Error(message));
           return;
         }
-        this.stateHandler(false, `播放失败：${message}`);
-        this.release();
+        this.handleSequenceFailure(player, generation, message);
       });
 
       player.fdSrc = { fd: fd, offset: 0, length: size };
     });
   }
 
+  private async handleSequenceItemCompleted(player: media.AVPlayer, generation: number): Promise<void> {
+    if (generation !== this.playbackGeneration || this.player !== player) {
+      return;
+    }
+    await this.releaseCurrentPlayer(player);
+    if (generation !== this.playbackGeneration) {
+      return;
+    }
+    this.sequenceIndex += 1;
+    if (this.sequenceIndex < this.sequencePaths.length) {
+      await this.playCurrentSequenceItem(generation);
+      return;
+    }
+    this.sequencePaths = [];
+    this.sequenceIndex = 0;
+    this.stateHandler(false, '播放完成');
+  }
+
+  private handleSequenceFailure(player: media.AVPlayer, generation: number, message: string): void {
+    if (generation !== this.playbackGeneration || this.player !== player) {
+      return;
+    }
+    this.stateHandler(false, `播放失败：${message}`);
+    this.release().then((): void => {
+    }, (): void => {
+    });
+  }
+
   async release(): Promise<void> {
+    this.playbackGeneration += 1;
+    this.sequencePaths = [];
+    this.sequenceIndex = 0;
     const player = this.player;
+    await this.releaseCurrentPlayer(player);
+  }
+
+  private async releaseCurrentPlayer(player: media.AVPlayer | undefined): Promise<void> {
     this.player = undefined;
     if (player !== undefined) {
       try {
@@ -117,4 +185,8 @@ function closePlaybackFile(fd: number): void {
 
 function playbackFileError(error: Object): Error {
   return error instanceof Error ? error : new Error(JSON.stringify(error));
+}
+
+function playbackErrorMessage(error: Object): string {
+  return error instanceof Error ? error.message : JSON.stringify(error);
 }

@@ -3,7 +3,9 @@ import {
   AudioPlaybackService,
   PresentationLifecycleCoordinator,
   RecordingFile,
-  recordingErrorMessage
+  WifiRecordingTransferService,
+  recordingErrorMessage,
+  wifiRecordingTransferErrorMessage
 } from 'common';
 import {
   WearEngineRecordingSender,
@@ -33,11 +35,17 @@ export class WatchRecordingViewModel {
   latestRecording: RecordingFile | undefined = undefined;
   isSending: boolean = false;
   notificationEnabled: boolean = true;
+  wifiStatus: string = '先在手机点击“Wi-Fi 快传”开始接收';
+  wifiCapability: string = '正在检查 Wi-Fi 能力…';
+  wifiProgress: number = 0;
+  wifiSending: boolean = false;
+  wifiRecording: RecordingFile | undefined = undefined;
 
   private context: common.UIAbilityContext | undefined = undefined;
   private recordingService: PcmSegmentedRecordingService | undefined = undefined;
   private playbackService: AudioPlaybackService | undefined = undefined;
   private transferSender: WearEngineRecordingSender | undefined = undefined;
+  private wifiTransferService: WifiRecordingTransferService | undefined = undefined;
   private recordingStartFallback: WatchRecordingStartFallback | undefined = undefined;
   private lifecycle: PresentationLifecycleCoordinator = new PresentationLifecycleCoordinator();
   private lifecycleToken: number = -1;
@@ -83,6 +91,18 @@ export class WatchRecordingViewModel {
       this.isPlaying = playing;
       this.status = message;
     });
+    const wifiTransfer = new WifiRecordingTransferService(context,
+      (status: string, progress: number): void => {
+        if (!this.lifecycle.isActive(token)) {
+          return;
+        }
+        this.wifiStatus = status;
+        this.wifiProgress = progress;
+      }, (): void => {
+      });
+    this.wifiTransferService = wifiTransfer;
+    this.wifiCapability = wifiTransfer.describeCapability();
+    this.refreshWifiRecording();
 
     const recoveryStatus = this.recoverInterruptedRecordings(context.filesDir);
     this.recordingService = new PcmSegmentedRecordingService(context, {
@@ -99,6 +119,7 @@ export class WatchRecordingViewModel {
           return;
         }
         this.latestRecording = recording;
+        this.wifiRecording = recording;
         this.completedSegments = completedCount;
         if (this.isRecording) {
           this.status = `第 ${completedCount} 段 ${sampleCount} 采样已封口`;
@@ -119,7 +140,8 @@ export class WatchRecordingViewModel {
         this.status = status;
       }
     }, (desiredState: string, requestId: string): Promise<WatchRecordingControlResult> =>
-      this.applyPhoneRecordingControl(desiredState, requestId));
+      this.applyPhoneRecordingControl(desiredState, requestId),
+    (_requestId: string): Promise<string> => this.performLatestWifiTransfer(true));
     this.recordingStartFallback = new WatchRecordingStartFallback(context);
     WatchRecordingUiState.setForegroundListener((): void => {
       if (this.lifecycle.isActive(token)) {
@@ -146,17 +168,20 @@ export class WatchRecordingViewModel {
     WatchRecordingUiState.setForegroundListener(undefined);
     this.stopTimer();
     const sender = this.transferSender;
+    const wifiTransfer = this.wifiTransferService;
     const recording = this.recordingService;
     const playback = this.playbackService;
     this.transferSender = undefined;
+    this.wifiTransferService = undefined;
     this.recordingService = undefined;
     this.playbackService = undefined;
     this.recordingStartFallback = undefined;
     this.isPlaying = false;
+    this.wifiSending = false;
     this.pendingForegroundStartInProgress = false;
     this.notificationPermissionCheckInProgress = false;
     this.recordingActionInProgress = false;
-    const task = this.releaseResources(sender, recording, playback);
+    const task = this.releaseResources(sender, wifiTransfer, recording, playback);
     this.cleanupTask = task;
     task.then((): void => {
       this.clearCleanupTask(task);
@@ -220,6 +245,31 @@ export class WatchRecordingViewModel {
         this.isSending = false;
       }
     });
+  }
+
+  sendLatestRecordingViaWifi(): void {
+    if (this.wifiTransferService === undefined || this.wifiSending) {
+      return;
+    }
+    const task = this.performLatestWifiTransfer(false);
+    task.then((): void => {
+    }, (): void => {
+    });
+  }
+
+  refreshWifiRecording(): void {
+    const service = this.wifiTransferService;
+    if (service === undefined) {
+      return;
+    }
+    try {
+      const latest = service.findLatestRecording();
+      if (latest !== undefined) {
+        this.wifiRecording = latest;
+      }
+    } catch (error) {
+      this.wifiStatus = `录音扫描失败：${wifiRecordingTransferErrorMessage(error as Object)}`;
+    }
   }
 
   openNotificationSettings(): void {
@@ -381,6 +431,49 @@ export class WatchRecordingViewModel {
     throw new Error('不支持的录音目标状态');
   }
 
+  private async performLatestWifiTransfer(automaticallyStarted: boolean): Promise<string> {
+    const service = this.wifiTransferService;
+    if (service === undefined) {
+      throw new Error('手表 Wi-Fi 快传服务尚未就绪');
+    }
+    if (this.wifiSending) {
+      throw new Error('上一项 Wi-Fi 快传仍在进行');
+    }
+    this.refreshWifiRecording();
+    const recording = this.wifiRecording;
+    if (recording === undefined) {
+      this.wifiStatus = '没有找到可发送的完整录音';
+      throw new Error(this.wifiStatus);
+    }
+    this.wifiSending = true;
+    this.wifiStatus = automaticallyStarted ?
+      '手机已自动发起，正在准备 Wi-Fi 快传，手表原文件会保留…' :
+      '正在准备 Wi-Fi 快传，手表原文件会保留…';
+    const token = this.lifecycleToken;
+    try {
+      await service.send(recording);
+      const message = 'Wi-Fi 快传完成，手机已校验，手表原文件已保留';
+      if (this.lifecycle.isActive(token)) {
+        this.wifiStatus = message;
+        this.wifiProgress = 100;
+      }
+      return message;
+    } catch (error) {
+      const message = wifiRecordingTransferErrorMessage(error as Object);
+      if (this.lifecycle.isActive(token)) {
+        this.wifiStatus = `Wi-Fi 快传失败，原文件已保留：${message}`;
+        if (this.wifiProgress < 99) {
+          this.wifiProgress = 0;
+        }
+      }
+      throw new Error(message);
+    } finally {
+      if (this.lifecycle.isActive(token)) {
+        this.wifiSending = false;
+      }
+    }
+  }
+
   private resumePendingPhoneRecordingStart(): void {
     if (this.pendingForegroundStartInProgress || this.recordingStartFallback === undefined) {
       return;
@@ -539,6 +632,7 @@ export class WatchRecordingViewModel {
   }
 
   private async releaseResources(sender: WearEngineRecordingSender | undefined,
+    wifiTransfer: WifiRecordingTransferService | undefined,
     recording: PcmSegmentedRecordingService | undefined,
     playback: AudioPlaybackService | undefined): Promise<void> {
     try {
@@ -547,12 +641,18 @@ export class WatchRecordingViewModel {
       }
     } finally {
       try {
-        if (recording !== undefined) {
-          await recording.release();
+        if (wifiTransfer !== undefined) {
+          await wifiTransfer.shutdown();
         }
       } finally {
-        if (playback !== undefined) {
-          await playback.release();
+        try {
+          if (recording !== undefined) {
+            await recording.release();
+          }
+        } finally {
+          if (playback !== undefined) {
+            await playback.release();
+          }
         }
       }
     }

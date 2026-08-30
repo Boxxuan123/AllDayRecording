@@ -11,6 +11,9 @@
     "installationFree": false,
     "requestPermissions": [
       {
+        "name": "ohos.permission.INTERNET"
+      },
+      {
         "name": "ohos.permission.MICROPHONE",
         "reason": "$string:microphone_permission_reason",
         "usedScene": {
@@ -49,7 +52,8 @@
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
         "backgroundModes": [
-          "audioRecording"
+          "audioRecording",
+          "dataTransfer"
         ],
         "skills": [
           {

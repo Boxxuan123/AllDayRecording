@@ -12,6 +12,15 @@ export {
 } from './src/main/ets/services/AudioPlaybackService';
 
 export {
+  WifiTransferUpdateHandler,
+  WifiRecordingReceivedHandler,
+  sanitizeWifiRecordingFileName,
+  isSafeWifiRecordingSourcePath,
+  wifiRecordingTransferErrorMessage,
+  WifiRecordingTransferService
+} from './src/main/ets/services/WifiRecordingTransferService';
+
+export {
   PhoneSyncUiState,
   PresentationLifecycleCoordinator,
   recordingErrorMessage,
@@ -75,6 +84,10 @@ export {
   WATCH_CONTROL_READY,
   WATCH_RECORDING_COMMAND,
   WATCH_RECORDING_ACK,
+  WATCH_WIFI_TRANSFER_PROBE,
+  WATCH_WIFI_TRANSFER_READY,
+  WATCH_WIFI_TRANSFER_COMMAND,
+  WATCH_WIFI_TRANSFER_ACK,
   WatchSyncProtocolMessage,
   exactWatchFileKey,
   legacyWatchFileKey,
@@ -123,6 +136,8 @@ export {
   P2P_COMMUNICATION_SUCCESS,
   p2pResultMessage,
   isP2pCommunicationError,
+  isP2pCommunicationFailureResult,
+  shouldRetryP2pFileTransfer,
   shouldRetryReceiverConnection,
   wearEngineErrorMessage
 } from './src/main/ets/sync/transport/WearEngineTransportPolicy';
@@ -152,10 +167,13 @@ export {
   WATCH_MANUAL_START,
   WATCH_MANUAL_QUEUED,
   WATCH_MANUAL_DUPLICATE,
+  WATCH_AUTOMATIC_RETRY_INITIAL_DELAY_MS,
+  WATCH_AUTOMATIC_RETRY_MAX_DELAY_MS,
   WatchManualSyncRequest,
   WatchManualSyncDecision,
   watchFileTransferKey,
   WatchSyncCoordinator,
+  WatchAutomaticRetryCoordinator,
   WatchFileAckResolve,
   WatchFileAckReject,
   WatchFileAckCoordinator

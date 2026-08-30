@@ -22,13 +22,16 @@ import {
   WATCH_MANUAL_QUEUED,
   WATCH_RECORDING_ACK,
   WATCH_SYNC_PROTOCOL_VERSION,
+  WatchAutomaticRetryCoordinator,
   WatchFileAckCoordinator,
   WatchRecordingControlCoordinator,
   WatchSyncCoordinator,
   WatchSyncFileDescriptor,
   WatchSyncProtocolMessage,
   isP2pCommunicationError,
+  isP2pCommunicationFailureResult,
   p2pResultMessage,
+  shouldRetryP2pFileTransfer,
   shouldRetryReceiverConnection
 } from 'common';
 
@@ -375,6 +378,36 @@ export default function automaticQueueAndSyncStateTest() {
     });
   });
 
+  describe('WatchAutomaticRetryCoordinator', () => {
+    it('coalescesReadySignalsUntilCooldownExpires', 0, () => {
+      const clock = new FakeSyncClock();
+      const coordinator = new WatchAutomaticRetryCoordinator(35000, 300000, clock);
+      let retryCount = 0;
+
+      expect(coordinator.defer()).assertEqual(35000);
+      expect(coordinator.scheduleIfCoolingDown((): void => { retryCount += 1; })).assertTrue();
+      expect(coordinator.scheduleIfCoolingDown((): void => { retryCount += 1; })).assertTrue();
+      clock.advance(34999);
+      expect(retryCount).assertEqual(0);
+      clock.advance(1);
+      expect(retryCount).assertEqual(1);
+      expect(coordinator.remainingMs()).assertEqual(0);
+    });
+
+    it('backsOffExponentiallyAndResetsAfterSuccess', 0, () => {
+      const clock = new FakeSyncClock();
+      const coordinator = new WatchAutomaticRetryCoordinator(35000, 300000, clock);
+
+      expect(coordinator.defer()).assertEqual(35000);
+      clock.advance(35000);
+      expect(coordinator.defer()).assertEqual(70000);
+      expect(coordinator.failureCount()).assertEqual(2);
+      coordinator.markSuccess();
+      expect(coordinator.failureCount()).assertEqual(0);
+      expect(coordinator.defer()).assertEqual(35000);
+    });
+  });
+
   describe('WatchFileAckCoordinator', () => {
     it('resolvesOnlyMatchingDurableAck', 0, () => {
       const state = new WatchFileAckCoordinator(60000, 60000, new FakeSyncClock());
@@ -499,6 +532,16 @@ export default function automaticQueueAndSyncStateTest() {
       expect(p2pResultMessage(P2P_COMMUNICATION_FAILURE)).assertEqual(
         'Wear Engine 通信失败，请检查华为运动健康中的设备连接');
       expect(isP2pCommunicationError(new Error('Wear Engine 通信失败'))).assertTrue();
+      expect(isP2pCommunicationFailureResult(
+        new Error('Wear Engine 通信失败，请检查华为运动健康中的设备连接'))).assertTrue();
+      expect(isP2pCommunicationFailureResult(
+        new FakeWearEngineError(P2P_COMMUNICATION_FAILURE, 'busy'))).assertTrue();
+      expect(isP2pCommunicationFailureResult(
+        new Error('Wear Engine 通信失败：文件传输进度 60 秒未变化'))).assertFalse();
+      expect(shouldRetryP2pFileTransfer(
+        new FakeWearEngineError(P2P_COMMUNICATION_FAILURE, 'busy'), 1, 3)).assertFalse();
+      expect(shouldRetryP2pFileTransfer(
+        new FakeWearEngineError(1008500003, 'disconnected'), 1, 3)).assertTrue();
       expect(isP2pCommunicationError(new FakeWearEngineError(1008500003, 'disconnected'))).assertTrue();
       expect(shouldRetryReceiverConnection(new FakeWearEngineError(1008500003, 'disconnected'))).assertTrue();
     });

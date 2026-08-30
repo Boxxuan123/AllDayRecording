@@ -101,7 +101,7 @@ export struct WatchHomePage {
           .onClick((): void => this.viewModel.openNotificationSettings())
       }
 
-      Text('下滑进入开发者界面')
+      Text('上滑 Wi-Fi 快传 · 下滑开发者界面')
         .fontSize(9)
         .fontColor($r('app.color.text_secondary'))
     }

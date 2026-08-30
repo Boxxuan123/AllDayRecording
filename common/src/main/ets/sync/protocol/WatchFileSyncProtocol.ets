@@ -19,6 +19,10 @@ export const WATCH_CONTROL_PROBE: string = 'control_probe';
 export const WATCH_CONTROL_READY: string = 'control_ready';
 export const WATCH_RECORDING_COMMAND: string = 'recording_command';
 export const WATCH_RECORDING_ACK: string = 'recording_ack';
+export const WATCH_WIFI_TRANSFER_PROBE: string = 'wifi_transfer_probe';
+export const WATCH_WIFI_TRANSFER_READY: string = 'wifi_transfer_ready';
+export const WATCH_WIFI_TRANSFER_COMMAND: string = 'wifi_transfer_command';
+export const WATCH_WIFI_TRANSFER_ACK: string = 'wifi_transfer_ack';
 
 export interface WatchSyncProtocolMessage {
   version: number;

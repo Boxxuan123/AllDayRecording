@@ -32,6 +32,20 @@ export function isP2pCommunicationError(error: Object): boolean {
     message.includes('未找到已连接的对端设备');
 }
 
+export function isP2pCommunicationFailureResult(error: Object): boolean {
+  const codedError = error as WearEngineCodedError;
+  if (codedError.code === P2P_COMMUNICATION_FAILURE) {
+    return true;
+  }
+  const message = error instanceof Error ? error.message : '';
+  return message === p2pResultMessage(P2P_COMMUNICATION_FAILURE);
+}
+
+export function shouldRetryP2pFileTransfer(error: Object, attempt: number, maximumAttempts: number): boolean {
+  return attempt < maximumAttempts && isP2pCommunicationError(error) &&
+    !isP2pCommunicationFailureResult(error);
+}
+
 export function shouldRetryReceiverConnection(error: Object): boolean {
   const codedError = error as WearEngineCodedError;
   if (codedError.code === 1008500004 || codedError.code === 1008500005 ||

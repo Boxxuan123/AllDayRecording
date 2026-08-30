@@ -32,6 +32,10 @@ import {
   WATCH_SYNC_QUEUED,
   WATCH_SYNC_READY,
   WATCH_SYNC_REQUEST,
+  WATCH_WIFI_TRANSFER_ACK,
+  WATCH_WIFI_TRANSFER_COMMAND,
+  WATCH_WIFI_TRANSFER_PROBE,
+  WATCH_WIFI_TRANSFER_READY,
   WatchSyncProtocolMessage,
   WearEngineConnection,
   WearEngineTransport,
@@ -55,11 +59,15 @@ const RECEIVER_RETRY_BASE_DELAY_MS: number = 800;
 const SYNC_HANDSHAKE_TIMEOUT_MS: number = 20 * 1000;
 const CONTROL_COMMAND_TIMEOUT_MS: number = 20 * 1000;
 const PENDING_USER_ACTION_TIMEOUT_MS: number = 5 * 60 * 1000;
+const WIFI_TRANSFER_HANDSHAKE_TIMEOUT_MS: number = 20 * 1000;
+const WIFI_TRANSFER_COMMAND_TIMEOUT_MS: number = 150 * 1000;
 
 export type RecordingReceivedHandler = (recording: ReceivedRecordingFile) => void;
 export type TransferStatusHandler = (status: string) => void;
 export type WatchSyncProgressHandler = (progress: WatchSyncProgress) => void;
 export type WatchRecordingControlStatusHandler = (status: WatchRecordingControlStatus) => void;
+type WatchWifiTransferResolve = () => void;
+type WatchWifiTransferReject = (error: Error) => void;
 
 type P2pTransport = WearEngineConnection;
 
@@ -139,6 +147,10 @@ export class WearEngineRecordingReceiver {
   private activeTransferDescriptor: WatchSyncFileDescriptor | undefined = undefined;
   private phoneControl: PhoneRecordingControlCoordinator = new PhoneRecordingControlCoordinator(
     CONTROL_COMMAND_TIMEOUT_MS, PENDING_USER_ACTION_TIMEOUT_MS);
+  private wifiTransferControl: PhoneRecordingControlCoordinator = new PhoneRecordingControlCoordinator(
+    WIFI_TRANSFER_HANDSHAKE_TIMEOUT_MS, WIFI_TRANSFER_COMMAND_TIMEOUT_MS);
+  private wifiTransferResolveHandler: WatchWifiTransferResolve | undefined = undefined;
+  private wifiTransferRejectHandler: WatchWifiTransferReject | undefined = undefined;
   private startTask: Promise<void> | undefined = undefined;
   private receiverLifecycle: PhoneReceiverLifecycleCoordinator = new PhoneReceiverLifecycleCoordinator();
   private recordingStore: ReceivedRecordingStore;
@@ -151,14 +163,14 @@ export class WearEngineRecordingReceiver {
 
   constructor(context: common.UIAbilityContext, receivedHandler: RecordingReceivedHandler,
     statusHandler: TransferStatusHandler, syncProgressHandler: WatchSyncProgressHandler,
-    controlStatusHandler: WatchRecordingControlStatusHandler) {
+    controlStatusHandler: WatchRecordingControlStatusHandler, recordingStore?: ReceivedRecordingStore) {
     this.context = context;
     this.transportEngine = new WearEngineTransport(context);
     this.receivedHandler = receivedHandler;
     this.statusHandler = statusHandler;
     this.syncProgressHandler = syncProgressHandler;
     this.controlStatusHandler = controlStatusHandler;
-    this.recordingStore = new ReceivedRecordingStore(context.filesDir);
+    this.recordingStore = recordingStore === undefined ? new ReceivedRecordingStore(context.filesDir) : recordingStore;
   }
 
   getStoredRecordings(): Array<ReceivedRecordingFile> {
@@ -284,6 +296,7 @@ export class WearEngineRecordingReceiver {
     this.peer = undefined;
     this.appParam = undefined;
     this.phoneControl.finish();
+    this.rejectWifiTransferRequest('手机接收通道已关闭');
     this.clearSyncHandshakeTimeout();
     this.phoneSync.stop();
     this.activeTotal = 0;
@@ -358,6 +371,47 @@ export class WearEngineRecordingReceiver {
       this.phoneControl.finish();
       throw new Error(wearEngineErrorMessage(error));
     }
+  }
+
+  async requestWatchWifiTransfer(): Promise<void> {
+    const client = this.p2pClient;
+    const peer = this.peer;
+    const appParam = this.appParam;
+    if (client === undefined || peer === undefined || appParam === undefined) {
+      throw new Error('手机控制通道尚未连接');
+    }
+    if (this.wifiTransferControl.isActive()) {
+      throw new Error('上一项 Wi-Fi 快传控制仍在进行');
+    }
+    const transport: P2pTransport = {
+      client: client,
+      peer: peer,
+      appParam: appParam
+    };
+    const requestId = `wifi_${Date.now()}`;
+    await new Promise<void>((resolve: WatchWifiTransferResolve, reject: WatchWifiTransferReject): void => {
+      this.wifiTransferResolveHandler = resolve;
+      this.wifiTransferRejectHandler = reject;
+      this.wifiTransferControl.begin(requestId, 'wifi_transfer', (_expired: PhoneRecordingControlState): void => {
+        this.rejectWifiTransferRequest('手表 Wi-Fi 快传控制器在 20 秒内未就绪；手机接收仍可供手表手动发送');
+      });
+      const task = this.beginWatchWifiTransfer(transport);
+      task.then((): void => {
+      }, (error: Object): void => {
+        this.rejectWifiTransferRequest(wearEngineErrorMessage(error));
+      });
+    });
+  }
+
+  private async beginWatchWifiTransfer(transport: P2pTransport): Promise<void> {
+    try {
+      // API 23 may report UNKNOWN_ERROR when the app is already running. The
+      // READY handshake is the authoritative check that the responder exists.
+      await this.startRemoteWatchUi(transport);
+    } catch (error) {
+      // Continue with the protocol probe; the short handshake timeout reports a real failure.
+    }
+    await this.sendWifiTransferProbe();
   }
 
   private async startRemoteWatchUi(transport: P2pTransport): Promise<string> {
@@ -453,6 +507,9 @@ export class WearEngineRecordingReceiver {
         if (this.phoneControl.isActive() && !this.phoneControl.commandSent()) {
           this.sendControlProbe();
         }
+        if (this.wifiTransferControl.isActive() && !this.wifiTransferControl.commandSent()) {
+          this.sendWifiTransferProbe();
+        }
         return;
       }
       if (message.type === WATCH_CONTROL_READY && this.phoneControl.matches(message.requestId)) {
@@ -461,6 +518,14 @@ export class WearEngineRecordingReceiver {
       }
       if (message.type === WATCH_RECORDING_ACK && this.phoneControl.matches(message.requestId)) {
         this.handleRecordingAck(message);
+        return;
+      }
+      if (message.type === WATCH_WIFI_TRANSFER_READY && this.wifiTransferControl.matches(message.requestId)) {
+        this.sendWifiTransferCommand();
+        return;
+      }
+      if (message.type === WATCH_WIFI_TRANSFER_ACK && this.wifiTransferControl.matches(message.requestId)) {
+        this.handleWifiTransferAck(message);
         return;
       }
       if (message.type === WATCH_SYNC_FILE_PROGRESS && message.file !== undefined) {
@@ -687,6 +752,95 @@ export class WearEngineRecordingReceiver {
     } catch (error) {
       this.phoneControl.markCommandSendFailed();
       this.emitControl(true, '', `命令暂未送达，等待重连：${wearEngineErrorMessage(error)}`);
+    }
+  }
+
+  private async sendWifiTransferProbe(): Promise<void> {
+    const client = this.p2pClient;
+    const peer = this.peer;
+    const appParam = this.appParam;
+    if (client === undefined || peer === undefined || appParam === undefined ||
+      !this.wifiTransferControl.isActive()) {
+      return;
+    }
+    const transport: P2pTransport = {
+      client: client,
+      peer: peer,
+      appParam: appParam
+    };
+    const probe: WatchSyncProtocolMessage = {
+      version: WATCH_SYNC_PROTOCOL_VERSION,
+      type: WATCH_WIFI_TRANSFER_PROBE,
+      requestId: this.wifiTransferControl.requestId()
+    };
+    try {
+      await this.transportEngine.sendProtocolMessage(transport, probe);
+    } catch (error) {
+      // The watch may still be starting. WATCH_SYNC_READY triggers another probe.
+    }
+  }
+
+  private async sendWifiTransferCommand(): Promise<void> {
+    const client = this.p2pClient;
+    const peer = this.peer;
+    const appParam = this.appParam;
+    if (client === undefined || peer === undefined || appParam === undefined ||
+      !this.wifiTransferControl.isActive() || this.wifiTransferControl.commandSent()) {
+      return;
+    }
+    const transport: P2pTransport = {
+      client: client,
+      peer: peer,
+      appParam: appParam
+    };
+    const requestId = this.wifiTransferControl.requestId();
+    this.wifiTransferControl.markCommandSent();
+    const command: WatchSyncProtocolMessage = {
+      version: WATCH_SYNC_PROTOCOL_VERSION,
+      type: WATCH_WIFI_TRANSFER_COMMAND,
+      requestId: requestId,
+      sentAt: Date.now()
+    };
+    try {
+      await this.transportEngine.sendProtocolMessage(transport, command);
+      if (this.wifiTransferControl.matches(requestId)) {
+        this.wifiTransferControl.clearTimeout();
+        this.wifiTransferControl.beginPendingUserAction((_expired: PhoneRecordingControlState): void => {
+          this.rejectWifiTransferRequest('手表 Wi-Fi 快传在 150 秒内未完成；手机接收仍可供手表手动发送');
+        });
+      }
+    } catch (error) {
+      this.wifiTransferControl.markCommandSendFailed();
+    }
+  }
+
+  private handleWifiTransferAck(message: WatchSyncProtocolMessage): void {
+    const succeeded = message.success === true;
+    const detail = message.message || (succeeded ? 'Wi-Fi 快传已完成' : '手表 Wi-Fi 快传失败');
+    if (succeeded) {
+      this.resolveWifiTransferRequest();
+      return;
+    }
+    this.rejectWifiTransferRequest(detail);
+  }
+
+  private resolveWifiTransferRequest(): void {
+    this.wifiTransferControl.finish();
+    const resolve = this.wifiTransferResolveHandler;
+    this.wifiTransferResolveHandler = undefined;
+    this.wifiTransferRejectHandler = undefined;
+    if (resolve !== undefined) {
+      resolve();
+    }
+  }
+
+  private rejectWifiTransferRequest(message: string): void {
+    this.wifiTransferControl.finish();
+    const reject = this.wifiTransferRejectHandler;
+    this.wifiTransferResolveHandler = undefined;
+    this.wifiTransferRejectHandler = undefined;
+    if (reject !== undefined) {
+      reject(new Error(message));
     }
   }
 

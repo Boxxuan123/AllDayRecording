@@ -4,6 +4,8 @@ import {
   WATCH_SYNC_PROTOCOL_VERSION,
   WATCH_SYNC_FILE,
   WATCH_SYNC_REQUEST,
+  WATCH_WIFI_TRANSFER_ACK,
+  WATCH_WIFI_TRANSFER_COMMAND,
   WatchSyncProtocolMessage,
   decodeWatchSyncMessage,
   encodeWatchSyncMessage,
@@ -46,6 +48,32 @@ export default function watchSyncProtocolTest() {
       }
 
       expect(rejected).assertTrue();
+    });
+
+    it('roundTripsWifiTransferCommandAndAck', 0, () => {
+      const command: WatchSyncProtocolMessage = {
+        version: WATCH_SYNC_PROTOCOL_VERSION,
+        type: WATCH_WIFI_TRANSFER_COMMAND,
+        requestId: 'wifi_001',
+        sentAt: 123456
+      };
+      const ack: WatchSyncProtocolMessage = {
+        version: WATCH_SYNC_PROTOCOL_VERSION,
+        type: WATCH_WIFI_TRANSFER_ACK,
+        requestId: 'wifi_001',
+        actualState: 'completed',
+        success: true,
+        message: 'Wi-Fi 快传完成'
+      };
+
+      const decodedCommand = decodeWatchSyncMessage(encodeWatchSyncMessage(command));
+      const decodedAck = decodeWatchSyncMessage(encodeWatchSyncMessage(ack));
+
+      expect(decodedCommand.type).assertEqual(WATCH_WIFI_TRANSFER_COMMAND);
+      expect(decodedCommand.requestId).assertEqual('wifi_001');
+      expect(decodedAck.type).assertEqual(WATCH_WIFI_TRANSFER_ACK);
+      expect(decodedAck.success).assertTrue();
+      expect(decodedAck.actualState).assertEqual('completed');
     });
 
     it('keepsExactAndLegacyIdentitySemantics', 0, () => {

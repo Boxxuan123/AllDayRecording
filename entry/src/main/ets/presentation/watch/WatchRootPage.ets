@@ -2,6 +2,7 @@ import { common } from '@kit.AbilityKit';
 import { WatchDeveloperPage } from './WatchDeveloperPage';
 import { WatchHomePage } from './WatchHomePage';
 import { WatchRecordingViewModel } from './WatchRecordingViewModel';
+import { WatchWifiTransferPage } from './WatchWifiTransferPage';
 
 @Component
 export struct WatchRootPage {
@@ -26,6 +27,7 @@ export struct WatchRootPage {
     Swiper(this.swiperController) {
       WatchDeveloperPage({ viewModel: this.viewModel })
       WatchHomePage({ viewModel: this.viewModel })
+      WatchWifiTransferPage({ viewModel: this.viewModel })
     }
     .index(this.pageIndex)
     .indicator(false)

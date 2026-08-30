@@ -27,6 +27,10 @@ import {
   WATCH_SYNC_QUEUED,
   WATCH_SYNC_READY,
   WATCH_SYNC_REQUEST,
+  WATCH_WIFI_TRANSFER_ACK,
+  WATCH_WIFI_TRANSFER_COMMAND,
+  WATCH_WIFI_TRANSFER_PROBE,
+  WATCH_WIFI_TRANSFER_READY,
   AUTOMATIC_QUEUE_DAMAGED,
   AUTOMATIC_QUEUE_ENQUEUED,
   AUTOMATIC_QUEUE_ENQUEUED_NOT_SAVED,
@@ -35,6 +39,7 @@ import {
   AutomaticSyncQueue,
   AutomaticSyncQueueEntry,
   P2P_COMMUNICATION_SUCCESS,
+  WatchAutomaticRetryCoordinator,
   WatchFileAckCoordinator,
   WatchManualSyncDecision,
   WatchManualSyncRequest,
@@ -46,7 +51,9 @@ import {
   decodeWatchSyncMessage,
   exactWatchFileKey,
   isP2pCommunicationError,
+  isP2pCommunicationFailureResult,
   p2pResultMessage,
+  shouldRetryP2pFileTransfer,
   watchFileTransferKey,
   wearEngineErrorMessage
 } from 'common';
@@ -74,6 +81,8 @@ export interface WatchRecordingControlResult {
 
 export type WatchRecordingControlHandler =
   (desiredState: string, requestId: string) => Promise<WatchRecordingControlResult>;
+
+export type WatchWifiTransferHandler = (requestId: string) => Promise<string>;
 
 interface SyncSourceFile extends RecordingFile {
   relativePath: string;
@@ -209,6 +218,7 @@ export class WearEngineRecordingSender {
   private peer: wearEngine.Device | undefined = undefined;
   private appParam: wearEngine.P2pAppParam | undefined = undefined;
   private syncCoordinator: WatchSyncCoordinator = new WatchSyncCoordinator();
+  private automaticRetryCoordinator: WatchAutomaticRetryCoordinator = new WatchAutomaticRetryCoordinator();
   private inventoryRequestId: string = '';
   private inventoryPageCount: number = 0;
   private inventoryPagesReceived: Array<number> = [];
@@ -216,6 +226,8 @@ export class WearEngineRecordingSender {
   private automaticQueue: AutomaticSyncQueue;
   private controlHandler: WatchRecordingControlHandler | undefined;
   private controlCoordinator: WatchRecordingControlCoordinator = new WatchRecordingControlCoordinator();
+  private wifiTransferHandler: WatchWifiTransferHandler | undefined;
+  private wifiTransferCoordinator: WatchRecordingControlCoordinator = new WatchRecordingControlCoordinator();
   private fileAckCoordinator: WatchFileAckCoordinator = new WatchFileAckCoordinator(
     TRANSFER_PROGRESS_STALL_TIMEOUT_MS, TRANSFER_FILE_ACK_TIMEOUT_MS);
   private activeFileLastProgressSent: number = -1;
@@ -225,12 +237,13 @@ export class WearEngineRecordingSender {
   };
 
   constructor(context: common.UIAbilityContext, statusHandler?: TransferStatusHandler,
-    controlHandler?: WatchRecordingControlHandler) {
+    controlHandler?: WatchRecordingControlHandler, wifiTransferHandler?: WatchWifiTransferHandler) {
     this.context = context;
     this.transportEngine = new WearEngineTransport(context);
     this.automaticQueue = new AutomaticSyncQueue(context.filesDir);
     this.statusHandler = statusHandler;
     this.controlHandler = controlHandler;
+    this.wifiTransferHandler = wifiTransferHandler;
   }
 
   async start(): Promise<void> {
@@ -260,11 +273,12 @@ export class WearEngineRecordingSender {
     }
     if (this.automaticQueue.count() > 0) {
       this.updateStatus(`已恢复自动同步队列（${this.automaticQueue.count()}），准备续传`);
-      this.drainAutomaticQueue();
+      this.requestAutomaticDrain();
     }
   }
 
   async stop(): Promise<void> {
+    this.automaticRetryCoordinator.cancelScheduled();
     const client = this.p2pClient;
     const peer = this.peer;
     const appParam = this.appParam;
@@ -304,7 +318,7 @@ export class WearEngineRecordingSender {
     this.updateStatus(result === AUTOMATIC_QUEUE_ENQUEUED ?
       `已封口，等待自动同步（${this.automaticQueue.count()}）` :
       '录音已封口，但自动队列清单保存失败；录音文件已保留');
-    this.drainAutomaticQueue();
+    this.requestAutomaticDrain();
   }
 
   async reportRecordingControlResult(requestId: string, desiredState: string, success: boolean,
@@ -330,12 +344,20 @@ export class WearEngineRecordingSender {
         this.sendControlReady(message.requestId);
         return;
       }
+      if (message.type === WATCH_WIFI_TRANSFER_PROBE && message.requestId.length > 0) {
+        this.sendWifiTransferReady(message.requestId);
+        return;
+      }
       if (message.type === WATCH_RECORDING_COMMAND && message.requestId.length > 0) {
         this.processRecordingControl(message);
         return;
       }
+      if (message.type === WATCH_WIFI_TRANSFER_COMMAND && message.requestId.length > 0) {
+        this.processWifiTransferCommand(message);
+        return;
+      }
       if (message.type === WATCH_PHONE_READY) {
-        this.drainAutomaticQueue();
+        this.requestAutomaticDrain();
         return;
       }
       if (message.type === WATCH_SYNC_INVENTORY_PAGE && message.requestId.length > 0) {
@@ -405,6 +427,74 @@ export class WearEngineRecordingSender {
     } catch (error) {
       this.updateStatus(`手机控制握手失败：${wearEngineErrorMessage(error)}`);
     }
+  }
+
+  private async sendWifiTransferReady(requestId: string): Promise<void> {
+    try {
+      const transport = await this.getTransport();
+      const ready: WatchSyncProtocolMessage = {
+        version: WATCH_SYNC_PROTOCOL_VERSION,
+        type: WATCH_WIFI_TRANSFER_READY,
+        requestId: requestId
+      };
+      await this.transportEngine.sendProtocolMessage(transport, ready);
+    } catch (error) {
+      this.updateStatus(`Wi-Fi 快传握手失败：${wearEngineErrorMessage(error)}`);
+    }
+  }
+
+  private async processWifiTransferCommand(command: WatchSyncProtocolMessage): Promise<void> {
+    let transport: P2pTransport;
+    try {
+      transport = await this.getTransport();
+    } catch (error) {
+      this.updateStatus(`Wi-Fi 快传控制连接失败：${wearEngineErrorMessage(error)}`);
+      return;
+    }
+    const decision = this.wifiTransferCoordinator.inspect(command.requestId);
+    if (decision === WATCH_CONTROL_REPLAY) {
+      const lastAck = this.wifiTransferCoordinator.lastAck();
+      if (lastAck !== undefined) {
+        await this.transportEngine.sendProtocolMessage(transport, lastAck);
+      }
+      return;
+    }
+    if (decision === WATCH_CONTROL_BUSY) {
+      await this.sendWifiTransferAck(transport, command.requestId, false, '手表正在处理另一项 Wi-Fi 快传');
+      return;
+    }
+    if (this.wifiTransferHandler === undefined) {
+      await this.sendWifiTransferAck(transport, command.requestId, false, '手表 Wi-Fi 快传控制器尚未就绪');
+      return;
+    }
+    this.wifiTransferCoordinator.begin();
+    try {
+      const result = await this.wifiTransferHandler(command.requestId);
+      const ack = await this.sendWifiTransferAck(transport, command.requestId, true, result);
+      this.wifiTransferCoordinator.complete(command.requestId, ack);
+      this.updateStatus(result);
+    } catch (error) {
+      const message = wearEngineErrorMessage(error);
+      const ack = await this.sendWifiTransferAck(transport, command.requestId, false, message);
+      this.wifiTransferCoordinator.complete(command.requestId, ack);
+      this.updateStatus(`Wi-Fi 快传失败：${message}`);
+    } finally {
+      this.wifiTransferCoordinator.finishWithoutAck();
+    }
+  }
+
+  private async sendWifiTransferAck(transport: P2pTransport, requestId: string,
+    success: boolean, message: string): Promise<WatchSyncProtocolMessage> {
+    const ack: WatchSyncProtocolMessage = {
+      version: WATCH_SYNC_PROTOCOL_VERSION,
+      type: WATCH_WIFI_TRANSFER_ACK,
+      requestId: requestId,
+      actualState: success ? 'completed' : 'failed',
+      success: success,
+      message: message
+    };
+    await this.transportEngine.sendProtocolMessage(transport, ack);
+    return ack;
   }
 
   private async processRecordingControl(command: WatchSyncProtocolMessage): Promise<void> {
@@ -502,9 +592,10 @@ export class WearEngineRecordingSender {
       transport = await this.getTransport();
     } catch (error) {
       this.updateStatus(`无法响应手机同步：${wearEngineErrorMessage(error)}`);
+      this.deferAutomaticQueueAfterCommunicationFailure(error as Object);
       this.syncCoordinator.finishCurrent();
       if (!this.startPendingSyncIfIdle()) {
-        this.drainAutomaticQueue();
+        this.requestAutomaticDrain();
       }
       return;
     }
@@ -546,6 +637,7 @@ export class WearEngineRecordingSender {
         try {
           transport = await this.transferDescribedRecordingWithRetry(
             transport, fileMessage, descriptor, source);
+          this.automaticRetryCoordinator.markSuccess();
           sentCount += 1;
           this.removeAutomaticFile(source.path);
           this.updateStatus(`同步 ${sentCount}/${scan.files.length}，手表原文件保留`);
@@ -571,14 +663,38 @@ export class WearEngineRecordingSender {
       await this.transportEngine.sendProtocolMessage(transport, completeMessage);
       this.updateStatus(`手机同步完成 ${sentCount} 个，手表文件全部保留`);
     } catch (error) {
+      this.deferAutomaticQueueAfterCommunicationFailure(error as Object);
       await this.sendSyncError(transport, requestId, wearEngineErrorMessage(error));
       this.updateStatus(`手机同步失败，手表文件已保留：${wearEngineErrorMessage(error)}`);
     } finally {
       this.syncCoordinator.finishCurrent();
       if (!this.startPendingSyncIfIdle()) {
-        this.drainAutomaticQueue();
+        this.requestAutomaticDrain();
       }
     }
+  }
+
+  private requestAutomaticDrain(): void {
+    if (this.automaticQueue.count() === 0) {
+      return;
+    }
+    if (this.automaticRetryCoordinator.scheduleIfCoolingDown(() => {
+      this.requestAutomaticDrain();
+    })) {
+      return;
+    }
+    this.drainAutomaticQueue();
+  }
+
+  private deferAutomaticQueueAfterCommunicationFailure(error: Object): boolean {
+    if (this.automaticQueue.count() === 0 || !isP2pCommunicationFailureResult(error)) {
+      return false;
+    }
+    const delayMs = this.automaticRetryCoordinator.defer();
+    const delaySeconds = Math.ceil(delayMs / 1000);
+    this.updateStatus(`Wear Engine 文件通道繁忙，${delaySeconds} 秒后自动续传；手表原文件已保留`);
+    this.requestAutomaticDrain();
+    return true;
   }
 
   private async drainAutomaticQueue(): Promise<void> {
@@ -614,17 +730,22 @@ export class WearEngineRecordingSender {
           this.updateStatus(`自动队列正在发送第 ${queuePosition} 段（共 ${queueTotal} 段）`);
           transport = await this.transferDescribedRecordingWithRetry(
             transport, fileMessage, descriptor, source);
+          this.automaticRetryCoordinator.markSuccess();
           const queueSaved = this.automaticQueue.complete(source.path);
           this.updateStatus(queueSaved ? `自动同步完成第 ${queuePosition} 段：${source.fileName}，手表原文件保留` :
             `第 ${queuePosition} 段已确认，但队列清单更新失败；录音文件仍保留`);
         } catch (error) {
           await this.sendFileFailed(transport, descriptor);
-          this.updateStatus(`自动同步待重试，手表原文件已保留：${wearEngineErrorMessage(error)}`);
+          if (!this.deferAutomaticQueueAfterCommunicationFailure(error as Object)) {
+            this.updateStatus(`自动同步待重试，手表原文件已保留：${wearEngineErrorMessage(error)}`);
+          }
           break;
         }
       }
     } catch (error) {
-      this.updateStatus(`自动同步待重试，手表原文件已保留：${wearEngineErrorMessage(error)}`);
+      if (!this.deferAutomaticQueueAfterCommunicationFailure(error as Object)) {
+        this.updateStatus(`自动同步待重试，手表原文件已保留：${wearEngineErrorMessage(error)}`);
+      }
     } finally {
       this.syncCoordinator.finishCurrent();
       this.startPendingSyncIfIdle();
@@ -744,7 +865,7 @@ export class WearEngineRecordingSender {
         return currentTransport;
       } catch (error) {
         lastError = error as Object;
-        if (!isP2pCommunicationError(lastError) || attempt >= TRANSFER_RETRY_ATTEMPTS) {
+        if (!shouldRetryP2pFileTransfer(lastError, attempt, TRANSFER_RETRY_ATTEMPTS)) {
           break;
         }
         this.updateStatus(`Wear Engine 通信中断，正在重连并重试文件（${attempt}/${TRANSFER_RETRY_ATTEMPTS}）`);
@@ -771,7 +892,7 @@ export class WearEngineRecordingSender {
         return currentTransport;
       } catch (error) {
         lastError = error as Object;
-        if (!isP2pCommunicationError(lastError) || attempt >= TRANSFER_RETRY_ATTEMPTS) {
+        if (!shouldRetryP2pFileTransfer(lastError, attempt, TRANSFER_RETRY_ATTEMPTS)) {
           break;
         }
         this.updateStatus(`文件回执未完成，正在重连并重试（${attempt}/${TRANSFER_RETRY_ATTEMPTS}）`);
