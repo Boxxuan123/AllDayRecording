@@ -8,12 +8,18 @@ import {
 import { V3_PROJECTION_VERSION } from '../contracts/V3ContractModels';
 import {
   PhonePendingOperation,
-  PhoneProjectionStorage,
   clearRebuildableProjection
 } from './PhoneSyncProjection';
+import {
+  PhoneV3Conflict,
+  PhoneV3LocalAudioLink,
+  PhoneV3ProjectionRow,
+  PhoneV3SyncStatus
+} from '../domain/PhoneV3Models';
+import { PhoneV3ProjectionRepositoryPort } from '../application/PhoneV3Ports';
 
 const DATABASE_NAME: string = 'phone_v3_projection.db';
-const SCHEMA_VERSION: number = 2;
+const SCHEMA_VERSION: number = 3;
 const TABLES: Array<string> = [
   'projection_recordings', 'projection_audio_assets', 'projection_processing_runs',
   'projection_utterances', 'projection_review_items'
@@ -54,6 +60,10 @@ const CREATE_STATEMENTS: Array<string> = [
 const VERSION_2_STATEMENTS: Array<string> = [
   'ALTER TABLE sync_state ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0'
 ];
+const VERSION_3_STATEMENTS: Array<string> = [
+  "ALTER TABLE local_audio_links ADD COLUMN session_id TEXT NOT NULL DEFAULT ''",
+  'CREATE INDEX IF NOT EXISTS idx_local_audio_links_session_id ON local_audio_links(session_id)'
+];
 
 export interface PhoneProjectionStatus {
   cursor: string;
@@ -64,7 +74,7 @@ export interface PhoneProjectionStatus {
   retry_count: number;
 }
 
-export class PhoneProjectionRepository implements PhoneProjectionStorage {
+export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPort {
   private store: relationalStore.RdbStore;
 
   private constructor(store: relationalStore.RdbStore) {
@@ -162,6 +172,71 @@ export class PhoneProjectionRepository implements PhoneProjectionStorage {
     }
   }
 
+  async v3Status(): Promise<PhoneV3SyncStatus> {
+    const value = await this.status();
+    return new PhoneV3SyncStatus(value.cursor, value.last_server_time, value.last_error,
+      value.pending_operations, value.retry_count);
+  }
+
+  async projectionRows(resourceType: string): Promise<Array<PhoneV3ProjectionRow>> {
+    const table = projectionTable(resourceType);
+    const result = await this.store.querySql(
+      `SELECT resource_id, revision, payload_json, updated_at FROM ${table}
+       ORDER BY updated_at DESC, resource_id`);
+    const values: Array<PhoneV3ProjectionRow> = [];
+    try {
+      while (result.goToNextRow()) {
+        values.push(new PhoneV3ProjectionRow(
+          result.getString(result.getColumnIndex('resource_id')),
+          result.getLong(result.getColumnIndex('revision')),
+          result.getString(result.getColumnIndex('payload_json')),
+          result.getLong(result.getColumnIndex('updated_at'))));
+      }
+    } finally {
+      result.close();
+    }
+    return values;
+  }
+
+  async localAudioLinks(): Promise<Array<PhoneV3LocalAudioLink>> {
+    const result = await this.store.querySql(
+      `SELECT session_key, session_id, local_path, upload_status, updated_at
+       FROM local_audio_links ORDER BY updated_at DESC, local_path`);
+    const values: Array<PhoneV3LocalAudioLink> = [];
+    try {
+      while (result.goToNextRow()) {
+        values.push(new PhoneV3LocalAudioLink(
+          result.getString(result.getColumnIndex('session_key')),
+          result.getString(result.getColumnIndex('session_id')),
+          result.getString(result.getColumnIndex('local_path')),
+          result.getString(result.getColumnIndex('upload_status')),
+          result.getLong(result.getColumnIndex('updated_at'))));
+      }
+    } finally {
+      result.close();
+    }
+    return values;
+  }
+
+  async conflictRows(): Promise<Array<PhoneV3Conflict>> {
+    const result = await this.store.querySql(
+      `SELECT operation_id, kind, error_json, created_at FROM conflicts
+       ORDER BY created_at DESC, operation_id`);
+    const values: Array<PhoneV3Conflict> = [];
+    try {
+      while (result.goToNextRow()) {
+        values.push(new PhoneV3Conflict(
+          result.getString(result.getColumnIndex('operation_id')),
+          result.getString(result.getColumnIndex('kind')),
+          result.getString(result.getColumnIndex('error_json')),
+          result.getLong(result.getColumnIndex('created_at'))));
+      }
+    } finally {
+      result.close();
+    }
+    return values;
+  }
+
   async recordingPayloads(): Promise<Array<string>> {
     const result = await this.store.querySql(
       'SELECT payload_json FROM projection_recordings ORDER BY updated_at DESC, resource_id');
@@ -238,6 +313,9 @@ export class PhoneProjectionRepository implements PhoneProjectionStorage {
        revision = excluded.revision, payload_json = excluded.payload_json,
        updated_at = excluded.updated_at WHERE excluded.revision >= revision`,
       [change.resource_id, change.revision, JSON.stringify(change.resource), Date.now()]);
+    if (change.resource_type === 'recording_session') {
+      await this.bindLocalSession(change.resource_id, change.resource as Object);
+    }
     await this.store.executeSql(
       'DELETE FROM projection_tombstones WHERE resource_type = ? AND resource_id = ? AND revision <= ?',
       [change.resource_type, change.resource_id, change.revision]);
@@ -266,6 +344,16 @@ export class PhoneProjectionRepository implements PhoneProjectionStorage {
     }
     await this.store.executeSql('DELETE FROM projection_tombstones');
   }
+
+  private async bindLocalSession(sessionId: string, resource: Object): Promise<void> {
+    const payload = resource as RecordingSessionLinkPayload;
+    if (typeof payload.session_key !== 'string' || payload.session_key.length === 0) {
+      return;
+    }
+    await this.store.executeSql(
+      'UPDATE local_audio_links SET session_id = ?, updated_at = ? WHERE session_key = ?',
+      [sessionId, Date.now(), payload.session_key]);
+  }
 }
 
 async function migrate(store: relationalStore.RdbStore): Promise<void> {
@@ -289,11 +377,21 @@ async function migrate(store: relationalStore.RdbStore): Promise<void> {
       }
       store.version = 2;
     }
+    if (store.version < 3) {
+      for (let index = 0; index < VERSION_3_STATEMENTS.length; index += 1) {
+        await store.executeSql(VERSION_3_STATEMENTS[index]);
+      }
+      store.version = 3;
+    }
     store.commit();
   } catch (error) {
     store.rollBack();
     throw repositoryError(error as Object);
   }
+}
+
+interface RecordingSessionLinkPayload {
+  session_key?: string;
 }
 
 function repositoryError(error: Object): Error {

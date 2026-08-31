@@ -3,6 +3,7 @@ import computerTransferProtocolTest from './ComputerTransferProtocol.test';
 import phoneRecordingGroupsTest from './PhoneRecordingGroups.test';
 import v3ContractFixtureTest from './V3ContractFixture.test';
 import phoneSyncProjectionTest from './PhoneSyncProjection.test';
+import phoneV3UseCasesTest from './PhoneV3UseCases.test';
 
 export default function testsuite() {
   receivedRecordingStoreTest();
@@ -10,4 +11,5 @@ export default function testsuite() {
   phoneRecordingGroupsTest();
   v3ContractFixtureTest();
   phoneSyncProjectionTest();
+  phoneV3UseCasesTest();
 }

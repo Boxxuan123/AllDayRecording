@@ -11,10 +11,12 @@ import { PhoneRecordingGroup } from './PhoneRecordingGroups';
 import { PhoneRecordingPlaybackPage } from './PhoneRecordingPlaybackPage';
 import { PhoneRecordingViewModel } from './PhoneRecordingViewModel';
 import { PhoneSettingsPage } from './PhoneSettingsPage';
+import { PhoneV3RootPage } from '../../v3/presentation/PhoneV3RootPage';
 
 const PHONE_DEVELOPER_ROUTE: string = 'phoneDeveloper';
 const PHONE_COMPUTER_TRANSFER_ROUTE: string = 'phoneComputerTransfer';
 const PHONE_RECORDING_PLAYBACK_ROUTE: string = 'phoneRecordingPlayback';
+const PHONE_V3_ROUTE: string = 'phoneV3Preview';
 const PHONE_PLAYBACK_MENU_BUTTON_ID: string = 'phone-playback-menu-button';
 
 class PhonePlaybackMenuParams {
@@ -50,6 +52,9 @@ class PhoneRecordingPlaybackRouteParams {
   constructor(groupKey: string) {
     this.groupKey = groupKey;
   }
+}
+
+class PhoneV3RouteParams {
 }
 
 @Component
@@ -186,6 +191,24 @@ export struct PhoneRootPage {
       })
       .titleMode(HdsNavDestinationTitleMode.MINI)
       .backgroundColor($r('app.color.page_background'))
+    } else if (name === PHONE_V3_ROUTE) {
+      HdsNavDestination() {
+        PhoneV3RootPage({
+          legacyViewModel: this.viewModel,
+          onOpenComputerTransfer: (): void => {
+            this.navStack.pushPath({
+              name: PHONE_COMPUTER_TRANSFER_ROUTE,
+              param: new PhoneComputerTransferRouteParams()
+            });
+          }
+        })
+      }
+      .titleBar({
+        enableComponentSafeArea: true,
+        content: { title: { mainTitle: 'V3 手机工作台' } }
+      })
+      .titleMode(HdsNavDestinationTitleMode.MINI)
+      .backgroundColor($r('app.color.page_background'))
     }
   }
 
@@ -217,6 +240,12 @@ export struct PhoneRootPage {
           this.navStack.pushPath({
             name: PHONE_COMPUTER_TRANSFER_ROUTE,
             param: new PhoneComputerTransferRouteParams()
+          });
+        },
+        onOpenV3: (): void => {
+          this.navStack.pushPath({
+            name: PHONE_V3_ROUTE,
+            param: new PhoneV3RouteParams()
           });
         },
         onOpenDeveloper: (): void => {
