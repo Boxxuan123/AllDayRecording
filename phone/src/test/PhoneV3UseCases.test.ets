@@ -131,10 +131,13 @@ export default function phoneV3UseCasesTest() {
       const utterance = new PhoneV3ProjectionRow('01ARZ3NDEKTSV4RRFFQ69G5FAY', 7, JSON.stringify({
         utterance_id: '01ARZ3NDEKTSV4RRFFQ69G5FAY',
         session_id: SESSION_ID,
+        speaker_track_id: '01ARZ3NDEKTSV4RRFFQ69G5FAZ',
+        speaker_label: 'SPEAKER_00',
         start_ms: 100,
         end_ms: 900,
         text: '测试文本',
         revision: 7,
+        status: 'active',
         evidence: evidence
       }), 4000);
       const cards = mergePhoneV3Sessions([localFact()], [
@@ -148,6 +151,8 @@ export default function phoneV3UseCasesTest() {
       expect(cards[0].processingStage).assertEqual('asr');
       expect(cards[0].utterances[0].utteranceId).assertEqual('01ARZ3NDEKTSV4RRFFQ69G5FAY');
       expect(cards[0].utterances[0].revision).assertEqual(7);
+      expect(cards[0].utterances[0].speakerLabel).assertEqual('SPEAKER_00');
+      expect(cards[0].utterances[0].status).assertEqual('active');
       expect(cards[0].utterances[0].evidenceJson.includes('asset-1')).assertTrue();
     });
 
@@ -165,6 +170,31 @@ export default function phoneV3UseCasesTest() {
       expect(snapshot.sessions[0].sessionId).assertEqual('');
       expect(snapshot.paired).assertTrue();
       expect(remote.connectCount).assertEqual(0);
+    });
+
+    it('allowsDeletingOnlyAudioThatHasNoComputerProjectionOrUploadedLink', 0, async () => {
+      const repository = new FakePhoneV3Repository();
+      const useCases = new PhoneV3UseCases(repository,
+        new FakePhoneV3LocalAudio([localFact()]), new FakePhoneV3Remote());
+
+      expect(await useCases.localAudioIsProtected(SESSION_KEY)).assertFalse();
+
+      repository.links = [
+        new PhoneV3LocalAudioLink(SESSION_KEY, '', '/phone/segment_0.wav', 'uploaded', 1500)
+      ];
+      expect(await useCases.localAudioIsProtected(SESSION_KEY)).assertTrue();
+    });
+
+    it('protectsLocalAudioWhenComputerAlreadyHasTheSession', 0, async () => {
+      const repository = new FakePhoneV3Repository();
+      repository.recordingRows = [new PhoneV3ProjectionRow(SESSION_ID, 1, JSON.stringify({
+        session_id: SESSION_ID,
+        session_key: SESSION_KEY
+      }), 2000)];
+      const useCases = new PhoneV3UseCases(repository,
+        new FakePhoneV3LocalAudio([localFact()]), new FakePhoneV3Remote());
+
+      expect(await useCases.localAudioIsProtected(SESSION_KEY)).assertTrue();
     });
   });
 }

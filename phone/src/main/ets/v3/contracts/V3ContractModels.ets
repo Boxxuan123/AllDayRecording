@@ -6,7 +6,7 @@
 export const V3_CONTRACT_VERSION: string = '3.0.0';
 export const V3_PROJECTION_VERSION: number = 1;
 export const V3_UNKNOWN_ENUM_VALUE: string = 'unknown';
-export const V3_FEATURE_ENABLED_BY_DEFAULT: boolean = false;
+export const V3_FEATURE_ENABLED_BY_DEFAULT: boolean = true;
 
 const RECORDING_SESSION_STATES: string[] = [
   'capturing', 'closing', 'recovering', 'quarantined', 'sealed',
@@ -26,6 +26,20 @@ const RESOURCE_TYPES: string[] = [
   'recording_session', 'audio_asset', 'processing_run', 'utterance', 'review_item'
 ];
 const SYNC_OPERATIONS: string[] = ['upsert', 'tombstone'];
+const STABLE_ID: RegExp = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[0-9A-HJKMNP-TV-Z]{26})$/;
+
+export interface V3UtteranceDto {
+  utterance_id: string;
+  session_id: string;
+  speaker_track_id: string | null;
+  speaker_label: string | null;
+  start_ms: number;
+  end_ms: number;
+  text: string;
+  revision: number;
+  status: string;
+  evidence: Object;
+}
 
 export interface V3RecordingSessionFixture {
   state: string;
@@ -95,4 +109,19 @@ export function isV3FeatureEnabled(value?: string): boolean {
   }
   const normalized = value.toLowerCase();
   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+}
+
+export function validateV3UtteranceDto(value: Object): V3UtteranceDto {
+  const utterance = value as V3UtteranceDto;
+  if (!STABLE_ID.test(utterance.utterance_id) || !STABLE_ID.test(utterance.session_id) ||
+    (utterance.speaker_track_id !== null && !STABLE_ID.test(utterance.speaker_track_id)) ||
+    (utterance.speaker_label !== null && typeof utterance.speaker_label !== 'string') ||
+    !Number.isSafeInteger(utterance.start_ms) || utterance.start_ms < 0 ||
+    !Number.isSafeInteger(utterance.end_ms) || utterance.end_ms <= utterance.start_ms ||
+    typeof utterance.text !== 'string' || !Number.isSafeInteger(utterance.revision) ||
+    utterance.revision < 1 || ['active', 'stale'].indexOf(utterance.status) < 0 ||
+    typeof utterance.evidence !== 'object' || utterance.evidence === null) {
+    throw new Error('电脑返回的 V3 Utterance DTO 无效');
+  }
+  return utterance;
 }

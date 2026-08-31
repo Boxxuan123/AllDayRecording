@@ -53,12 +53,14 @@ export class PhoneV3LocalAudioLink {
 export class PhoneV3Conflict {
   operationId: string;
   kind: string;
+  status: string;
   errorJson: string;
   createdAt: number;
 
-  constructor(operationId: string, kind: string, errorJson: string, createdAt: number) {
+  constructor(operationId: string, kind: string, status: string, errorJson: string, createdAt: number) {
     this.operationId = operationId;
     this.kind = kind;
+    this.status = status;
     this.errorJson = errorJson;
     this.createdAt = createdAt;
   }
@@ -84,20 +86,27 @@ export class PhoneV3SyncStatus {
 export class PhoneV3Utterance {
   utteranceId: string;
   sessionId: string;
+  speakerTrackId: string | null;
+  speakerLabel: string | null;
   startMs: number;
   endMs: number;
   text: string;
   revision: number;
+  status: string;
   evidenceJson: string;
 
-  constructor(utteranceId: string, sessionId: string, startMs: number, endMs: number, text: string,
-    revision: number, evidenceJson: string) {
+  constructor(utteranceId: string, sessionId: string, speakerTrackId: string | null,
+    speakerLabel: string | null, startMs: number, endMs: number, text: string,
+    revision: number, status: string, evidenceJson: string) {
     this.utteranceId = utteranceId;
     this.sessionId = sessionId;
+    this.speakerTrackId = speakerTrackId;
+    this.speakerLabel = speakerLabel;
     this.startMs = startMs;
     this.endMs = endMs;
     this.text = text;
     this.revision = revision;
+    this.status = status;
     this.evidenceJson = evidenceJson;
   }
 }
@@ -152,27 +161,93 @@ export class PhoneV3SessionCard {
   }
 }
 
+export class PhoneV3FileTransferState {
+  active: boolean;
+  stage: string;
+  percent: number;
+  fileName: string;
+  transferredBytes: number;
+  totalBytes: number;
+  index: number;
+  total: number;
+  message: string;
+  error: string;
+
+  constructor(active: boolean = false, stage: string = '', percent: number = 0, fileName: string = '',
+    transferredBytes: number = 0, totalBytes: number = 0, index: number = 0, total: number = 0,
+    message: string = '', error: string = '') {
+    this.active = active;
+    this.stage = stage;
+    this.percent = percent;
+    this.fileName = fileName;
+    this.transferredBytes = transferredBytes;
+    this.totalBytes = totalBytes;
+    this.index = index;
+    this.total = total;
+    this.message = message;
+    this.error = error;
+  }
+}
+
+export class PhoneV3WifiState {
+  ready: boolean;
+  busy: boolean;
+  stopping: boolean;
+  percent: number;
+  status: string;
+  capability: string;
+  error: string;
+
+  constructor(ready: boolean = false, busy: boolean = false, stopping: boolean = false,
+    percent: number = 0, status: string = '', capability: string = '', error: string = '') {
+    this.ready = ready;
+    this.busy = busy;
+    this.stopping = stopping;
+    this.percent = percent;
+    this.status = status;
+    this.capability = capability;
+    this.error = error;
+  }
+}
+
 export class PhoneV3DeviceState {
   watchStatus: string;
+  remoteRecordingState: string;
+  watchControlBusy: boolean;
+  receiverReconnecting: boolean;
   watchSyncing: boolean;
   watchReceived: number;
   watchTotal: number;
+  watchTransfer: PhoneV3FileTransferState;
+  wifi: PhoneV3WifiState;
   isPlaying: boolean;
   playbackBusy: boolean;
   playbackPositionMs: number;
   playbackDurationMs: number;
+  operationMessage: string;
+  operationError: string;
 
   constructor(watchStatus: string = '正在连接手表', watchSyncing: boolean = false,
     watchReceived: number = 0, watchTotal: number = 0, isPlaying: boolean = false,
-    playbackBusy: boolean = false, playbackPositionMs: number = 0, playbackDurationMs: number = 0) {
+    playbackBusy: boolean = false, playbackPositionMs: number = 0, playbackDurationMs: number = 0,
+    remoteRecordingState: string = 'unknown', watchControlBusy: boolean = false,
+    receiverReconnecting: boolean = false, watchTransfer: PhoneV3FileTransferState = new PhoneV3FileTransferState(),
+    wifi: PhoneV3WifiState = new PhoneV3WifiState(), operationMessage: string = '', operationError: string = '') {
     this.watchStatus = watchStatus;
+    this.remoteRecordingState = remoteRecordingState;
+    this.watchControlBusy = watchControlBusy;
+    this.receiverReconnecting = receiverReconnecting;
     this.watchSyncing = watchSyncing;
     this.watchReceived = watchReceived;
     this.watchTotal = watchTotal;
+    this.watchTransfer = watchTransfer;
+    this.wifi = wifi;
     this.isPlaying = isPlaying;
     this.playbackBusy = playbackBusy;
     this.playbackPositionMs = playbackPositionMs;
     this.playbackDurationMs = playbackDurationMs;
+    this.operationMessage = operationMessage;
+    this.operationError = operationError;
   }
 }
 

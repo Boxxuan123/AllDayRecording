@@ -5,6 +5,7 @@ import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 @Component
 export struct PhoneV3CacheConflictsPage {
   @ObjectLink viewModel: PhoneV3ViewModel;
+  onOpenLegacy: () => void = (): void => {};
 
   build() {
     Scroll() {
@@ -23,11 +24,11 @@ export struct PhoneV3CacheConflictsPage {
             .fontColor($r('app.color.text_primary'))
           Text(`本地会话 ${this.viewModel.state.snapshot.sessions.length} · ` +
             `待提交 ${this.viewModel.state.snapshot.sync.pendingOperations} · ` +
-            `冲突 ${this.viewModel.state.snapshot.conflicts.length}`)
+            `异常回执 ${this.viewModel.state.snapshot.conflicts.length}`)
             .width('100%')
             .fontSize(14)
             .fontColor($r('app.color.text_secondary'))
-          Text('应用重启后会从 phone_v3_projection.db 恢复游标、outbox、冲突与错误；音频文件仍是本地事实源。')
+          Text('应用重启后会从 phone_v3_projection.db 恢复游标、outbox、conflict/rejected 回执与原操作；音频文件仍是本地事实源。')
             .width('100%')
             .fontSize(12)
             .fontColor($r('app.color.text_secondary'))
@@ -38,14 +39,14 @@ export struct PhoneV3CacheConflictsPage {
         .backgroundColor($r('app.color.surface_primary'))
         .borderRadius(16)
 
-        Text('冲突记录')
+        Text('异常回执记录')
           .width('100%')
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
 
         if (this.viewModel.state.snapshot.conflicts.length === 0) {
-          Text('当前没有待处理冲突')
+          Text('当前没有 conflict/rejected 回执')
             .width('100%')
             .fontSize(14)
             .fontColor($r('app.color.text_secondary'))
@@ -55,7 +56,7 @@ export struct PhoneV3CacheConflictsPage {
         } else {
           ForEach(this.viewModel.state.snapshot.conflicts, (conflict: PhoneV3Conflict) => {
             Column({ space: 6 }) {
-              Text(conflict.kind)
+              Text(`${conflict.status} · ${conflict.kind}`)
                 .fontSize(15)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.text_primary'))
@@ -75,6 +76,29 @@ export struct PhoneV3CacheConflictsPage {
             .borderRadius(12)
           }, (conflict: PhoneV3Conflict): string => conflict.operationId)
         }
+
+        Column({ space: 8 }) {
+          Text('Legacy 回退')
+            .width('100%')
+            .fontSize(17)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_primary'))
+          Text('仅在核对旧手机索引时使用。入口只允许查看和本地试听，不允许同步、上传、删除或修改。')
+            .width('100%')
+            .fontSize(13)
+            .fontColor($r('app.color.text_secondary'))
+          Button('打开 Legacy V2 只读入口', { type: ButtonType.Capsule })
+            .width('100%')
+            .height(46)
+            .fontColor($r('app.color.text_primary'))
+            .backgroundColor($r('app.color.surface_secondary'))
+            .onClick((): void => this.onOpenLegacy())
+        }
+        .width('100%')
+        .padding(16)
+        .alignItems(HorizontalAlign.Start)
+        .backgroundColor($r('app.color.surface_primary'))
+        .borderRadius(16)
       }
       .width('100%')
       .padding({ left: 18, right: 18, top: 22, bottom: 100 })

@@ -45,4 +45,11 @@ export interface PhoneV3DeviceBridgePort {
   seekPlayback(positionMs: number): void;
   stopPlayback(): void;
   requestWatchSync(): void;
+  requestWatchRecordingState(desiredState: string): void;
+  toggleWifiReceiver(): void;
+  retryWifiReceiver(): void;
+  reconnectReceiver(): void;
+  deleteLocalSession(localGroupKey: string): Promise<void>;
+  addLocalAudioChangeListener(listener: () => void): void;
+  removeLocalAudioChangeListener(listener: () => void): void;
 }

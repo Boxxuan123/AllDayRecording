@@ -23,7 +23,7 @@ Phone HAP -> Phone Root/ViewModel -> Phone Receiver / receive store
                          both -> common HAR -> coordinator -> transport / shared IO
 ```
 
-- `entry/.../pages/Index.ets` 只挂载 `WatchRootPage`；`phone/.../pages/Index.ets` 只挂载 `PhoneRootPage`，不再做运行时设备分支。
+- `entry/.../pages/Index.ets` 只挂载 `WatchRootPage`；`phone/.../pages/Index.ets` 只挂载 `PhoneRootPage`，不再做运行时设备分支。V3.0-G 后 `PhoneRootPage` 默认挂载 V3 本地优先工作台，旧录音索引只经 `PhoneLegacyReadOnlyPage` 提供查看和试听回退。
 - Phone `EntryAbility` 固定加载 `pages/Index`，启动错误使用稳定日志标签 `PhoneEntryAbility` 和正式的 Phone root page 文案；协议中的 `control_probe` 与默认关闭的 Watch 诊断 Probe 保持原有语义。
 - 页面组件只展示状态并转发事件，不直接操作 CoreFileKit、Wear Engine 或录音后台任务。
 - ViewModel 负责页面生命周期与用户动作编排；持久化和协议状态由领域服务承担。

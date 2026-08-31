@@ -4,7 +4,6 @@ import { PhoneRecordingViewModel } from './PhoneRecordingViewModel';
 export struct PhoneSettingsPage {
   @ObjectLink viewModel: PhoneRecordingViewModel;
   onOpenComputerTransfer: () => void = (): void => {};
-  onOpenV3: () => void = (): void => {};
   onOpenDeveloper: () => void = (): void => {};
 
   build() {
@@ -41,21 +40,6 @@ export struct PhoneSettingsPage {
         .onClick((): void => this.onOpenComputerTransfer())
 
       Text('HTTPS 加密、CA 指纹固定、Passkey 身份确认与断点续传')
-        .width('100%')
-        .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
-        .textAlign(TextAlign.Center)
-        .maxLines(2)
-
-      Button('V3 手机工作台（预览）', { type: ButtonType.Capsule })
-        .width('100%')
-        .height(50)
-        .fontSize(16)
-        .fontColor(Color.White)
-        .backgroundColor($r('app.color.brand_primary'))
-        .onClick((): void => this.onOpenV3())
-
-      Text('本地优先录音、只读时间线、同步中心、缓存与冲突；V3.0-G 前不替换默认入口')
         .width('100%')
         .fontSize(13)
         .fontColor($r('app.color.text_secondary'))

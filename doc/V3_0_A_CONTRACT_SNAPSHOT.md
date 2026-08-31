@@ -8,7 +8,7 @@ Phone 的 V3 ArkTS decoder 位于
 生成快照，不是第二份契约源；精确来源版本与 fixture SHA-256 记录在
 `contracts/v3/source.json`。
 
-V3 默认关闭。当前快照只为 V3.0-A contract fixture 提供可编译 decoder，不改变
+V3.0-A 当时默认关闭；V3.0-G 完成默认入口切换后，该兼容 decoder 的默认开关为启用。当前快照不改变
 Phone Root、页面、Preferences、上传服务或 Watch↔Phone 协议。生产 Passkey RP
 ID/origin 仍由 Computer V3 发布环境校验，禁止把开发占位域名写入真机发布。
 

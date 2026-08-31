@@ -2,16 +2,24 @@ import { describe, it, expect } from '@ohos/hypium';
 import {
   decodeV3ContractFixture,
   isV3FeatureEnabled,
+  validateV3UtteranceDto,
   V3ContractFixture,
-  V3DecodedFixture
+  V3DecodedFixture,
+  V3UtteranceDto
 } from '../main/ets/v3/contracts/V3ContractModels';
 
 // Generated with the fixture bodies. Python contract tests verify these receipts
 // against the canonical JSON files when both repositories are checked out.
 const CORE_FIXTURE_SHA256: string =
-  'b6bad8928c4a9e331f99f46c78462e54417c623e94902134bb91cf934fd3b7a7';
+  '91659a8267d211d5f5bfe93ed5efaa300c1fde93bae7cc0ee88ba0bd701c41ee';
 const FORWARD_FIXTURE_SHA256: string =
   '22e8f9407c98bee742f776eceb85b34c8aa6020fc34c3d681377b0cbbe4eb760';
+
+interface UtteranceEvidenceFixture {
+  media_id: string;
+  start_ms: number;
+  end_ms: number;
+}
 
 function canonicalFixture(): V3ContractFixture {
   return {
@@ -64,7 +72,7 @@ export default function v3ContractFixtureTest() {
       });
     });
 
-    it('degradesUnknownEnumsAndKeepsV3DisabledByDefault', 0, () => {
+    it('degradesUnknownEnumsAndKeepsV3EnabledByDefault', 0, () => {
       expect(FORWARD_FIXTURE_SHA256.length).assertEqual(64);
       expectDecoded(decodeV3ContractFixture(futureEnumFixture()), {
         contract_version: '3.0.0',
@@ -76,8 +84,39 @@ export default function v3ContractFixtureTest() {
         change_operation: 'unknown',
         next_cursor: null
       });
-      expect(isV3FeatureEnabled()).assertFalse();
+      expect(isV3FeatureEnabled()).assertTrue();
       expect(isV3FeatureEnabled('true')).assertTrue();
+    });
+
+    it('validatesCanonicalUtteranceDtoAtRuntime', 0, () => {
+      const evidence: UtteranceEvidenceFixture = {
+        media_id: '01ARZ3NDEKTSV4RRFFQ69G5FAX',
+        start_ms: 100,
+        end_ms: 900
+      };
+      const candidate: V3UtteranceDto = {
+        utterance_id: '01ARZ3NDEKTSV4RRFFQ69G5FAY',
+        session_id: '01ARZ3NDEKTSV4RRFFQ69G5FAW',
+        speaker_track_id: '01ARZ3NDEKTSV4RRFFQ69G5FAZ',
+        speaker_label: 'SPEAKER_00',
+        start_ms: 100,
+        end_ms: 900,
+        text: '测试文本',
+        revision: 7,
+        status: 'active',
+        evidence: evidence
+      };
+      const utterance = validateV3UtteranceDto(candidate);
+      expect(utterance.speaker_label).assertEqual('SPEAKER_00');
+      expect(utterance.end_ms).assertEqual(900);
+      let rejected = false;
+      try {
+        utterance.end_ms = 100;
+        validateV3UtteranceDto(utterance);
+      } catch (error) {
+        rejected = true;
+      }
+      expect(rejected).assertTrue();
     });
   });
 }

@@ -15,6 +15,17 @@ import {
   selectedPhoneV3Session
 } from './PhoneV3UiState';
 
+enum PhoneV3RetryAction {
+  NONE,
+  WATCH_SYNC,
+  WATCH_CONTROL,
+  WIFI_TRANSFER,
+  RECONNECT,
+  COMPUTER_SYNC,
+  REBUILD,
+  PLAYBACK
+}
+
 @Observed
 export class PhoneV3ViewModel {
   state: PhoneV3UiState = new PhoneV3UiState();
@@ -24,6 +35,10 @@ export class PhoneV3ViewModel {
   private timerId: number = -1;
   private started: boolean = false;
   private refreshing: boolean = false;
+  private refreshQueued: boolean = false;
+  private lastRetryAction: PhoneV3RetryAction = PhoneV3RetryAction.NONE;
+  private lastDesiredRecordingState: string = 'recording';
+  private localAudioListener: () => void = (): void => this.onLocalAudioChanged();
 
   start(context: common.UIAbilityContext, legacy: PhoneRecordingViewModel): void {
     if (this.started) {
@@ -31,6 +46,7 @@ export class PhoneV3ViewModel {
     }
     this.started = true;
     this.bridge = new PhoneV3LegacyBridge(legacy);
+    this.bridge.addLocalAudioChangeListener(this.localAudioListener);
     this.timerId = setInterval((): void => this.refreshDeviceState(), 500);
     this.initialize(context);
   }
@@ -41,6 +57,7 @@ export class PhoneV3ViewModel {
       clearInterval(this.timerId);
       this.timerId = -1;
     }
+    this.bridge?.removeLocalAudioChangeListener(this.localAudioListener);
     this.bridge?.stopPlayback();
   }
 
@@ -58,15 +75,20 @@ export class PhoneV3ViewModel {
   }
 
   refresh(): void {
-    if (this.refreshing || this.useCases === undefined) {
+    if (this.refreshing) {
+      this.refreshQueued = true;
+      return;
+    }
+    if (this.useCases === undefined) {
+      this.refreshQueued = true;
       return;
     }
     this.refreshing = true;
     this.refreshSnapshot().then((): void => {
-      this.refreshing = false;
+      this.finishRefresh();
     }, (error: Object): void => {
-      this.refreshing = false;
       this.fail(error);
+      this.finishRefresh();
     });
   }
 
@@ -75,6 +97,7 @@ export class PhoneV3ViewModel {
     if (useCases === undefined || this.state.busy) {
       return;
     }
+    this.lastRetryAction = PhoneV3RetryAction.COMPUTER_SYNC;
     this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.BUSY,
       undefined, undefined, '正在发现电脑并同步增量状态…'));
     useCases.synchronize().then((result): Promise<void> => {
@@ -89,6 +112,7 @@ export class PhoneV3ViewModel {
     if (useCases === undefined || this.state.busy) {
       return;
     }
+    this.lastRetryAction = PhoneV3RetryAction.REBUILD;
     this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.BUSY,
       undefined, undefined, '正在保留离线状态并重建电脑投影…'));
     useCases.rebuild().then((result): Promise<void> => {
@@ -99,11 +123,37 @@ export class PhoneV3ViewModel {
   }
 
   requestWatchSync(): void {
+    this.lastRetryAction = PhoneV3RetryAction.WATCH_SYNC;
+    this.clearError('正在请求 Watch 同步…');
     this.bridge?.requestWatchSync();
     this.refreshDeviceState();
   }
 
+  requestWatchRecordingState(desiredState: string): void {
+    this.lastDesiredRecordingState = desiredState;
+    this.lastRetryAction = PhoneV3RetryAction.WATCH_CONTROL;
+    this.clearError(desiredState === 'recording' ? '正在请求手表开始录音…' : '正在请求手表停止并保存…');
+    this.bridge?.requestWatchRecordingState(desiredState);
+    this.refreshDeviceState();
+  }
+
+  toggleWifiReceiver(): void {
+    this.lastRetryAction = PhoneV3RetryAction.WIFI_TRANSFER;
+    this.clearError(this.state.device.wifi.ready ? '正在停止 Wi-Fi 快传…' : '正在准备 Wi-Fi 快传…');
+    this.bridge?.toggleWifiReceiver();
+    this.refreshDeviceState();
+  }
+
+  reconnectReceiver(): void {
+    this.lastRetryAction = PhoneV3RetryAction.RECONNECT;
+    this.clearError('正在重新连接手表…');
+    this.bridge?.reconnectReceiver();
+    this.refreshDeviceState();
+  }
+
   togglePlayback(): void {
+    this.lastRetryAction = PhoneV3RetryAction.PLAYBACK;
+    this.clearError('正在更新播放状态…');
     this.bridge?.togglePlayback();
     this.refreshDeviceState();
   }
@@ -118,6 +168,81 @@ export class PhoneV3ViewModel {
     this.refreshDeviceState();
   }
 
+  canDeleteLocalAudio(session: PhoneV3SessionCard): boolean {
+    return session.localPaths.length > 0 && session.sessionId.length === 0 && session.uploadStatus !== 'uploaded';
+  }
+
+  localDeleteProtection(session: PhoneV3SessionCard): string {
+    if (session.localPaths.length === 0) {
+      return '手机上没有可删除的本地音频';
+    }
+    if (session.sessionId.length > 0 || session.uploadStatus === 'uploaded') {
+      return '该录音已经同步到电脑，为避免误删已受保护';
+    }
+    return '仅删除手机上的本地音频，删除后无法恢复';
+  }
+
+  deleteLocalAudio(session: PhoneV3SessionCard, onDeleted: () => void = (): void => {}): void {
+    const bridge = this.bridge;
+    const useCases = this.useCases;
+    if (bridge === undefined || useCases === undefined || this.state.busy) {
+      return;
+    }
+    if (!this.canDeleteLocalAudio(session)) {
+      this.lastRetryAction = PhoneV3RetryAction.NONE;
+      this.fail(new Error(this.localDeleteProtection(session)));
+      return;
+    }
+    this.lastRetryAction = PhoneV3RetryAction.NONE;
+    this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.BUSY,
+      undefined, undefined, '正在确认录音尚未同步到电脑…'));
+    useCases.localAudioIsProtected(session.sessionKey).then((protectedAudio: boolean): Promise<void> => {
+      if (protectedAudio) {
+        throw new Error('该录音已经同步到电脑，禁止删除手机本地音频');
+      }
+      return bridge.deleteLocalSession(session.localGroupKey);
+    }).then((): void => {
+      this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SUCCESS,
+        undefined, undefined, '手机本地音频已删除'));
+      this.refresh();
+      onDeleted();
+    }, (error: Object): void => this.fail(error));
+  }
+
+  canRetry(): boolean {
+    return this.lastRetryAction !== PhoneV3RetryAction.NONE;
+  }
+
+  retryLastAction(): void {
+    switch (this.lastRetryAction) {
+      case PhoneV3RetryAction.WATCH_SYNC:
+        this.requestWatchSync();
+        return;
+      case PhoneV3RetryAction.WATCH_CONTROL:
+        this.requestWatchRecordingState(this.lastDesiredRecordingState);
+        return;
+      case PhoneV3RetryAction.WIFI_TRANSFER:
+        this.clearError('正在重新准备 Wi-Fi 快传…');
+        this.bridge?.retryWifiReceiver();
+        this.refreshDeviceState();
+        return;
+      case PhoneV3RetryAction.RECONNECT:
+        this.reconnectReceiver();
+        return;
+      case PhoneV3RetryAction.COMPUTER_SYNC:
+        this.synchronize();
+        return;
+      case PhoneV3RetryAction.REBUILD:
+        this.rebuild();
+        return;
+      case PhoneV3RetryAction.PLAYBACK:
+        this.togglePlayback();
+        return;
+      default:
+        return;
+    }
+  }
+
   private async initialize(context: common.UIAbilityContext): Promise<void> {
     try {
       const local = new PhoneV3LocalAudioRepository(context.filesDir);
@@ -128,6 +253,10 @@ export class PhoneV3ViewModel {
       const repository = await PhoneProjectionRepository.open(context);
       this.useCases = new PhoneV3UseCases(repository, local, new PhoneV3DeviceRemote(context));
       await this.refreshSnapshot();
+      if (this.refreshQueued) {
+        this.refreshQueued = false;
+        this.refresh();
+      }
     } catch (error) {
       this.fail(error as Object);
     }
@@ -151,6 +280,26 @@ export class PhoneV3ViewModel {
     }
     this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.DEVICE_CHANGED,
       undefined, bridge.state()));
+  }
+
+  private onLocalAudioChanged(): void {
+    if (this.refreshing || this.useCases === undefined) {
+      this.refreshQueued = true;
+      return;
+    }
+    this.refresh();
+  }
+
+  private finishRefresh(): void {
+    this.refreshing = false;
+    if (this.refreshQueued) {
+      this.refreshQueued = false;
+      this.refresh();
+    }
+  }
+
+  private clearError(message: string): void {
+    this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SUCCESS, undefined, undefined, message));
   }
 
   private dispatch(action: PhoneV3UiAction): void {

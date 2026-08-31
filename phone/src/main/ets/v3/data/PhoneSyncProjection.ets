@@ -4,7 +4,10 @@ import {
   DeviceV3OperationReceipt,
   DeviceV3SyncResponse
 } from '../../computer/ComputerTransferProtocol';
-import { V3_PROJECTION_VERSION } from '../contracts/V3ContractModels';
+import {
+  V3_PROJECTION_VERSION,
+  validateV3UtteranceDto
+} from '../contracts/V3ContractModels';
 
 const STABLE_ID: RegExp = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[0-9A-HJKMNP-TV-Z]{26})$/;
 const CURSOR: RegExp = /^cursor-(0|[1-9][0-9]*)$/;
@@ -78,7 +81,12 @@ export function validateSyncResponse(response: DeviceV3SyncResponse): void {
   for (let index = 0; index < response.receipts.length; index += 1) {
     const receipt = response.receipts[index];
     if (!STABLE_ID.test(receipt.operation_id) ||
-      ['applied', 'conflict', 'rejected'].indexOf(receipt.status) < 0) {
+      ['applied', 'conflict', 'rejected'].indexOf(receipt.status) < 0 ||
+      (receipt.status === 'applied' &&
+        (receipt.resource_revision === null ||
+          !Number.isSafeInteger(receipt.resource_revision) || receipt.error !== null)) ||
+      (receipt.status !== 'applied' &&
+        (receipt.resource_revision !== null || receipt.error === null))) {
       throw new Error('电脑返回的 V3 操作回执无效');
     }
   }
@@ -90,6 +98,9 @@ export function validateSyncResponse(response: DeviceV3SyncResponse): void {
       ['upsert', 'tombstone'].indexOf(change.operation) < 0 ||
       (change.operation === 'upsert' && change.resource === null)) {
       throw new Error('电脑返回的 V3 投影变更无效');
+    }
+    if (change.resource_type === 'utterance' && change.operation === 'upsert') {
+      validateV3UtteranceDto(change.resource as Object);
     }
     previousSequence = change.sequence;
   }

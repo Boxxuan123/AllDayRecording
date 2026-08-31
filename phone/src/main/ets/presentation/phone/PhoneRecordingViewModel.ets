@@ -57,6 +57,26 @@ export class PhoneRecordingViewModel {
   private lifecycleToken: number = -1;
   private startTask: Promise<void> | undefined = undefined;
   private cleanupTask: Promise<void> | undefined = undefined;
+  private localAudioChangeListeners: Array<() => void> = [];
+
+  addLocalAudioChangeListener(listener: () => void): void {
+    if (this.localAudioChangeListeners.indexOf(listener) < 0) {
+      this.localAudioChangeListeners.push(listener);
+    }
+  }
+
+  removeLocalAudioChangeListener(listener: () => void): void {
+    const index = this.localAudioChangeListeners.indexOf(listener);
+    if (index >= 0) {
+      this.localAudioChangeListeners.splice(index, 1);
+    }
+  }
+
+  clearOperationStatus(): void {
+    if (this.status.includes('失败') || this.status.includes('无法') || this.status.includes('错误')) {
+      this.status = '';
+    }
+  }
 
   start(context: common.UIAbilityContext): void {
     if (this.transferReceiver !== undefined || this.playbackService !== undefined || this.startTask !== undefined) {
@@ -114,9 +134,14 @@ export class PhoneRecordingViewModel {
   requestWatchSync(): void {
     const receiver = this.transferReceiver;
     const token = this.lifecycleToken;
-    if (receiver === undefined || this.syncState.inProgress || this.isReconnectingReceiver) {
+    if (receiver === undefined) {
+      this.status = '同步请求失败：手表连接尚未就绪';
       return;
     }
+    if (this.syncState.inProgress || this.isReconnectingReceiver) {
+      return;
+    }
+    this.status = '正在请求手表同步录音…';
     receiver.requestWatchSync().then((): void => {
     }, (error: Object): void => {
       if (!this.lifecycle.isActive(token)) {
@@ -129,7 +154,11 @@ export class PhoneRecordingViewModel {
 
   toggleWifiReceiver(): void {
     const service = this.wifiTransferService;
-    if (service === undefined || this.wifiBusy || !this.lifecycle.isActive(this.lifecycleToken)) {
+    if (service === undefined || !this.lifecycle.isActive(this.lifecycleToken)) {
+      this.wifiStatus = 'Wi-Fi 快传失败：手机接收服务尚未就绪';
+      return;
+    }
+    if (this.wifiBusy) {
       return;
     }
     const wasReceiverReady = this.wifiReceiverReady;
@@ -162,9 +191,14 @@ export class PhoneRecordingViewModel {
   requestWatchRecordingState(desiredState: string): void {
     const receiver = this.transferReceiver;
     const token = this.lifecycleToken;
-    if (receiver === undefined || this.isControllingWatch || this.isReconnectingReceiver) {
+    if (receiver === undefined) {
+      this.status = '手机控制失败：手表连接尚未就绪';
       return;
     }
+    if (this.isControllingWatch || this.isReconnectingReceiver) {
+      return;
+    }
+    this.status = desiredState === 'recording' ? '正在请求手表开始录音…' : '正在请求手表停止并保存…';
     receiver.requestRecordingState(desiredState).then((): void => {
     }, (error: Object): void => {
       if (!this.lifecycle.isActive(token)) {
@@ -176,7 +210,11 @@ export class PhoneRecordingViewModel {
   }
 
   reconnectReceiver(): void {
-    if (this.isReconnectingReceiver || !this.lifecycle.isActive(this.lifecycleToken)) {
+    if (!this.lifecycle.isActive(this.lifecycleToken)) {
+      this.status = '重新连接失败：手机接收服务尚未启动';
+      return;
+    }
+    if (this.isReconnectingReceiver) {
       return;
     }
     this.isReconnectingReceiver = true;
@@ -197,7 +235,11 @@ export class PhoneRecordingViewModel {
   togglePlayback(): void {
     const playback = this.playbackService;
     const token = this.lifecycleToken;
-    if (playback === undefined || this.isPlaybackBusy) {
+    if (playback === undefined) {
+      this.status = '播放失败：播放器尚未就绪';
+      return;
+    }
+    if (this.isPlaybackBusy) {
       return;
     }
     this.isPlaybackBusy = true;
@@ -210,6 +252,29 @@ export class PhoneRecordingViewModel {
       if (this.lifecycle.isActive(token)) {
         this.isPlaybackBusy = false;
         this.status = `播放失败：${recordingErrorMessage(error)}`;
+      }
+    });
+  }
+
+  retryWifiReceiver(): void {
+    const service = this.wifiTransferService;
+    if (service === undefined || this.wifiBusy || !this.lifecycle.isActive(this.lifecycleToken)) {
+      return;
+    }
+    this.wifiBusy = true;
+    this.wifiStopping = this.wifiReceiverReady;
+    const token = this.lifecycleToken;
+    const task = this.retryWifiReceiverAsync(service, this.transferReceiver);
+    task.then((): void => {
+      if (this.lifecycle.isActive(token)) {
+        this.wifiBusy = false;
+        this.wifiStopping = false;
+      }
+    }, (error: Object): void => {
+      if (this.lifecycle.isActive(token)) {
+        this.wifiStatus = `Wi-Fi 快传重试失败：${wifiRecordingTransferErrorMessage(error)}`;
+        this.wifiBusy = false;
+        this.wifiStopping = false;
       }
     });
   }
@@ -302,9 +367,11 @@ export class PhoneRecordingViewModel {
     return this.deletingRecordingGroupKey === group.key;
   }
 
-  deleteRecordingGroup(group: PhoneRecordingGroup, onDeleted: () => void = (): void => {}): void {
+  deleteRecordingGroup(group: PhoneRecordingGroup, onDeleted: () => void = (): void => {},
+    onError: (error: Object) => void = (_error: Object): void => {}): void {
     const recordingStore = this.recordingStore;
     if (recordingStore === undefined || this.deletingRecordingGroupKey.length > 0 || group.recordings.length === 0) {
+      onError(new Error('当前无法删除这条录音'));
       return;
     }
     this.deletingRecordingGroupKey = group.key;
@@ -322,7 +389,9 @@ export class PhoneRecordingViewModel {
         return;
       }
       this.deletingRecordingGroupKey = '';
-      this.status = `删除失败：${recordingErrorMessage(error)}`;
+      const message = `删除失败：${recordingErrorMessage(error)}`;
+      this.status = message;
+      onError(new Error(message));
     });
   }
 
@@ -441,6 +510,7 @@ export class PhoneRecordingViewModel {
         this.latestRecording = storedRecordings[0];
       }
     }
+    this.notifyLocalAudioChanged();
     this.transferReceiver = receiver;
     try {
       await receiver.start();
@@ -561,6 +631,16 @@ export class PhoneRecordingViewModel {
     await receiver.requestWatchWifiTransfer(credentials);
   }
 
+  private async retryWifiReceiverAsync(service: WifiRecordingTransferService,
+    receiver: WearEngineRecordingReceiver | undefined): Promise<void> {
+    if (this.wifiReceiverReady) {
+      await service.stopReceiver();
+      this.wifiReceiverReady = false;
+      this.wifiProgress = 0;
+    }
+    await this.toggleWifiReceiverAsync(service, receiver);
+  }
+
   private async togglePlaybackAsync(playback: AudioPlaybackService): Promise<void> {
     if (this.isPlaying) {
       await playback.pause();
@@ -629,6 +709,7 @@ export class PhoneRecordingViewModel {
           this.latestRecording = undefined;
         }
       }
+      this.notifyLocalAudioChanged();
     }
     if (deletedCount === 0) {
       throw new Error('没有找到要删除的录音文件');
@@ -663,6 +744,16 @@ export class PhoneRecordingViewModel {
     this.receivedRecordingCount = storedRecordings.length;
     this.receivedRecordings = [recording, ...remaining].slice(0, 100);
     this.rebuildRecordingGroups(storedRecordings, recording.path);
+    this.notifyLocalAudioChanged();
+  }
+
+  private notifyLocalAudioChanged(): void {
+    for (let index = 0; index < this.localAudioChangeListeners.length; index += 1) {
+      try {
+        this.localAudioChangeListeners[index]();
+      } catch (error) {
+      }
+    }
   }
 
   private findSelectedRecordingGroup(): PhoneRecordingGroup | undefined {

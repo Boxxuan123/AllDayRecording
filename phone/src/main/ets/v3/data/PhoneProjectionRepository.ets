@@ -19,7 +19,7 @@ import {
 import { PhoneV3ProjectionRepositoryPort } from '../application/PhoneV3Ports';
 
 const DATABASE_NAME: string = 'phone_v3_projection.db';
-const SCHEMA_VERSION: number = 3;
+const SCHEMA_VERSION: number = 4;
 const TABLES: Array<string> = [
   'projection_recordings', 'projection_audio_assets', 'projection_processing_runs',
   'projection_utterances', 'projection_review_items'
@@ -63,6 +63,9 @@ const VERSION_2_STATEMENTS: Array<string> = [
 const VERSION_3_STATEMENTS: Array<string> = [
   "ALTER TABLE local_audio_links ADD COLUMN session_id TEXT NOT NULL DEFAULT ''",
   'CREATE INDEX IF NOT EXISTS idx_local_audio_links_session_id ON local_audio_links(session_id)'
+];
+const VERSION_4_STATEMENTS: Array<string> = [
+  "ALTER TABLE conflicts ADD COLUMN status TEXT NOT NULL DEFAULT 'conflict'"
 ];
 
 export interface PhoneProjectionStatus {
@@ -220,7 +223,7 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
 
   async conflictRows(): Promise<Array<PhoneV3Conflict>> {
     const result = await this.store.querySql(
-      `SELECT operation_id, kind, error_json, created_at FROM conflicts
+      `SELECT operation_id, kind, status, error_json, created_at FROM conflicts
        ORDER BY created_at DESC, operation_id`);
     const values: Array<PhoneV3Conflict> = [];
     try {
@@ -228,6 +231,7 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
         values.push(new PhoneV3Conflict(
           result.getString(result.getColumnIndex('operation_id')),
           result.getString(result.getColumnIndex('kind')),
+          result.getString(result.getColumnIndex('status')),
           result.getString(result.getColumnIndex('error_json')),
           result.getLong(result.getColumnIndex('created_at'))));
       }
@@ -322,11 +326,12 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
   }
 
   async acknowledgeReceipt(receipt: DeviceV3OperationReceipt): Promise<void> {
-    if (receipt.status === 'conflict') {
+    if (receipt.status === 'conflict' || receipt.status === 'rejected') {
       await this.store.executeSql(
-        `INSERT OR REPLACE INTO conflicts (operation_id, kind, payload_json, error_json, created_at)
-         SELECT operation_id, kind, payload_json, ?, ? FROM outbox WHERE operation_id = ?`,
-        [JSON.stringify(receipt.error), Date.now(), receipt.operation_id]);
+        `INSERT OR REPLACE INTO conflicts (
+           operation_id, kind, payload_json, error_json, created_at, status)
+         SELECT operation_id, kind, payload_json, ?, ?, ? FROM outbox WHERE operation_id = ?`,
+        [JSON.stringify(receipt.error), Date.now(), receipt.status, receipt.operation_id]);
     }
     await this.store.executeSql('DELETE FROM outbox WHERE operation_id = ?', [receipt.operation_id]);
   }
@@ -382,6 +387,12 @@ async function migrate(store: relationalStore.RdbStore): Promise<void> {
         await store.executeSql(VERSION_3_STATEMENTS[index]);
       }
       store.version = 3;
+    }
+    if (store.version < 4) {
+      for (let index = 0; index < VERSION_4_STATEMENTS.length; index += 1) {
+        await store.executeSql(VERSION_4_STATEMENTS[index]);
+      }
+      store.version = 4;
     }
     store.commit();
   } catch (error) {

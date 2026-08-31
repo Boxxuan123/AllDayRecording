@@ -2,7 +2,11 @@ import {
   DeviceV3ClientOperation,
   DeviceV3SyncRequest
 } from '../../computer/ComputerTransferProtocol';
-import { V3_CONTRACT_VERSION, V3_PROJECTION_VERSION } from '../contracts/V3ContractModels';
+import {
+  V3_CONTRACT_VERSION,
+  V3_PROJECTION_VERSION,
+  validateV3UtteranceDto
+} from '../contracts/V3ContractModels';
 import { applySyncResponse } from '../data/PhoneSyncProjection';
 import {
   PhoneV3LocalAudioFact,
@@ -34,16 +38,6 @@ interface ProcessingPayload {
   status?: string;
   current_stage?: string;
   progress?: number;
-}
-
-interface UtterancePayload {
-  utterance_id?: string;
-  session_id?: string;
-  start_ms?: number;
-  end_ms?: number;
-  text?: string;
-  revision?: number;
-  evidence?: Object;
 }
 
 export class PhoneV3SyncResult {
@@ -85,6 +79,24 @@ export class PhoneV3UseCases {
     return new PhoneV3Snapshot(
       mergePhoneV3Sessions(localFacts, links, recordings, processing, utterances),
       conflicts, status, paired);
+  }
+
+  async localAudioIsProtected(sessionKey: string): Promise<boolean> {
+    const links = await this.repository.localAudioLinks();
+    for (let index = 0; index < links.length; index += 1) {
+      if (links[index].sessionKey === sessionKey &&
+        (links[index].sessionId.length > 0 || links[index].uploadStatus === 'uploaded')) {
+        return true;
+      }
+    }
+    const recordings = await this.repository.projectionRows('recording_session');
+    for (let index = 0; index < recordings.length; index += 1) {
+      const payload = parseRecording(recordings[index].payloadJson);
+      if (payload !== undefined && payload.session_key === sessionKey) {
+        return true;
+      }
+    }
+    return false;
   }
 
   async synchronize(): Promise<PhoneV3SyncResult> {
@@ -215,15 +227,14 @@ function sessionUtterances(rows: Array<PhoneV3ProjectionRow>, sessionId: string)
   const values: Array<PhoneV3Utterance> = [];
   for (let index = 0; index < rows.length; index += 1) {
     try {
-      const payload = JSON.parse(rows[index].payloadJson) as UtterancePayload;
+      const payload = validateV3UtteranceDto(JSON.parse(rows[index].payloadJson) as Object);
       if (payload.session_id !== sessionId) {
         continue;
       }
       values.push(new PhoneV3Utterance(
-        text(payload.utterance_id, rows[index].resourceId), sessionId,
-        numberValue(payload.start_ms, 0), numberValue(payload.end_ms, 0),
-        text(payload.text, ''), numberValue(payload.revision, rows[index].revision),
-        payload.evidence === undefined ? '{}' : JSON.stringify(payload.evidence)));
+        payload.utterance_id, sessionId, payload.speaker_track_id, payload.speaker_label,
+        payload.start_ms, payload.end_ms, payload.text, payload.revision, payload.status,
+        JSON.stringify(payload.evidence)));
     } catch (error) {
     }
   }

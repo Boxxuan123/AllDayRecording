@@ -13,8 +13,35 @@ import {
 @Component
 export struct PhoneV3SessionDetailPage {
   @ObjectLink viewModel: PhoneV3ViewModel;
-  onBack: () => void = (): void => {};
+  onDeleted: () => void = (): void => {};
+  @State private isSeeking: boolean = false;
   @State private seeking: number = 0;
+
+  aboutToDisappear(): void {
+    this.viewModel.stopPlayback();
+  }
+
+  private confirmDelete(session: PhoneV3SessionCard): void {
+    if (!this.viewModel.canDeleteLocalAudio(session)) {
+      return;
+    }
+    try {
+      this.getUIContext().getPromptAction().showDialog({
+        title: '删除手机本地音频？',
+        message: '这条录音尚未同步到电脑。删除后无法恢复。',
+        buttons: [
+          { text: '取消', color: $r('app.color.text_secondary') },
+          { text: '删除', color: $r('app.color.brand_danger') }
+        ]
+      }).then((result): void => {
+        if (result.index === 1) {
+          this.viewModel.deleteLocalAudio(session, this.onDeleted);
+        }
+      }, (): void => {});
+    } catch (_error) {
+      this.viewModel.state.error = '无法显示删除确认框，请重试';
+    }
+  }
 
   @Builder
   private stage(label: string, value: string) {
@@ -42,7 +69,8 @@ export struct PhoneV3SessionDetailPage {
         .width('100%')
         .fontSize(15)
         .fontColor($r('app.color.text_primary'))
-      Text(`utterance_id ${utterance.utteranceId} · revision ${utterance.revision}`)
+      Text(`${utterance.speakerLabel === null ? '未分配说话人' : utterance.speakerLabel} · ` +
+        `utterance_id ${utterance.utteranceId} · revision ${utterance.revision} · ${utterance.status}`)
         .width('100%')
         .fontSize(11)
         .fontColor($r('app.color.text_secondary'))
@@ -64,23 +92,6 @@ export struct PhoneV3SessionDetailPage {
   private content(session: PhoneV3SessionCard) {
     Scroll() {
       Column({ space: 16 }) {
-        Row({ space: 8 }) {
-          Button({ type: ButtonType.Circle }) {
-            SymbolGlyph($r('sys.symbol.chevron_left'))
-              .fontSize(20)
-              .fontColor([$r('app.color.text_primary')])
-          }
-          .width(42)
-          .height(42)
-          .backgroundColor($r('app.color.surface_secondary'))
-          .onClick((): void => this.onBack())
-          Text('会话详情')
-            .fontSize(22)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_primary'))
-        }
-        .width('100%')
-
         Column({ space: 5 }) {
           Text(phoneV3SessionTitle(session))
             .fontSize(24)
@@ -115,7 +126,8 @@ export struct PhoneV3SessionDetailPage {
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.text_primary'))
               Blank()
-              Text(`${formatRecordingDuration(this.viewModel.state.device.playbackPositionMs)} / ` +
+              Text(`${formatRecordingDuration(this.isSeeking ? this.seeking :
+                this.viewModel.state.device.playbackPositionMs)} / ` +
                 `${formatRecordingDuration(Math.max(session.durationMs,
                   this.viewModel.state.device.playbackDurationMs))}`)
                 .fontSize(12)
@@ -123,15 +135,21 @@ export struct PhoneV3SessionDetailPage {
             }
             .width('100%')
             Slider({
-              value: this.viewModel.state.device.playbackPositionMs,
+              value: this.isSeeking ? this.seeking : this.viewModel.state.device.playbackPositionMs,
               min: 0,
               max: Math.max(1, session.durationMs, this.viewModel.state.device.playbackDurationMs),
               step: 1
             })
               .width('100%')
               .selectedColor($r('app.color.brand_primary'))
+              .enabled(!this.viewModel.state.device.playbackBusy)
               .onChange((value: number, mode: SliderChangeMode): void => {
                 this.seeking = value;
+                if (mode === SliderChangeMode.Begin || mode === SliderChangeMode.Moving) {
+                  this.isSeeking = true;
+                  return;
+                }
+                this.isSeeking = false;
                 if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
                   this.viewModel.seekPlayback(value);
                 }
@@ -147,6 +165,56 @@ export struct PhoneV3SessionDetailPage {
           }
           .width('100%')
           .padding(16)
+          .backgroundColor($r('app.color.surface_primary'))
+          .borderRadius(16)
+        }
+
+        if (this.viewModel.state.error.length > 0 || this.viewModel.state.device.operationError.length > 0) {
+          Column({ space: 10 }) {
+            Text(this.viewModel.state.error.length > 0 ? this.viewModel.state.error :
+              this.viewModel.state.device.operationError)
+              .width('100%')
+              .fontSize(13)
+              .fontColor($r('app.color.brand_danger'))
+            if (this.viewModel.canRetry()) {
+              Button('重试上一步操作', { type: ButtonType.Capsule })
+                .height(40)
+                .fontColor(Color.White)
+                .backgroundColor($r('app.color.brand_danger'))
+                .onClick((): void => this.viewModel.retryLastAction())
+            }
+          }
+          .width('100%')
+          .padding(14)
+          .alignItems(HorizontalAlign.Start)
+          .backgroundColor($r('app.color.surface_primary'))
+          .borderRadius(12)
+        }
+
+        if (session.localPaths.length > 0) {
+          Column({ space: 10 }) {
+            Text('本地音频保护')
+              .width('100%')
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_primary'))
+            Text(this.viewModel.localDeleteProtection(session))
+              .width('100%')
+              .fontSize(13)
+              .fontColor($r('app.color.text_secondary'))
+            if (this.viewModel.canDeleteLocalAudio(session)) {
+              Button('删除手机本地音频', { type: ButtonType.Capsule })
+                .width('100%')
+                .height(44)
+                .enabled(!this.viewModel.state.busy)
+                .fontColor(Color.White)
+                .backgroundColor($r('app.color.brand_danger'))
+                .onClick((): void => this.confirmDelete(session))
+            }
+          }
+          .width('100%')
+          .padding(16)
+          .alignItems(HorizontalAlign.Start)
           .backgroundColor($r('app.color.surface_primary'))
           .borderRadius(16)
         }
