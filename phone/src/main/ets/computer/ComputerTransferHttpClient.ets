@@ -15,6 +15,11 @@ import {
   ComputerUploadMetadata,
   ComputerUploadResponse,
   DEVICE_AUTH_CHALLENGE_PATH,
+  DEVICE_V3_STATUS_PATH,
+  DEVICE_V3_SYNC_PATH,
+  DeviceV3StatusResponse,
+  DeviceV3SyncRequest,
+  DeviceV3SyncResponse,
   DEVICE_KEY_ALGORITHM,
   PASSKEY_REGISTER_OPTIONS_PATH,
   PASSKEY_REGISTER_VERIFY_PATH,
@@ -31,6 +36,7 @@ const READ_TIMEOUT_MS: number = 120000;
 
 interface ComputerErrorResponse {
   error?: string;
+  message?: string;
 }
 
 interface PairingHeaders {
@@ -163,6 +169,17 @@ export class ComputerTransferHttpClient {
       'application/octet-stream', offset);
   }
 
+  async v3Status(): Promise<DeviceV3StatusResponse> {
+    return this.authenticatedJson<DeviceV3StatusResponse>('GET', DEVICE_V3_STATUS_PATH,
+      new Uint8Array(0), undefined, undefined);
+  }
+
+  async sync(request: DeviceV3SyncRequest): Promise<DeviceV3SyncResponse> {
+    const body = util.TextEncoder.create('utf-8').encodeInto(JSON.stringify(request));
+    return this.authenticatedJson<DeviceV3SyncResponse>('POST', DEVICE_V3_SYNC_PATH,
+      body, 'application/json; charset=utf-8', undefined);
+  }
+
   private async authenticatedJson<T>(method: string, path: string, body: Uint8Array,
     contentType: string | undefined, uploadOffset: number | undefined): Promise<T> {
     const binding: ComputerRequestBinding = {
@@ -292,6 +309,9 @@ function serverErrorMessage(code: number, body: string): string {
     const payload = JSON.parse(body) as ComputerErrorResponse;
     if (payload.error !== undefined && payload.error.length > 0) {
       return `电脑拒绝请求（HTTP ${code}）：${payload.error}`;
+    }
+    if (payload.message !== undefined && payload.message.length > 0) {
+      return `电脑拒绝请求（HTTP ${code}）：${payload.message}`;
     }
   } catch (error) {
   }

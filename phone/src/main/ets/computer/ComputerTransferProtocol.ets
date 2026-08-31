@@ -6,6 +6,8 @@ export const PASSKEY_REGISTER_OPTIONS_PATH: string = '/api/v1/passkeys/register/
 export const PASSKEY_REGISTER_VERIFY_PATH: string = '/api/v1/passkeys/register/verify';
 export const PASSKEY_AUTHENTICATE_OPTIONS_PATH: string = '/api/v1/passkeys/authenticate/options';
 export const DEVICE_AUTH_CHALLENGE_PATH: string = '/api/v1/devices/authenticate/challenge';
+export const DEVICE_V3_STATUS_PATH: string = '/device/v3/status';
+export const DEVICE_V3_SYNC_PATH: string = '/device/v3/sync';
 export const DEVICE_KEY_ALGORITHM: string = 'ECDSA_P256_SHA256';
 export const COMPUTER_RECEIVER_SERVICE_TYPE: string = '_allday-pc._tcp';
 export const COMPUTER_RECEIVER_PROTOCOL: string = 'ALL_DAY_RECORDING_TRANSFER';
@@ -150,6 +152,58 @@ export interface ComputerStatusResponse {
   enrollment: string;
   passkey_rp_id: string;
   receiver_id: string;
+}
+
+export interface DeviceV3StatusResponse {
+  contract_version: string;
+  projection_version: number;
+  server_time: string;
+}
+
+export interface DeviceV3ClientOperation {
+  operation_id: string;
+  kind: string;
+  base_revision: number | null;
+  payload: Object;
+}
+
+export interface DeviceV3SyncRequest {
+  projection_version: number;
+  cursor: string | null;
+  client_operations: Array<DeviceV3ClientOperation>;
+  pull_limit: number;
+}
+
+export interface DeviceV3ApiError {
+  code: string;
+  message: string;
+  details: Object;
+  request_id: string;
+}
+
+export interface DeviceV3OperationReceipt {
+  operation_id: string;
+  status: string;
+  resource_revision: number | null;
+  error: DeviceV3ApiError | null;
+}
+
+export interface DeviceV3Change {
+  sequence: number;
+  resource_type: string;
+  resource_id: string;
+  revision: number;
+  operation: string;
+  resource: Object | null;
+}
+
+export interface DeviceV3SyncResponse {
+  projection_version: number;
+  receipts: Array<DeviceV3OperationReceipt>;
+  changes: Array<DeviceV3Change>;
+  next_cursor: string;
+  has_more: boolean;
+  server_time: string;
 }
 
 export function normalizeReceiverId(value: string): string {

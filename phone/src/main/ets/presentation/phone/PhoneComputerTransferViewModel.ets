@@ -20,6 +20,17 @@ import {
 } from '../../computer/ComputerTransferProtocol';
 import { prepareComputerSessions } from '../../computer/ComputerSessionManifest';
 import { PhonePasskeyClient } from '../../computer/PhonePasskeyClient';
+import {
+  PhoneProjectionRepository,
+  PhoneProjectionStatus
+} from '../../v3/data/PhoneProjectionRepository';
+import { PhoneSyncCoordinator, retryDelayMs } from '../../v3/data/PhoneSyncCoordinator';
+
+interface PhoneProcessingProjection {
+  status?: string;
+  current_stage?: string;
+  progress?: number;
+}
 
 @Observed
 export class PhoneComputerTransferViewModel {
@@ -38,12 +49,17 @@ export class PhoneComputerTransferViewModel {
   totalFiles: number = 0;
   availableSessions: number = 0;
   availableRecordings: number = 0;
+  pendingOperations: number = 0;
+  syncCursor: string = 'cursor-0';
+  cachedProcessingStatus: string = '暂无已同步处理状态';
 
   private context: common.UIAbilityContext | undefined = undefined;
   private store: ComputerTransferConfigStore | undefined = undefined;
   private config: ComputerTransferConfig = new ComputerTransferConfig();
   private recordings: Array<ReceivedRecordingFile> = [];
   private importedCaPath: string = '';
+  private projectionPromise: Promise<PhoneProjectionRepository> | undefined = undefined;
+  private retryTimer: number = -1;
 
   async pairFromQr(value: string): Promise<void> {
     const context = this.requireContext();
@@ -81,6 +97,7 @@ export class PhoneComputerTransferViewModel {
   start(context: common.UIAbilityContext, recordings: Array<ReceivedRecordingFile>): void {
     this.context = context;
     this.store = new ComputerTransferConfigStore(context);
+    this.projectionPromise = PhoneProjectionRepository.open(context);
     this.updateRecordings(recordings);
     this.loadState(context);
   }
@@ -190,8 +207,103 @@ export class PhoneComputerTransferViewModel {
       const newFiles = result.recordings + result.manifests - result.skippedFiles;
       this.status = `上传检查完成：新增 ${newFiles} 个文件，电脑已有并跳过 ${result.skippedFiles} 个；` +
         `共 ${result.sessions} 个会话，手机原文件已保留`;
+      const projection = await this.requireProjection();
+      const sessions = prepareComputerSessions(this.recordings);
+      for (let sessionIndex = 0; sessionIndex < sessions.length; sessionIndex += 1) {
+        const session = sessions[sessionIndex];
+        for (let recordingIndex = 0; recordingIndex < session.recordings.length; recordingIndex += 1) {
+          await projection.linkLocalAudio(session.manifest.sessionKey,
+            session.recordings[recordingIndex].path, '', 'uploaded');
+        }
+      }
+      try {
+        const sync = await new PhoneSyncCoordinator(
+          new ComputerTransferHttpClient(context, updated.baseUrl, updated.caPath, updated.deviceId),
+          projection).synchronize();
+        await this.refreshProjectionStatus(projection);
+        this.cancelRetry();
+        this.status += `；V3 已同步 ${sync.batches} 批，游标 ${sync.final_cursor}`;
+      } catch (error) {
+        const projectionStatus = await this.refreshProjectionStatus(projection);
+        this.scheduleRetry(projectionStatus.retry_count);
+        this.status += `；录音已安全上传，V3 状态同步待重试：${computerTransferError(error as Object).message}`;
+      }
     } catch (error) {
       this.status = computerTransferError(error as Object).message;
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  async synchronize(): Promise<void> {
+    const context = this.requireContext();
+    const store = this.requireStore();
+    if (this.busy) {
+      return;
+    }
+    this.busy = true;
+    try {
+      if (!this.config.isPaired()) {
+        throw new Error('请先完成电脑 Passkey 配对');
+      }
+      this.status = '正在发现电脑并同步 V3 状态…';
+      const discoveredUrl = await new ComputerReceiverDiscovery(context).discover(this.config.receiverId);
+      const updated = await store.saveLastAddress(discoveredUrl);
+      this.applyConfig(updated);
+      const projection = await this.requireProjection();
+      const result = await new PhoneSyncCoordinator(
+        new ComputerTransferHttpClient(context, updated.baseUrl, updated.caPath, updated.deviceId),
+        projection).synchronize();
+      await this.refreshProjectionStatus(projection);
+      this.cancelRetry();
+      this.status = `V3 同步完成：${result.batches} 批，游标 ${result.final_cursor}，` +
+        `待提交 ${this.pendingOperations} 项`;
+    } catch (error) {
+      this.status = computerTransferError(error as Object).message;
+      try {
+        const projection = await this.requireProjection();
+        const projectionStatus = await this.refreshProjectionStatus(projection);
+        this.scheduleRetry(projectionStatus.retry_count);
+      } catch (projectionError) {
+      }
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  async rebuildProjection(): Promise<void> {
+    const context = this.requireContext();
+    const store = this.requireStore();
+    if (this.busy) {
+      return;
+    }
+    this.busy = true;
+    try {
+      if (!this.config.isPaired()) {
+        throw new Error('请先完成电脑 Passkey 配对');
+      }
+      const projection = await this.requireProjection();
+      await projection.rebuildFromComputer();
+      await this.refreshProjectionStatus(projection);
+      this.cancelRetry();
+      this.status = '本地可重建投影已清空；outbox 与手机录音保留，正在从电脑恢复…';
+      const discoveredUrl = await new ComputerReceiverDiscovery(context).discover(this.config.receiverId);
+      const updated = await store.saveLastAddress(discoveredUrl);
+      this.applyConfig(updated);
+      const result = await new PhoneSyncCoordinator(
+        new ComputerTransferHttpClient(context, updated.baseUrl, updated.caPath, updated.deviceId),
+        projection).synchronize();
+      await this.refreshProjectionStatus(projection);
+      this.cancelRetry();
+      this.status = `本地投影已从电脑重建：${result.batches} 批，游标 ${result.final_cursor}`;
+    } catch (error) {
+      this.status = `投影重建待继续：${computerTransferError(error as Object).message}`;
+      try {
+        const projection = await this.requireProjection();
+        const projectionStatus = await this.refreshProjectionStatus(projection);
+        this.scheduleRetry(projectionStatus.retry_count);
+      } catch (projectionError) {
+      }
     } finally {
       this.busy = false;
     }
@@ -203,6 +315,7 @@ export class PhoneComputerTransferViewModel {
       this.applyConfig(config);
       if (config.isPaired()) {
         this.status = '电脑已配对；上传时会自动发现，无需处理 Wi-Fi 或 IP 变化';
+        this.loadProjectionRetryState();
       }
     }, (error: Object): void => {
       this.status = `读取电脑配对失败：${computerTransferError(error).message}`;
@@ -218,6 +331,21 @@ export class PhoneComputerTransferViewModel {
       this.deviceKeyCapability = value;
     }, (error: Object): void => {
       this.deviceKeyCapability = computerTransferError(error).message;
+    });
+    this.loadProjectionRetryState();
+  }
+
+  private loadProjectionRetryState(): void {
+    this.requireProjection().then((repository: PhoneProjectionRepository): void => {
+      this.refreshProjectionStatus(repository).then((status: PhoneProjectionStatus): void => {
+        if (status.last_error.length > 0) {
+          this.scheduleRetry(status.retry_count);
+        }
+      }, (error: Object): void => {
+        this.status = `读取 Phone V3 状态失败：${computerTransferError(error).message}`;
+      });
+    }, (error: Object): void => {
+      this.status = `读取 Phone V3 投影失败：${computerTransferError(error).message}`;
     });
   }
 
@@ -247,5 +375,53 @@ export class PhoneComputerTransferViewModel {
       throw new Error('电脑传输页面尚未初始化');
     }
     return this.store;
+  }
+
+  private async requireProjection(): Promise<PhoneProjectionRepository> {
+    if (this.projectionPromise === undefined) {
+      throw new Error('Phone V3 投影尚未初始化');
+    }
+    return this.projectionPromise;
+  }
+
+  private async refreshProjectionStatus(repository: PhoneProjectionRepository): Promise<PhoneProjectionStatus> {
+    const status: PhoneProjectionStatus = await repository.status();
+    this.pendingOperations = status.pending_operations;
+    this.syncCursor = status.cursor;
+    const processingPayload = await repository.latestProcessingPayload();
+    this.cachedProcessingStatus = processingPayload === null ? '暂无已同步处理状态' :
+      formatProcessingStatus(processingPayload);
+    return status;
+  }
+
+  private scheduleRetry(attemptCount: number): void {
+    if (this.retryTimer >= 0 || !this.paired) {
+      return;
+    }
+    this.retryTimer = setTimeout((): void => {
+      this.retryTimer = -1;
+      this.synchronize();
+    }, retryDelayMs(attemptCount));
+  }
+
+  private cancelRetry(): void {
+    if (this.retryTimer >= 0) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = -1;
+    }
+  }
+}
+
+function formatProcessingStatus(payloadJson: string): string {
+  try {
+    const payload = JSON.parse(payloadJson) as PhoneProcessingProjection;
+    const status = payload.status === undefined || payload.status.length === 0 ? 'unknown' : payload.status;
+    const stage = payload.current_stage === undefined || payload.current_stage.length === 0 ? '' :
+      `，阶段 ${payload.current_stage}`;
+    const progress = payload.progress === undefined || !Number.isFinite(payload.progress) ? '' :
+      `，进度 ${Math.round(payload.progress * 100)}%`;
+    return `${status}${stage}${progress}`;
+  } catch (error) {
+    return '缓存处理状态无法解析';
   }
 }

@@ -243,6 +243,46 @@ export struct PhoneComputerTransferPage {
         .backgroundColor($r('app.color.surface_primary'))
         .borderRadius(14)
 
+        Column({ space: 10 }) {
+          this.sectionTitle('3. V3 状态同步')
+
+          Text(`本地游标 ${this.transferViewModel.syncCursor}，` +
+            `待提交 ${this.transferViewModel.pendingOperations} 项`)
+            .width('100%')
+            .fontSize(14)
+            .fontColor($r('app.color.text_secondary'))
+
+          Text(`最近处理状态：${this.transferViewModel.cachedProcessingStatus}`)
+            .width('100%')
+            .fontSize(14)
+            .fontColor($r('app.color.text_secondary'))
+
+          Button('同步处理状态', { type: ButtonType.Capsule })
+            .width('100%')
+            .height(48)
+            .enabled(!this.transferViewModel.busy && this.transferViewModel.paired)
+            .fontColor(Color.White)
+            .backgroundColor($r('app.color.brand_primary'))
+            .onClick((): void => {
+              this.transferViewModel.synchronize();
+            })
+
+          Button('从电脑重建本地投影', { type: ButtonType.Capsule })
+            .width('100%')
+            .height(44)
+            .enabled(!this.transferViewModel.busy && this.transferViewModel.paired)
+            .onClick((): void => {
+              this.transferViewModel.rebuildProjection();
+            })
+
+          this.explanation('同步会在一条 HUKS 签名请求中提交 outbox 并拉取增量。离线时本地录音、上次状态和待提交项仍会保留。')
+        }
+        .width('100%')
+        .padding(16)
+        .alignItems(HorizontalAlign.Start)
+        .backgroundColor($r('app.color.surface_primary'))
+        .borderRadius(14)
+
         Text(this.transferViewModel.status)
           .width('100%')
           .padding(14)
