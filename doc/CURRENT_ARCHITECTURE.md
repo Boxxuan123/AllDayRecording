@@ -19,6 +19,7 @@
 ```text
 Watch HAP -> Watch Root/ViewModel -> recording / Watch Sender
 Phone HAP -> Phone Root/ViewModel -> Phone Receiver / receive store
+                                -> computer transfer VM -> QR/mDNS/HTTPS/HUKS upload service
                          both -> common HAR -> coordinator -> transport / shared IO
 ```
 
@@ -50,8 +51,12 @@ Phone HAP -> Phone Root/ViewModel -> Phone Receiver / receive store
 4. Phone 先把收到的文件原子复制到 `phone` 模块沙箱的 `synced_from_watch/<requestId>/`，再由 `ReceivedRecordingStore` 更新 `received_index_v1.json`。
 5. 索引损坏或缺失时，Phone 扫描同步目录和旧 `received_*.wav` 重建可见列表。
 6. 只有文件已落盘且索引流程完成后，Phone 才发送 `sync_file_received`；Watch 在 ACK 丢失或通信失败时保留源文件并重试。
+7. 普通 Wear Engine 同步不删除 Watch 源文件。加密 Wi-Fi 全量同步会对新文件和 Phone 已有文件逐一核对 SHA-256；只有所有文件 ACK 及批次 ACK 完成后，Watch 才重新核对路径、大小和 SHA-256 并删除本批快照中的源文件。批次失败时一个也不删，单文件清理失败时只保留该文件；进程重启后可通过 Phone 的重复文件校验继续清理。
+8. Phone 到电脑的传输是独立出口：`computer` 目录隔离二维码配对、mDNS 发现、配对配置、FIDO2/HUKS 封装、HTTPS 请求、会话清单和断点上传；单独的 `PhoneComputerTransferViewModel` 承担页面状态，没有继续扩大 `PhoneRecordingViewModel`。
+9. 手机扫码验证并固定电脑 CA 的 DER SHA-256 指纹，以首次配对码和系统 Passkey 授权登记 HUKS P-256 设备公钥。后续每个受保护请求都用一次性 challenge 生成静默设备签名，绑定 method、path、正文 SHA-256 和分片 offset，不保存访问令牌；换 Wi-Fi 通过稳定 `receiver_id` 自动重新发现电脑地址。
+10. 上传以 `ReceivedRecordingFile.sourcePath` 恢复原 Watch 会话路径，先传全部音频，再生成并上传 `AllDayRecording session manifest v1` 清单。电脑确认最终 SHA-256 后才计为完成，手机原文件始终保留。
 
-Wire JSON、requestId、同步目录相对结构、重试/超时参数和源文件保留策略继续兼容 Phase 2。旧 Phone `entry` 沙箱内容不会自动迁入新 `phone` 沙箱；这是已备份并由用户接受的数据可见性变化，不是 wire 协议变化。
+Wear Engine wire JSON、requestId、同步目录相对结构和重试/超时参数继续兼容 Phase 2；源文件删除仅发生在独立的 Wi-Fi 加密传输路径，不改变普通同步协议。旧 Phone `entry` 沙箱内容不会自动迁入新 `phone` 沙箱；这是已备份并由用户接受的数据可见性变化，不是 wire 协议变化。
 
 ## 5. 系统能力与编译提示
 
@@ -63,6 +68,7 @@ Phase 5 已逐项捕获并传播 CoreFileKit、Preferences、AudioKit、后台�
 | --- | --- | --- |
 | `AudioCaptureLifecycle` 的 AudioKit 能力 | 创建采集器前调用 `canIUse('SystemCapability.Multimedia.Audio.Capturer')` | 只在 Watch 录音入口执行；枚举/创建调用仍会被多设备编译静态提示 |
 | `AudioPlaybackService` 的 AVPlayer 能力 | 播放前调用 `canIUse('SystemCapability.Multimedia.Media.AVPlayer')` | `common` HAR 供两端依赖，设备不支持时显式失败 |
+| Phone 电脑传输的 ScanKit、mDNS、FIDO2、HUKS、证书、HTTPS 与 SHA-256 能力 | 首次配对由系统扫码页读取电脑二维码；上传前以 mDNS 发现稳定接收端；页面初始化及登记入口检查 FIDO2，HUKS 私钥不可导出；CA 导入检查 Cert/CryptoFramework，HTTP 客户端检查 NetStack/CryptoFramework，异常显式返回；Phone HAP 最低 API 23 | 仅由用户从 Phone 设置页触发；RP 域名必须先在 AGC/App Linking 与应用关联，日常上传使用设备签名，不提供令牌降级 |
 | Watch `RecordingTransferService` 的 Wear Engine sender API | Transport 连接前检查 `SystemCapability.Health.WearEngine` | 仅打入 Watch HAP；API 23 兼容调用点仍会产生静态能力提示 |
 | `diagnostics/legacy/AvRecorderGapBaseline` 的 AVRecorder 与麦克风权限 | `RecordingDiagnosticsPolicy` 默认关闭，构造前即拒绝；生产 UI 无入口 | 仅由业务测试编译以防历史基线腐化，相关能力/权限提示只出现在测试源码图 |
 

@@ -5,6 +5,7 @@ import presentationStateTest from './PresentationState.test';
 import sharedIoTest from './SharedIo.test';
 import watchSyncProtocolTest from './WatchSyncProtocol.test';
 import wifiRecordingTransferPolicyTest from './WifiRecordingTransferPolicy.test';
+import wifiSyncedSourceCleanerTest from './WifiSyncedSourceCleaner.test';
 
 export default function testsuite() {
   watchSyncProtocolTest();
@@ -14,4 +15,5 @@ export default function testsuite() {
   interruptedWavRecoveryTest();
   pcmRecordingDomainTest();
   wifiRecordingTransferPolicyTest();
+  wifiSyncedSourceCleanerTest();
 }

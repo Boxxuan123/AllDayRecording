@@ -151,6 +151,29 @@ export class ReceivedRecordingStore {
     return this.record(recording);
   }
 
+  deleteRecordings(recordings: Array<ReceivedRecordingFile>): number {
+    let deletedCount = 0;
+    for (let targetIndex = 0; targetIndex < recordings.length; targetIndex += 1) {
+      const targetPath = recordings[targetIndex].path;
+      const storedIndex = this.findPathIndex(targetPath);
+      if (storedIndex < 0) {
+        continue;
+      }
+      try {
+        if (fileIo.accessSync(targetPath)) {
+          fileIo.unlinkSync(targetPath);
+        }
+      } catch (error) {
+        this.tryWriteManifest();
+        throw receivedStoreError(error);
+      }
+      this.recordings.splice(storedIndex, 1);
+      deletedCount += 1;
+    }
+    this.tryWriteManifest();
+    return deletedCount;
+  }
+
   private loadFromDisk(): Array<ReceivedRecordingFile> {
     const loaded: Array<ReceivedRecordingFile> = [];
     this.loadManifest(loaded);
@@ -328,6 +351,15 @@ export class ReceivedRecordingStore {
     }
   }
 
+  private tryWriteManifest(): void {
+    try {
+      this.writeManifest();
+    } catch (error) {
+      // Deleted audio cannot be restored. A later launch safely drops missing
+      // manifest entries and rebuilds the index from the remaining files.
+    }
+  }
+
   private sortNewestFirst(): void {
     this.recordings.sort((left: ReceivedRecordingFile, right: ReceivedRecordingFile) =>
       right.receivedAt - left.receivedAt);
@@ -340,6 +372,15 @@ export class ReceivedRecordingStore {
       }
     }
     return false;
+  }
+
+  private findPathIndex(path: string): number {
+    for (let index = 0; index < this.recordings.length; index += 1) {
+      if (this.recordings[index].path === path) {
+        return index;
+      }
+    }
+    return -1;
   }
 
   private isAudioFile(fileName: string): boolean {

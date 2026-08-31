@@ -1,15 +1,83 @@
 import {
-  formatRecordingDuration,
-  formatRecordingReceivedAt,
-  formatRecordingSize
+  formatRecordingDuration, formatRecordingReceivedAt, formatRecordingSize
 } from 'common';
+import { uiMaterial } from '@kit.ArkUI';
 import { PhoneRecordingViewModel } from './PhoneRecordingViewModel';
 import { PhoneRecordingGroup } from './PhoneRecordingGroups';
 import { PhoneSyncProgressView } from './PhoneSyncProgressView';
 
 @Component
+struct PhoneRecordingMoreButton {
+  @ObjectLink viewModel: PhoneRecordingViewModel;
+  group: PhoneRecordingGroup = new PhoneRecordingGroup('', [], 0, 0, 0, 0);
+  onDelete: (group: PhoneRecordingGroup) => void = (_group: PhoneRecordingGroup): void => {
+  };
+
+  @Builder
+  private menu() {
+    Menu() {
+      MenuItem({ content: '删除' })
+        .onClick((): void => this.onDelete(this.group))
+    }
+    .backgroundColor($r('app.color.surface_primary'))
+    .borderRadius(16)
+  }
+
+  build() {
+    Button({ type: ButtonType.Circle, stateEffect: true }) {
+      if (this.viewModel.isDeletingRecordingGroup(this.group)) {
+        LoadingProgress()
+          .width(20)
+          .height(20)
+          .color($r('app.color.text_secondary'))
+      } else {
+        Image($r('sys.media.ohos_ic_public_more'))
+          .width(22)
+          .height(22)
+          .fillColor($r('app.color.text_secondary'))
+      }
+    }
+    .width(40)
+    .height(40)
+    .buttonStyle(ButtonStyleMode.TEXTUAL)
+    .accessibilityText('更多')
+    .enabled(this.viewModel.deletingRecordingGroupKey.length === 0)
+    .bindMenu(this.menu, {
+      systemMaterial: new uiMaterial.ImmersiveMaterial({
+        style: uiMaterial.ImmersiveStyle.THICK,
+        interactive: true,
+        lightEffect: {}
+      })
+    })
+  }
+}
+
+@Component
 export struct PhoneRecordingHistoryPage {
   @ObjectLink viewModel: PhoneRecordingViewModel;
+  onOpenRecording: (groupKey: string) => void = (_groupKey: string): void => {
+  };
+
+  private confirmDelete(group: PhoneRecordingGroup): void {
+    try {
+      this.getUIContext().getPromptAction().showDialog({
+        title: '删除录音？',
+        message: group.recordings.length > 1 ?
+          '这条连续录音包含的全部音频都会被删除，且无法恢复。' : '删除后将无法恢复这条录音。',
+        buttons: [
+          { text: '取消', color: $r('app.color.text_secondary') },
+          { text: '删除', color: $r('app.color.brand_danger') }
+        ]
+      }).then((result): void => {
+        if (result.index === 1) {
+          this.viewModel.deleteRecordingGroup(group);
+        }
+      }, (): void => {
+      });
+    } catch (error) {
+      this.viewModel.status = '无法显示删除确认框，请重试';
+    }
+  }
 
   build() {
     Column({ space: 16 }) {
@@ -84,7 +152,12 @@ export struct PhoneRecordingHistoryPage {
           }
         }
         .width('100%')
-        .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+        .padding({
+          left: 12,
+          right: 12,
+          top: 10,
+          bottom: 10
+        })
         .backgroundColor($r('app.color.surface_progress'))
         .borderRadius(10)
       }
@@ -125,36 +198,36 @@ export struct PhoneRecordingHistoryPage {
                 }
                 .alignItems(HorizontalAlign.Start)
                 .layoutWeight(1)
+                .onClick((): void => {
+                  this.viewModel.selectRecordingGroup(group);
+                  this.onOpenRecording(group.key);
+                })
 
-                Text(this.viewModel.isRecordingGroupSelected(group) ? '已选择' : '选择')
-                  .fontSize(13)
-                  .fontColor($r('app.color.brand_primary'))
+                PhoneRecordingMoreButton({
+                  viewModel: this.viewModel,
+                  group: group,
+                  onDelete: (recordingGroup: PhoneRecordingGroup): void => this.confirmDelete(recordingGroup)
+                })
               }
               .width('100%')
               .padding(15)
-              .backgroundColor(this.viewModel.isRecordingGroupSelected(group) ?
-                $r('app.color.surface_accent') : $r('app.color.surface_primary'))
+              .backgroundColor($r('app.color.surface_primary'))
               .borderRadius(14)
             }
-            .onClick((): void => this.viewModel.selectRecordingGroup(group))
           }, (group: PhoneRecordingGroup): string => group.key)
         }
         .width('100%')
         .layoutWeight(1)
-
-        Button(this.viewModel.isPlaying ? '停止播放' : '播放选中的录音', { type: ButtonType.Capsule })
-          .width('100%')
-          .height(46)
-          .fontSize(16)
-          .backgroundColor(this.viewModel.isPlaying ?
-            $r('app.color.brand_danger') : $r('app.color.button_neutral'))
-          .enabled(this.viewModel.latestRecording !== undefined)
-          .onClick((): void => this.viewModel.togglePlayback())
       }
     }
     .width('100%')
     .height('100%')
-    .padding({ left: 20, right: 20, top: 24, bottom: 92 })
+    .padding({
+      left: 20,
+      right: 20,
+      top: 24,
+      bottom: 92
+    })
     .alignItems(HorizontalAlign.Start)
     .backgroundColor($r('app.color.page_background'))
   }

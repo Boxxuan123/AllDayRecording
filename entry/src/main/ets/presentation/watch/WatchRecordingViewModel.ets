@@ -5,7 +5,7 @@ import {
   RecordingFile,
   WifiTransferSessionCredentials,
   WifiRecordingTransferService,
-  WifiTransferBatchResult,
+  WifiTransferBatchCleanupResult,
   recordingErrorMessage,
   wifiRecordingTransferErrorMessage
 } from 'common';
@@ -448,9 +448,18 @@ export class WatchRecordingViewModel {
     this.wifiStatus = `已收到配对手机的一次性安全凭据，正在加密同步全部 ${recordings.length} 个录音…`;
     const token = this.lifecycleToken;
     try {
-      const result: WifiTransferBatchResult = await service.sendAll(recordings, credentials);
+      const playback = this.playbackService;
+      if (playback !== undefined && playback.hasActiveSession()) {
+        await playback.release();
+        this.isPlaying = false;
+      }
+      const result: WifiTransferBatchCleanupResult = await service.sendAllAndDeleteSources(recordings, credentials);
+      this.transferSender?.removeWifiCleanedSources(result.cleanedSourcePaths);
+      this.refreshWifiRecording();
+      this.refreshLatestRecordingAfterWifiCleanup(service, result.cleanedSourcePaths);
       const message = `Wi-Fi 全量同步完成：新增 ${result.transferred} 个，手机已有 ${result.alreadyPresent} 个；` +
-        '手表原文件已保留';
+        `手表已删除 ${result.deleted} 个${result.alreadyAbsent > 0 ? `，${result.alreadyAbsent} 个原本已不存在` : ''}` +
+        `${result.retained > 0 ? `，${result.retained} 个清理失败并保留` : ''}`;
       if (this.lifecycle.isActive(token)) {
         this.wifiStatus = message;
         this.wifiProgress = 100;
@@ -470,6 +479,15 @@ export class WatchRecordingViewModel {
         this.wifiSending = false;
       }
     }
+  }
+
+  private refreshLatestRecordingAfterWifiCleanup(service: WifiRecordingTransferService,
+    cleanedPaths: Array<string>): void {
+    const latest = this.latestRecording;
+    if (latest === undefined || cleanedPaths.indexOf(latest.path) < 0) {
+      return;
+    }
+    this.latestRecording = service.findLatestRecording();
   }
 
   private resumePendingPhoneRecordingStart(): void {

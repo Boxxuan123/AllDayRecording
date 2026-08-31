@@ -62,7 +62,7 @@ export struct WatchWifiTransferPage {
         .textAlign(TextAlign.Center)
         .maxLines(3)
 
-      Text('一次性凭据只经 Wear Engine 下发 · 下滑返回首页')
+      Text('逐文件校验并整批确认后删除手表源文件 · 下滑返回首页')
         .fontSize(8)
         .fontColor($r('app.color.text_tertiary'))
     }

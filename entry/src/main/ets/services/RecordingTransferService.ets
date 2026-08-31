@@ -332,6 +332,10 @@ export class WearEngineRecordingSender {
     this.requestAutomaticDrain();
   }
 
+  removeWifiCleanedSources(paths: Array<string>): number {
+    return this.automaticQueue.removeAllIfQueued(paths);
+  }
+
   async reportRecordingControlResult(requestId: string, desiredState: string, success: boolean,
     result: WatchRecordingControlResult): Promise<void> {
     if (requestId.length === 0) {

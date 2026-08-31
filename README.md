@@ -1,6 +1,6 @@
 # AllDayRecording
 
-AllDayRecording 是一个同时交付到手机与 HUAWEI WATCH 5 的 HarmonyOS 应用。手表负责连续 PCM 录音、WAV 安全封口、中断恢复和源文件保留；手机负责 Wear Engine 接收、持久化索引和试听。
+AllDayRecording 是一个同时交付到手机与 HUAWEI WATCH 5 的 HarmonyOS 应用。手表负责连续 PCM 录音、WAV 安全封口、中断恢复和源文件生命周期；手机负责 Wear Engine 接收、持久化索引和试听。
 
 当前工程按设备交付两个 HAP，并通过本地 `common` HAR 复用协议和纯逻辑：Watch 使用 `entry` HAP，Phone 使用 `phone` HAP。应用版本为 `1.0.1`（`versionCode = 1000001`），两个 HAP 保持同一 `bundleName`、Client ID、签名配置和 API 23/26 边界。Phase 6 的本地门禁、双端覆盖安装和用户真机验收已完成。
 
@@ -16,19 +16,22 @@ AllDayRecording 是一个同时交付到手机与 HUAWEI WATCH 5 的 HarmonyOS �
 - `common/src/main/ets/shared/io`：WAV 格式、原子文件和版本化 JSON 基础设施。
 - `entry/src/main/ets/services`：Watch Sender、录音、恢复和远程启动降级 facade。
 - `phone/src/main/ets/services`：Phone Receiver 与接收索引。
+- `phone/src/main/ets/computer`：Phone 到电脑的二维码配对、mDNS 自动发现、HUKS 设备认证和断点上传边界。
 - `entry/src/main/ets/diagnostics`：默认关闭、生产 UI 不可达的历史基线与探针。
 - `entry/src/test`、`phone/src/test`：按设备边界拆分的宿主机 Hypium 业务测试。
 - `entry/src/ohosTest`：设备测试 HAP 的业务契约入口。
 
 当前依赖与数据流详见 [当前架构](doc/CURRENT_ARCHITECTURE.md)。历史阶段报告会明确标记为 `superseded` 或 `experiment`，不作为当前产品行为的唯一依据。
+手机到电脑的首次配对、换 Wi-Fi 和上传流程详见 [手机到电脑安全传输](doc/PHONE_TO_COMPUTER_TRANSFER.md)。
 
 ## 关键不变量
 
 - Watch 最低兼容 HarmonyOS API 23；API 26 或设备能力必须有运行时保护或兼容降级。
 - 一个录音会话只持续运行一个 AudioCapturer；生产 WAV 按 60 秒采样量切分，5 秒是 PCM 内存队列上限，不是当前分片时长。
 - 完整文件按 `.part -> 回写 WAV 头 -> fsync -> close -> 原子 rename` 发布。
-- 中断恢复保留非空 PCM 证据；同步永不自动删除手表源录音。
+- 中断恢复保留非空 PCM 证据；普通 Wear Engine 同步始终保留手表源录音。只有加密 Wi-Fi 全量同步在手机逐文件核对 SHA-256、返回逐文件 ACK 且整批 ACK 完成后，才复核并删除该批手表源文件；任何失败或变化都继续保留。
 - 手机完成文件持久化并更新索引后才发送 ACK。
+- 手机首次扫码后固定配对 CA，以系统 Passkey 授权登记 HUKS 设备公钥；后续自动发现电脑并静默签名上传，录音断点上传完成后最后提交会话清单，且保留手机原文件。
 - 自动与手动同步串行，网络传输不进入 AudioCapturer `readData` 回调。
 
 ## 本地质量门禁

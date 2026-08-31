@@ -8,7 +8,8 @@ export {
 
 export {
   AudioPlaybackService,
-  PlaybackStateHandler
+  PlaybackStateHandler,
+  PlaybackProgressHandler
 } from './src/main/ets/services/AudioPlaybackService';
 
 export {
@@ -16,6 +17,7 @@ export {
   WifiRecordingReceivedHandler,
   WifiExistingRecordingHandler,
   WifiTransferBatchResult,
+  WifiTransferBatchCleanupResult,
   WifiTransferBatchCompletedHandler,
   sanitizeWifiRecordingFileName,
   isSafeWifiRecordingSourcePath,
@@ -23,6 +25,15 @@ export {
   wifiRecordingTransferErrorMessage,
   WifiRecordingTransferService
 } from './src/main/ets/services/WifiRecordingTransferService';
+
+export {
+  WIFI_SOURCE_DELETED,
+  WIFI_SOURCE_ALREADY_ABSENT,
+  WifiVerifiedSourceFile,
+  WifiSourceCleanupFileInfo,
+  WifiSourceCleanupFileSystem,
+  deleteVerifiedWifiSource
+} from './src/main/ets/services/WifiSyncedSourceCleaner';
 
 export {
   WIFI_TRANSFER_SESSION_TTL_MS,

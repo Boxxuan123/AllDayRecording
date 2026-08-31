@@ -1,4 +1,5 @@
 import { describe, it, expect } from '@ohos/hypium';
+import { fileIo } from '@kit.CoreFileKit';
 import {
   ReceivedRecordingFile,
   exactWatchFileKey
@@ -192,6 +193,62 @@ export default function receivedRecordingStoreTest() {
         expect(stored.path).assertEqual(newPath);
         expect(store.list().length).assertEqual(1);
         expect(store.findWifiExisting('session_a/segment.wav', 2)?.path).assertEqual(newPath);
+      } finally {
+        removeTestTree(root, listDirectory);
+      }
+    });
+
+    it('deletesAudioFilesAndRemovesThemFromManifest', 0, () => {
+      const root = createTestDirectory('received_delete');
+      const syncRoot = `${root}/${SYNC_RECEIVE_DIRECTORY}`;
+      const requestRoot = `${syncRoot}/request_delete`;
+      const listDirectory = listFixture(new Map<string, Array<string>>([
+        [root, [SYNC_RECEIVE_DIRECTORY]],
+        [syncRoot, ['received_index_v1.json', 'request_delete']],
+        [requestRoot, ['001_first.wav', '002_second.wav']]
+      ]));
+      try {
+        ensureTestDirectory(syncRoot);
+        ensureTestDirectory(requestRoot);
+        const firstPath = `${requestRoot}/001_first.wav`;
+        const secondPath = `${requestRoot}/002_second.wav`;
+        writeTestBytes(firstPath, new Uint8Array([1, 2, 3, 4]));
+        writeTestBytes(secondPath, new Uint8Array([5, 6, 7, 8]));
+        const fixture: ReceivedManifestFixture = {
+          version: 1,
+          updatedAt: 100,
+          recordings: [
+            {
+              fileName: 'first.wav',
+              localPath: `${SYNC_RECEIVE_DIRECTORY}/request_delete/001_first.wav`,
+              size: 4,
+              durationMs: 1,
+              requestId: 'request_delete',
+              sourcePath: 'session/segment_000001_first.wav',
+              receivedAt: 100
+            },
+            {
+              fileName: 'second.wav',
+              localPath: `${SYNC_RECEIVE_DIRECTORY}/request_delete/002_second.wav`,
+              size: 4,
+              durationMs: 1,
+              requestId: 'request_delete',
+              sourcePath: 'session/segment_000002_second.wav',
+              receivedAt: 101
+            }
+          ]
+        };
+        writeTestText(`${syncRoot}/received_index_v1.json`, JSON.stringify(fixture));
+        const store = new ReceivedRecordingStore(root, listDirectory, readTestText, writeTestText);
+
+        const deletedCount = store.deleteRecordings(store.list());
+
+        expect(deletedCount).assertEqual(2);
+        expect(store.list().length).assertEqual(0);
+        expect(fileIo.accessSync(firstPath)).assertFalse();
+        expect(fileIo.accessSync(secondPath)).assertFalse();
+        const manifest = JSON.parse(readTestText(`${syncRoot}/received_index_v1.json`)) as ReceivedManifestFixture;
+        expect(manifest.recordings.length).assertEqual(0);
       } finally {
         removeTestTree(root, listDirectory);
       }

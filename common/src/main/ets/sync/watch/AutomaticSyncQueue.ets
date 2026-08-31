@@ -265,6 +265,25 @@ export class AutomaticSyncQueue {
     return this.persist();
   }
 
+  removeAllIfQueued(paths: Array<string>): number {
+    if (paths.length === 0) {
+      return 0;
+    }
+    let removedCount = 0;
+    for (let index = this.entries.length - 1; index >= 0; index -= 1) {
+      if (paths.indexOf(this.entries[index].path) >= 0) {
+        this.entries.splice(index, 1);
+        removedCount += 1;
+      }
+    }
+    if (removedCount === 0) {
+      return 0;
+    }
+    this.completed += removedCount;
+    this.persist();
+    return removedCount;
+  }
+
   persist(): boolean {
     const files: Array<AutomaticQueueManifestEntry> = [];
     for (let index = 0; index < this.entries.length; index += 1) {

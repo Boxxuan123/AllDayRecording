@@ -353,6 +353,26 @@ export default function automaticQueueAndSyncStateTest() {
       expect(JSON.stringify(saved).includes('"completedCount":0')).assertTrue();
       expect(queue.requestId()).assertEqual('auto_1000');
     });
+
+    it('removesWifiCleanedSourcesWithOneManifestWrite', 0, () => {
+      const storage = new FakeQueueFileSystem();
+      const queue = new AutomaticSyncQueue('/files', storage, new FakeSyncClock());
+      const first = recording('/files/session_a/segment_1.wav');
+      const second = recording('/files/session_a/segment_2.wav');
+      const retained = recording('/files/session_a/segment_3.wav');
+      queue.enqueue(first);
+      queue.enqueue(second);
+      queue.enqueue(retained);
+      const writesBeforeRemoval = storage.writeCalls.length;
+
+      const removed = queue.removeAllIfQueued([first.path, second.path]);
+
+      expect(removed).assertEqual(2);
+      expect(queue.count()).assertEqual(1);
+      expect(queue.first()?.path).assertEqual(retained.path);
+      expect(queue.completedCount()).assertEqual(2);
+      expect(storage.writeCalls.length).assertEqual(writesBeforeRemoval + 1);
+    });
   });
 
   describe('WatchSyncCoordinator', () => {

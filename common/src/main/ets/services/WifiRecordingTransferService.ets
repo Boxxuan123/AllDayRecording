@@ -25,6 +25,12 @@ import {
   wifiSecurityProtocolName
 } from '../security/WifiTransferSecurity';
 import { exactWatchFileKey, legacyWatchFileKey } from '../sync/protocol/WatchFileSyncProtocol';
+import {
+  WIFI_SOURCE_ALREADY_ABSENT,
+  WIFI_SOURCE_DELETED,
+  WifiVerifiedSourceFile,
+  deleteVerifiedWifiSource
+} from './WifiSyncedSourceCleaner';
 
 const SERVICE_TYPE: string = '_alldayrecording._tcp';
 const SERVICE_NAME: string = 'AllDayRecordingReceiver';
@@ -70,6 +76,14 @@ export interface WifiTransferBatchResult {
   alreadyPresent: number;
 }
 
+export interface WifiTransferBatchCleanupResult extends WifiTransferBatchResult {
+  deleted: number;
+  alreadyAbsent: number;
+  retained: number;
+  cleanedSourcePaths: Array<string>;
+  cleanupFailures: Array<string>;
+}
+
 export type WifiTransferBatchCompletedHandler = (result: WifiTransferBatchResult) => void;
 
 interface TransferMetadata {
@@ -101,6 +115,11 @@ interface TransferBatchSummary extends WifiTransferBatchResult {
   protocol: string;
   version: number;
   batchToken: number;
+}
+
+interface WifiBatchRecordingConfirmation {
+  transferred: boolean;
+  source: WifiVerifiedSourceFile;
 }
 
 interface ReceivingFile {
@@ -457,6 +476,17 @@ export class WifiRecordingTransferService {
 
   async sendAll(recordings: Array<RecordingFile>,
     credentials: WifiTransferSessionCredentials): Promise<WifiTransferBatchResult> {
+    return this.sendAllInternal(recordings, credentials, false);
+  }
+
+  async sendAllAndDeleteSources(recordings: Array<RecordingFile>,
+    credentials: WifiTransferSessionCredentials): Promise<WifiTransferBatchCleanupResult> {
+    return this.sendAllInternal(recordings, credentials, true);
+  }
+
+  private async sendAllInternal(recordings: Array<RecordingFile>,
+    credentials: WifiTransferSessionCredentials,
+    deleteSourcesAfterBatchAck: boolean): Promise<WifiTransferBatchCleanupResult> {
     if (this.sending) {
       throw new Error('录音正在通过 Wi-Fi 批量发送，请勿重复操作');
     }
@@ -477,6 +507,7 @@ export class WifiRecordingTransferService {
       transferred: 0,
       alreadyPresent: 0
     };
+    const verifiedSources: Array<WifiVerifiedSourceFile> = [];
     try {
       this.activateSenderSession(await createWifiTransferSecurityContext(credentials));
       this.remoteFailureMessage = '';
@@ -488,9 +519,10 @@ export class WifiRecordingTransferService {
       await this.authenticateSender(credentials);
       const batchToken = Math.max(1, Math.floor(Date.now() % 4294967295));
       for (let index = 0; index < recordings.length; index += 1) {
-        const transferred = await this.sendBatchRecording(recordings[index], index + 1,
+        const confirmation = await this.sendBatchRecording(recordings[index], index + 1,
           recordings.length, batchToken);
-        if (transferred) {
+        verifiedSources.push(confirmation.source);
+        if (confirmation.transferred) {
           result.transferred += 1;
         } else {
           result.alreadyPresent += 1;
@@ -506,8 +538,11 @@ export class WifiRecordingTransferService {
       };
       await this.writeSecurePacket(FRAME_BATCH_END, batchToken, recordings.length, encodeJson(summary));
       await this.waitForBatchAck(batchToken);
-      this.update(`Wi-Fi 全量同步完成：新增 ${result.transferred} 个，已存在 ${result.alreadyPresent} 个`, 100);
-      return result;
+      if (!deleteSourcesAfterBatchAck) {
+        this.update(`Wi-Fi 全量同步完成：新增 ${result.transferred} 个，已存在 ${result.alreadyPresent} 个`, 100);
+        return this.withoutSourceCleanup(result);
+      }
+      return this.deleteVerifiedSources(result, verifiedSources);
     } finally {
       this.sending = false;
       await this.closePeer();
@@ -517,7 +552,7 @@ export class WifiRecordingTransferService {
   }
 
   private async sendBatchRecording(recording: RecordingFile, batchIndex: number,
-    batchTotal: number, batchToken: number): Promise<boolean> {
+    batchTotal: number, batchToken: number): Promise<WifiBatchRecordingConfirmation> {
     if (!accessFileChecked(recording.path)) {
       throw new Error(`手表中找不到待发送录音：${recording.fileName}`);
     }
@@ -547,6 +582,13 @@ export class WifiRecordingTransferService {
       batchIndex: batchIndex,
       batchTotal: batchTotal
     };
+    const verifiedSource: WifiVerifiedSourceFile = {
+      fileName: recording.fileName,
+      path: recording.path,
+      relativePath: sourcePath,
+      size: fileStat.size,
+      sha256: sourceHash
+    };
     this.readyToken = 0;
     this.finalAck = undefined;
     this.remoteFailureMessage = '';
@@ -554,10 +596,58 @@ export class WifiRecordingTransferService {
     if (!await this.waitForReady(metadata)) {
       this.updateBatchProgress(`手机已有 ${batchIndex}/${batchTotal}：${recording.fileName}`,
         batchIndex, batchTotal, 100);
-      return false;
+      return {
+        transferred: false,
+        source: verifiedSource
+      };
     }
     await this.sendFile(recording.path, metadata);
-    return true;
+    return {
+      transferred: true,
+      source: verifiedSource
+    };
+  }
+
+  private withoutSourceCleanup(result: WifiTransferBatchResult): WifiTransferBatchCleanupResult {
+    return {
+      total: result.total,
+      transferred: result.transferred,
+      alreadyPresent: result.alreadyPresent,
+      deleted: 0,
+      alreadyAbsent: 0,
+      retained: result.total,
+      cleanedSourcePaths: [],
+      cleanupFailures: []
+    };
+  }
+
+  private async deleteVerifiedSources(result: WifiTransferBatchResult,
+    sources: Array<WifiVerifiedSourceFile>): Promise<WifiTransferBatchCleanupResult> {
+    const cleanup = this.withoutSourceCleanup(result);
+    cleanup.retained = 0;
+    for (let index = 0; index < sources.length; index += 1) {
+      const source = sources[index];
+      try {
+        this.updateBatchProgress(`正在复核并清理手表源文件 ${index + 1}/${sources.length}`,
+          index + 1, sources.length, 99);
+        const currentHash = accessFileChecked(source.path) ? await hashFileChecked(source.path) : source.sha256;
+        const cleanupState = deleteVerifiedWifiSource(this.context.filesDir, source, currentHash);
+        if (cleanupState === WIFI_SOURCE_DELETED) {
+          cleanup.deleted += 1;
+        } else if (cleanupState === WIFI_SOURCE_ALREADY_ABSENT) {
+          cleanup.alreadyAbsent += 1;
+        }
+        cleanup.cleanedSourcePaths.push(source.path);
+      } catch (error) {
+        cleanup.retained += 1;
+        cleanup.cleanupFailures.push(`${source.fileName}：${errorMessage(error as Object)}`);
+      }
+    }
+    const retainedText = cleanup.retained > 0 ? `，${cleanup.retained} 个清理失败并保留` : '';
+    this.update(`Wi-Fi 全量同步完成：新增 ${result.transferred} 个，手机已有 ${result.alreadyPresent} 个；` +
+      `手表已删除 ${cleanup.deleted} 个${cleanup.alreadyAbsent > 0 ? `，${cleanup.alreadyAbsent} 个原本已不存在` : ''}` +
+      retainedText, 100);
+    return cleanup;
   }
 
   stop(): void {

@@ -3,6 +3,7 @@ import { PhoneRecordingViewModel } from './PhoneRecordingViewModel';
 @Component
 export struct PhoneSettingsPage {
   @ObjectLink viewModel: PhoneRecordingViewModel;
+  onOpenComputerTransfer: () => void = (): void => {};
   onOpenDeveloper: () => void = (): void => {};
 
   build() {
@@ -19,7 +20,7 @@ export struct PhoneSettingsPage {
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
 
-        Text('手表录音按固定时长安全分段，并自动保留原文件。同步到手机后可直接试听。')
+        Text('手表录音按固定时长安全分段。普通同步保留手表原文件；Wi-Fi 快传经 SHA-256 校验并整批确认后，会删除已同步的手表源文件。')
           .width('100%')
           .fontSize(14)
           .fontColor($r('app.color.text_secondary'))
@@ -29,6 +30,21 @@ export struct PhoneSettingsPage {
       .alignItems(HorizontalAlign.Start)
       .backgroundColor($r('app.color.surface_primary'))
       .borderRadius(14)
+
+      Button('上传录音到电脑', { type: ButtonType.Capsule })
+        .width('100%')
+        .height(50)
+        .fontSize(16)
+        .fontColor(Color.White)
+        .backgroundColor($r('app.color.brand_primary'))
+        .onClick((): void => this.onOpenComputerTransfer())
+
+      Text('HTTPS 加密、CA 指纹固定、Passkey 身份确认与断点续传')
+        .width('100%')
+        .fontSize(13)
+        .fontColor($r('app.color.text_secondary'))
+        .textAlign(TextAlign.Center)
+        .maxLines(2)
 
       Button('开发者界面', { type: ButtonType.Capsule })
         .width('100%')

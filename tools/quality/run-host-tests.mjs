@@ -1,12 +1,13 @@
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { arch, release, type } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 
 const projectRoot = resolve(process.argv[2] || process.cwd());
 const sdkRoot = resolveSdkRoot();
 const studioHome = resolveStudioHome(sdkRoot);
-const hvigor = join(studioHome, 'tools', 'hvigor', 'bin', 'hvigorw');
+const isWindows = process.platform === 'win32';
+const hvigor = join(studioHome, 'tools', 'hvigor', 'bin', isWindows ? 'hvigorw.js' : 'hvigorw');
 const timeoutMs = positiveInteger(process.env.HOST_TEST_TIMEOUT_MS, 60_000);
 const modules = ['entry', 'phone'];
 
@@ -71,11 +72,15 @@ function spawnWithTimeout(command, args, moduleName) {
   return new Promise((resolvePromise, rejectPromise) => {
     const nodeBin = dirname(process.execPath);
     const currentPath = process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin';
-    const child = spawn(command, args, {
+    const executable = isWindows ? process.execPath : command;
+    const executableArgs = isWindows
+      ? ['--', command, ...args]
+      : args;
+    const child = spawn(executable, executableArgs, {
       cwd: projectRoot,
       env: {
         ...process.env,
-        PATH: `${nodeBin}:${currentPath}`,
+        PATH: `${nodeBin}${delimiter}${currentPath}`,
         DEVECO_SDK_HOME: sdkRoot
       },
       stdio: 'inherit'

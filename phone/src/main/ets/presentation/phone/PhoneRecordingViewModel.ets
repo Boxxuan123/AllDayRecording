@@ -20,19 +20,24 @@ import {
 import { ReceivedRecordingStore } from '../../services/ReceivedRecordingStore';
 import {
   PhoneRecordingGroup,
-  groupReceivedRecordings
+  groupReceivedRecordings,
+  receivedRecordingDurationMs
 } from './PhoneRecordingGroups';
 
 @Observed
 export class PhoneRecordingViewModel {
   status: string = '';
   isPlaying: boolean = false;
+  isPlaybackBusy: boolean = false;
+  playbackPositionMs: number = 0;
+  playbackDurationMs: number = 0;
   latestRecording: RecordingFile | undefined = undefined;
   syncState: PhoneSyncUiState = new PhoneSyncUiState();
   receivedRecordingCount: number = 0;
   receivedRecordings: Array<ReceivedRecordingFile> = [];
   receivedRecordingGroups: Array<PhoneRecordingGroup> = [];
   selectedRecordingGroupKey: string = '';
+  deletingRecordingGroupKey: string = '';
   isControllingWatch: boolean = false;
   isReconnectingReceiver: boolean = false;
   remoteRecordingState: string = 'unknown';
@@ -86,6 +91,10 @@ export class PhoneRecordingViewModel {
     this.recordingStore = undefined;
     this.playbackService = undefined;
     this.isPlaying = false;
+    this.isPlaybackBusy = false;
+    this.playbackPositionMs = 0;
+    this.playbackDurationMs = 0;
+    this.deletingRecordingGroupKey = '';
     this.isControllingWatch = false;
     this.isReconnectingReceiver = false;
     this.wifiReceiverReady = false;
@@ -188,21 +197,77 @@ export class PhoneRecordingViewModel {
   togglePlayback(): void {
     const playback = this.playbackService;
     const token = this.lifecycleToken;
-    if (playback === undefined) {
+    if (playback === undefined || this.isPlaybackBusy) {
       return;
     }
+    this.isPlaybackBusy = true;
     const task = this.togglePlaybackAsync(playback);
     task.then((): void => {
+      if (this.lifecycle.isActive(token)) {
+        this.isPlaybackBusy = false;
+      }
     }, (error: Object): void => {
       if (this.lifecycle.isActive(token)) {
+        this.isPlaybackBusy = false;
         this.status = `播放失败：${recordingErrorMessage(error)}`;
       }
     });
   }
 
+  seekPlayback(positionMs: number): void {
+    const playback = this.playbackService;
+    const token = this.lifecycleToken;
+    if (playback === undefined || this.isPlaybackBusy) {
+      return;
+    }
+    const targetPosition = Math.max(0, Math.min(positionMs, this.playbackDurationMs));
+    this.playbackPositionMs = targetPosition;
+    this.isPlaybackBusy = true;
+    const task = this.seekPlaybackAsync(playback, targetPosition);
+    task.then((): void => {
+      if (this.lifecycle.isActive(token)) {
+        this.isPlaybackBusy = false;
+      }
+    }, (error: Object): void => {
+      if (this.lifecycle.isActive(token)) {
+        this.isPlaybackBusy = false;
+        this.status = `定位播放失败：${recordingErrorMessage(error)}`;
+      }
+    });
+  }
+
+  skipPlayback(offsetMs: number): void {
+    this.seekPlayback(this.playbackPositionMs + offsetMs);
+  }
+
+  stopPlayback(): void {
+    const playback = this.playbackService;
+    if (playback === undefined) {
+      return;
+    }
+    const token = this.lifecycleToken;
+    playback.release().then((): void => {
+      if (this.lifecycle.isActive(token)) {
+        this.isPlaying = false;
+        this.isPlaybackBusy = false;
+        this.status = '播放已停止';
+      }
+    }, (error: Object): void => {
+      if (this.lifecycle.isActive(token)) {
+        this.isPlaybackBusy = false;
+        this.status = `停止播放失败：${recordingErrorMessage(error)}`;
+      }
+    });
+  }
+
   selectRecording(recording: ReceivedRecordingFile, showDeveloperStatus: boolean = false): void {
+    if (this.playbackService?.hasActiveSession() === true) {
+      this.stopPlayback();
+    }
     this.selectedRecordingGroupKey = '';
     this.latestRecording = recording;
+    this.playbackPositionMs = 0;
+    this.playbackDurationMs = receivedRecordingDurationMs(recording);
     if (showDeveloperStatus) {
       this.status = `已选择 ${recording.fileName}，可以试听`;
     }
@@ -212,12 +277,53 @@ export class PhoneRecordingViewModel {
     if (group.recordings.length === 0) {
       return;
     }
+    const changingGroup = this.selectedRecordingGroupKey !== group.key;
+    if (changingGroup && this.playbackService?.hasActiveSession() === true) {
+      this.stopPlayback();
+    }
     this.selectedRecordingGroupKey = group.key;
     this.latestRecording = group.recordings[0];
+    if (changingGroup) {
+      this.playbackPositionMs = 0;
+      this.playbackDurationMs = group.durationMs;
+    }
   }
 
-  isRecordingGroupSelected(group: PhoneRecordingGroup): boolean {
-    return this.selectedRecordingGroupKey === group.key;
+  recordingGroup(key: string): PhoneRecordingGroup | undefined {
+    for (let index = 0; index < this.receivedRecordingGroups.length; index += 1) {
+      if (this.receivedRecordingGroups[index].key === key) {
+        return this.receivedRecordingGroups[index];
+      }
+    }
+    return undefined;
+  }
+
+  isDeletingRecordingGroup(group: PhoneRecordingGroup): boolean {
+    return this.deletingRecordingGroupKey === group.key;
+  }
+
+  deleteRecordingGroup(group: PhoneRecordingGroup, onDeleted: () => void = (): void => {}): void {
+    const recordingStore = this.recordingStore;
+    if (recordingStore === undefined || this.deletingRecordingGroupKey.length > 0 || group.recordings.length === 0) {
+      return;
+    }
+    this.deletingRecordingGroupKey = group.key;
+    const token = this.lifecycleToken;
+    const task = this.deleteRecordingGroupAsync(group, recordingStore);
+    task.then((deletedCount: number): void => {
+      if (!this.lifecycle.isActive(token)) {
+        return;
+      }
+      this.deletingRecordingGroupKey = '';
+      this.status = deletedCount > 1 ? '连续录音已删除' : '录音已删除';
+      onDeleted();
+    }, (error: Object): void => {
+      if (!this.lifecycle.isActive(token)) {
+        return;
+      }
+      this.deletingRecordingGroupKey = '';
+      this.status = `删除失败：${recordingErrorMessage(error)}`;
+    });
   }
 
   syncButtonLabel(): string {
@@ -358,13 +464,23 @@ export class PhoneRecordingViewModel {
     if (!this.lifecycle.isActive(token)) {
       return;
     }
-    this.playbackService = new AudioPlaybackService((playing: boolean, message: string): void => {
-      if (!this.lifecycle.isActive(token)) {
-        return;
-      }
-      this.isPlaying = playing;
-      this.status = message;
-    });
+    this.playbackService = new AudioPlaybackService(
+      (playing: boolean, message: string): void => {
+        if (!this.lifecycle.isActive(token)) {
+          return;
+        }
+        this.isPlaying = playing;
+        this.status = message;
+      },
+      (positionMs: number, durationMs: number): void => {
+        if (!this.lifecycle.isActive(token)) {
+          return;
+        }
+        this.playbackPositionMs = positionMs;
+        if (durationMs > 0) {
+          this.playbackDurationMs = durationMs;
+        }
+      });
     const recordingStore = new ReceivedRecordingStore(context.filesDir);
     this.recordingStore = recordingStore;
     this.initializeWifiTransfer(context, token, recordingStore);
@@ -447,21 +563,77 @@ export class PhoneRecordingViewModel {
 
   private async togglePlaybackAsync(playback: AudioPlaybackService): Promise<void> {
     if (this.isPlaying) {
-      await playback.release();
-      this.isPlaying = false;
-      this.status = '播放已停止';
+      await playback.pause();
+      return;
+    }
+    if (await playback.resume()) {
       return;
     }
     const selectedGroup = this.findSelectedRecordingGroup();
     if (selectedGroup !== undefined) {
       const paths: Array<string> = [];
+      const durations: Array<number> = [];
       for (let index = 0; index < selectedGroup.recordings.length; index += 1) {
         paths.push(selectedGroup.recordings[index].path);
+        durations.push(receivedRecordingDurationMs(selectedGroup.recordings[index]));
       }
-      await playback.playSequence(paths);
+      await playback.playSequence(paths, durations);
     } else if (this.latestRecording !== undefined) {
-      await playback.play(this.latestRecording.path);
+      await playback.play(this.latestRecording.path, this.latestRecording.durationMs);
     }
+  }
+
+  private async seekPlaybackAsync(playback: AudioPlaybackService, positionMs: number): Promise<void> {
+    const targetPosition = Math.max(0, Math.min(positionMs, this.playbackDurationMs));
+    if (await playback.seekTo(targetPosition)) {
+      return;
+    }
+    const selectedGroup = this.findSelectedRecordingGroup();
+    if (selectedGroup !== undefined) {
+      const paths: Array<string> = [];
+      const durations: Array<number> = [];
+      for (let index = 0; index < selectedGroup.recordings.length; index += 1) {
+        paths.push(selectedGroup.recordings[index].path);
+        durations.push(receivedRecordingDurationMs(selectedGroup.recordings[index]));
+      }
+      await playback.playSequence(paths, durations, targetPosition);
+    } else if (this.latestRecording !== undefined) {
+      await playback.play(this.latestRecording.path, this.latestRecording.durationMs, targetPosition);
+    }
+  }
+
+  private async deleteRecordingGroupAsync(group: PhoneRecordingGroup,
+    recordingStore: ReceivedRecordingStore): Promise<number> {
+    const deletingSelectedGroup = this.selectedRecordingGroupKey === group.key;
+    if (deletingSelectedGroup && this.playbackService !== undefined) {
+      await this.playbackService.release();
+      this.isPlaying = false;
+      this.isPlaybackBusy = false;
+    }
+    let deletedCount = 0;
+    try {
+      deletedCount = recordingStore.deleteRecordings(group.recordings);
+    } finally {
+      const storedRecordings = recordingStore.list();
+      this.receivedRecordingCount = storedRecordings.length;
+      this.receivedRecordings = storedRecordings.slice(0, 100);
+      this.rebuildRecordingGroups(storedRecordings);
+      if (deletingSelectedGroup) {
+        const remainingSelectedGroup = this.recordingGroup(group.key);
+        if (remainingSelectedGroup !== undefined) {
+          this.selectRecordingGroup(remainingSelectedGroup);
+        } else if (this.receivedRecordingGroups.length > 0) {
+          this.selectRecordingGroup(this.receivedRecordingGroups[0]);
+        } else {
+          this.selectedRecordingGroupKey = '';
+          this.latestRecording = undefined;
+        }
+      }
+    }
+    if (deletedCount === 0) {
+      throw new Error('没有找到要删除的录音文件');
+    }
+    return deletedCount;
   }
 
   private rebuildRecordingGroups(recordings: Array<ReceivedRecordingFile>,
@@ -478,7 +650,7 @@ export class PhoneRecordingViewModel {
         }
       }
     }
-    if (this.findSelectedRecordingGroup() === undefined) {
+    if (this.recordingGroup(this.selectedRecordingGroupKey) === undefined) {
       this.selectedRecordingGroupKey = '';
     }
   }
@@ -494,12 +666,7 @@ export class PhoneRecordingViewModel {
   }
 
   private findSelectedRecordingGroup(): PhoneRecordingGroup | undefined {
-    for (let index = 0; index < this.receivedRecordingGroups.length; index += 1) {
-      if (this.receivedRecordingGroups[index].key === this.selectedRecordingGroupKey) {
-        return this.receivedRecordingGroups[index];
-      }
-    }
-    return undefined;
+    return this.recordingGroup(this.selectedRecordingGroupKey);
   }
 
   private async releaseResources(receiver: WearEngineRecordingReceiver | undefined,
