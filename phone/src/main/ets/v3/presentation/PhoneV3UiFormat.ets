@@ -1,5 +1,5 @@
 import { formatRecordingDuration, formatRecordingReceivedAt, formatRecordingSize } from 'common';
-import { PhoneV3SessionCard } from '../domain/PhoneV3Models';
+import { PhoneV3Reminder, PhoneV3SessionCard } from '../domain/PhoneV3Models';
 
 export function phoneV3SessionTitle(session: PhoneV3SessionCard): string {
   return formatRecordingReceivedAt(session.startedAt);
@@ -39,4 +39,31 @@ export function phoneV3UpdatedLabel(updatedAt: number): string {
 
 export function phoneV3TimelineTime(milliseconds: number): string {
   return formatRecordingDuration(milliseconds);
+}
+
+export function phoneV3AbsoluteTime(value: string): string {
+  const date = new Date(value);
+  const hours = date.getHours().toString().padStart(2, '0');
+  const minutes = date.getMinutes().toString().padStart(2, '0');
+  const seconds = date.getSeconds().toString().padStart(2, '0');
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+export function phoneV3ReminderTime(reminder: PhoneV3Reminder): string {
+  const timestamp = Date.parse(reminder.scheduledAt);
+  return Number.isFinite(timestamp) ? formatRecordingReceivedAt(timestamp) : reminder.scheduledAt;
+}
+
+export function phoneV3ReminderState(reminder: PhoneV3Reminder): string {
+  if (reminder.status === 'scheduled' && Date.parse(reminder.scheduledAt) <= Date.now()) {
+    return '已到提醒时间';
+  }
+  const labels: Record<string, string> = {
+    scheduled: '待提醒',
+    delivered: '已通知',
+    completed: '已完成',
+    cancelled: '已取消',
+    stale: '证据已变更'
+  };
+  return labels[reminder.status] ?? reminder.status;
 }

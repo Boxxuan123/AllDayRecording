@@ -133,7 +133,7 @@ function response(status: string = 'applied'): DeviceV3SyncResponse {
     resource: asset
   };
   return {
-    projection_version: 1,
+    projection_version: 4,
     receipts: [receipt],
     changes: [sessionChange, assetChange],
     next_cursor: 'cursor-2',

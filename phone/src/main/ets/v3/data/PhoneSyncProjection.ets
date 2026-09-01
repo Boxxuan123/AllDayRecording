@@ -6,13 +6,14 @@ import {
 } from '../../computer/ComputerTransferProtocol';
 import {
   V3_PROJECTION_VERSION,
+  validateV3ReminderDto,
   validateV3UtteranceDto
 } from '../contracts/V3ContractModels';
 
 const STABLE_ID: RegExp = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[0-9A-HJKMNP-TV-Z]{26})$/;
 const CURSOR: RegExp = /^cursor-(0|[1-9][0-9]*)$/;
 const RESOURCE_TYPES: Array<string> = [
-  'recording_session', 'audio_asset', 'processing_run', 'utterance', 'review_item'
+  'recording_session', 'audio_asset', 'processing_run', 'utterance', 'review_item', 'reminder'
 ];
 
 export interface PhonePendingOperation extends DeviceV3ClientOperation {
@@ -101,6 +102,9 @@ export function validateSyncResponse(response: DeviceV3SyncResponse): void {
     }
     if (change.resource_type === 'utterance' && change.operation === 'upsert') {
       validateV3UtteranceDto(change.resource as Object);
+    }
+    if (change.resource_type === 'reminder' && change.operation === 'upsert') {
+      validateV3ReminderDto(change.resource as Object);
     }
     previousSequence = change.sequence;
   }

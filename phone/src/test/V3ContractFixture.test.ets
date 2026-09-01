@@ -3,17 +3,19 @@ import {
   decodeV3ContractFixture,
   isV3FeatureEnabled,
   validateV3UtteranceDto,
+  validateV3ReminderDto,
   V3ContractFixture,
   V3DecodedFixture,
+  V3ReminderDto,
   V3UtteranceDto
 } from '../main/ets/v3/contracts/V3ContractModels';
 
 // Generated with the fixture bodies. Python contract tests verify these receipts
 // against the canonical JSON files when both repositories are checked out.
 const CORE_FIXTURE_SHA256: string =
-  '91659a8267d211d5f5bfe93ed5efaa300c1fde93bae7cc0ee88ba0bd701c41ee';
+  '3e58545bcd5ce6c4b03e6c9c39fe77fc0e1de5926d3cd345a93763257dec1ff1';
 const FORWARD_FIXTURE_SHA256: string =
-  '22e8f9407c98bee742f776eceb85b34c8aa6020fc34c3d681377b0cbbe4eb760';
+  '951a849ee56e098bbea2a22c5887fa595f0e90417ee7ec8b6c315bebaceb84ea';
 
 interface UtteranceEvidenceFixture {
   media_id: string;
@@ -21,9 +23,14 @@ interface UtteranceEvidenceFixture {
   end_ms: number;
 }
 
+interface IdentityEvidenceFixture {
+  source: string;
+  decision: string;
+}
+
 function canonicalFixture(): V3ContractFixture {
   return {
-    contract_version: '3.0.0',
+    contract_version: '3.3.0',
     recording_session: {
       state: 'ready_for_processing',
       status_code: 'ready'
@@ -39,7 +46,7 @@ function canonicalFixture(): V3ContractFixture {
 
 function futureEnumFixture(): V3ContractFixture {
   return {
-    contract_version: '3.0.0',
+    contract_version: '3.3.0',
     recording_session: {
       state: 'future_archived_state',
       status_code: 'future_aggregate_status'
@@ -61,7 +68,7 @@ export default function v3ContractFixtureTest() {
     it('decodesCanonicalComputerFixture', 0, () => {
       expect(CORE_FIXTURE_SHA256.length).assertEqual(64);
       expectDecoded(decodeV3ContractFixture(canonicalFixture()), {
-        contract_version: '3.0.0',
+        contract_version: '3.3.0',
         session_state: 'ready_for_processing',
         aggregate_status: 'ready',
         processing_status: 'running',
@@ -75,7 +82,7 @@ export default function v3ContractFixtureTest() {
     it('degradesUnknownEnumsAndKeepsV3EnabledByDefault', 0, () => {
       expect(FORWARD_FIXTURE_SHA256.length).assertEqual(64);
       expectDecoded(decodeV3ContractFixture(futureEnumFixture()), {
-        contract_version: '3.0.0',
+        contract_version: '3.3.0',
         session_state: 'unknown',
         aggregate_status: 'unknown',
         processing_status: 'unknown',
@@ -94,14 +101,26 @@ export default function v3ContractFixtureTest() {
         start_ms: 100,
         end_ms: 900
       };
+      const identityEvidence: IdentityEvidenceFixture = {
+        source: 'none',
+        decision: 'unknown'
+      };
       const candidate: V3UtteranceDto = {
         utterance_id: '01ARZ3NDEKTSV4RRFFQ69G5FAY',
         session_id: '01ARZ3NDEKTSV4RRFFQ69G5FAW',
         speaker_track_id: '01ARZ3NDEKTSV4RRFFQ69G5FAZ',
         speaker_label: 'SPEAKER_00',
+        original_speaker_track_id: '01ARZ3NDEKTSV4RRFFQ69G5FAZ',
+        original_speaker_label: 'SPEAKER_00',
+        identity: 'unknown',
+        original_identity: 'unknown',
+        identity_evidence: identityEvidence,
         start_ms: 100,
         end_ms: 900,
+        start_at: '2026-08-31T00:00:00.100Z',
+        end_at: '2026-08-31T00:00:00.900Z',
         text: '测试文本',
+        original_text: '测试文本',
         revision: 7,
         status: 'active',
         evidence: evidence
@@ -117,6 +136,26 @@ export default function v3ContractFixtureTest() {
         rejected = true;
       }
       expect(rejected).assertTrue();
+    });
+
+    it('validatesAcceptedReminderProjectionAtRuntime', 0, () => {
+      const candidate: V3ReminderDto = {
+        event_id: '01ARZ3NDEKTSV4RRFFQ69G5FB0',
+        session_id: '01ARZ3NDEKTSV4RRFFQ69G5FAW',
+        event_revision: 1,
+        source_candidate_id: '01ARZ3NDEKTSV4RRFFQ69G5FB1',
+        title: '发送修订后的文档',
+        actor_person_id: 'self',
+        commitment_direction: 'self_to_other',
+        related_person_ids: ['person-zhang'],
+        scheduled_at: '2026-09-02T02:00:00Z',
+        location: '学校',
+        status: 'scheduled',
+        updated_at: '2026-09-01T02:29:00Z'
+      };
+      const reminder = validateV3ReminderDto(candidate);
+      expect(reminder.status).assertEqual('scheduled');
+      expect(reminder.event_revision).assertEqual(1);
     });
   });
 }

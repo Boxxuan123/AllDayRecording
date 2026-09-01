@@ -1,4 +1,5 @@
 import {
+  DeviceV3ClientOperation,
   DeviceV3StatusResponse,
   DeviceV3SyncRequest,
   DeviceV3SyncResponse
@@ -10,10 +11,12 @@ import {
   PhoneV3LocalAudioFact,
   PhoneV3LocalAudioLink,
   PhoneV3ProjectionRow,
+  PhoneV3Reminder,
   PhoneV3SyncStatus
 } from '../domain/PhoneV3Models';
 
 export interface PhoneV3ProjectionRepositoryPort extends PhoneProjectionStorage {
+  enqueue(operation: DeviceV3ClientOperation): Promise<void>;
   pendingOperations(limit?: number): Promise<Array<PhonePendingOperation>>;
   currentCursor(): Promise<string>;
   projectionRows(resourceType: string): Promise<Array<PhoneV3ProjectionRow>>;
@@ -26,6 +29,10 @@ export interface PhoneV3ProjectionRepositoryPort extends PhoneProjectionStorage 
 
 export interface PhoneV3LocalAudioRepositoryPort {
   list(): Promise<Array<PhoneV3LocalAudioFact>>;
+}
+
+export interface PhoneV3ReminderSchedulerPort {
+  reconcile(reminders: Array<PhoneV3Reminder>): Promise<void>;
 }
 
 export interface PhoneV3RemoteSession {

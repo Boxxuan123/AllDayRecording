@@ -1,9 +1,11 @@
 import { formatRecordingSize } from 'common';
-import { PhoneV3FileTransferState, PhoneV3SessionCard } from '../domain/PhoneV3Models';
+import { PhoneV3FileTransferState, PhoneV3Reminder, PhoneV3SessionCard } from '../domain/PhoneV3Models';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 import {
   phoneV3ComputerStage,
   phoneV3ProcessingStage,
+  phoneV3ReminderState,
+  phoneV3ReminderTime,
   phoneV3SessionTitle,
   phoneV3UpdatedLabel,
   phoneV3WatchStage
@@ -123,6 +125,40 @@ export struct PhoneV3HomePage {
     .onClick((): void => this.onOpenSession(session))
   }
 
+  @Builder
+  private reminderNotification(reminder: PhoneV3Reminder) {
+    Column({ space: 7 }) {
+      Row({ space: 8 }) {
+        Text(reminder.title)
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .maxLines(2)
+          .layoutWeight(1)
+        Text(phoneV3ReminderState(reminder))
+          .fontSize(12)
+          .fontColor(Date.parse(reminder.scheduledAt) <= Date.now() ?
+            $r('app.color.brand_warning') : $r('app.color.brand_primary'))
+      }
+      .width('100%')
+      Text(phoneV3ReminderTime(reminder))
+        .width('100%')
+        .fontSize(13)
+        .fontColor($r('app.color.text_secondary'))
+      if (reminder.location !== null && reminder.location.length > 0) {
+        Text(`地点：${reminder.location}`)
+          .width('100%')
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+      }
+    }
+    .width('100%')
+    .padding(14)
+    .alignItems(HorizontalAlign.Start)
+    .backgroundColor($r('app.color.surface_primary'))
+    .borderRadius(14)
+  }
+
   build() {
     Scroll() {
       Column({ space: 16 }) {
@@ -168,6 +204,23 @@ export struct PhoneV3HomePage {
           .borderRadius(14)
         }
         .width('100%')
+
+        if (this.viewModel.state.snapshot.reminders.length > 0) {
+          Row() {
+            Text('提醒通知')
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.text_primary'))
+              .layoutWeight(1)
+            Text(`${this.viewModel.state.snapshot.reminders.length} 条`)
+              .fontSize(12)
+              .fontColor($r('app.color.text_secondary'))
+          }
+          .width('100%')
+          ForEach(this.viewModel.state.snapshot.reminders.slice(0, 3), (reminder: PhoneV3Reminder) => {
+            this.reminderNotification(reminder)
+          }, (reminder: PhoneV3Reminder): string => reminder.eventId)
+        }
 
         Column({ space: 10 }) {
           Row() {

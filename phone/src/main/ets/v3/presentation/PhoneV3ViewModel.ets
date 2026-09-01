@@ -5,7 +5,13 @@ import { PhoneV3DeviceBridgePort } from '../application/PhoneV3Ports';
 import { PhoneProjectionRepository } from '../data/PhoneProjectionRepository';
 import { PhoneV3DeviceRemote } from '../data/PhoneV3DeviceRemote';
 import { PhoneV3LocalAudioRepository } from '../data/PhoneV3LocalAudioRepository';
-import { PhoneV3LocalAudioFact, PhoneV3SessionCard, PhoneV3Snapshot } from '../domain/PhoneV3Models';
+import { PhoneV3ReminderScheduler } from '../data/PhoneV3ReminderScheduler';
+import {
+  PhoneV3LocalAudioFact,
+  PhoneV3SessionCard,
+  PhoneV3Snapshot,
+  PhoneV3Utterance
+} from '../domain/PhoneV3Models';
 import { PhoneV3LegacyBridge } from './PhoneV3LegacyBridge';
 import {
   PhoneV3UiAction,
@@ -103,6 +109,24 @@ export class PhoneV3ViewModel {
     useCases.synchronize().then((result): Promise<void> => {
       this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SUCCESS, undefined, undefined,
         `同步完成：${result.batches} 批，游标 ${result.finalCursor}`));
+      return this.refreshSnapshot();
+    }).catch((error: Object): void => this.fail(error));
+  }
+
+  correctUtterance(utterance: PhoneV3Utterance, text: string,
+    speakerTrackId: string | null, identity: string,
+    onQueued: () => void = (): void => {}): void {
+    const useCases = this.useCases;
+    if (useCases === undefined || this.state.busy) {
+      return;
+    }
+    this.lastRetryAction = PhoneV3RetryAction.COMPUTER_SYNC;
+    this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.BUSY,
+      undefined, undefined, '正在保存离线校正…'));
+    useCases.queueUtteranceCorrection(utterance, text, speakerTrackId, identity).then((): Promise<void> => {
+      this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SUCCESS,
+        undefined, undefined, '校正已保存到 outbox，连接电脑后可同步'));
+      onQueued();
       return this.refreshSnapshot();
     }).catch((error: Object): void => this.fail(error));
   }
@@ -251,7 +275,8 @@ export class PhoneV3ViewModel {
         new PhoneV3Snapshot(mergePhoneV3Sessions(this.localFacts, [], [], [], [])),
         undefined, `手机本地已有 ${this.localFacts.length} 条录音`));
       const repository = await PhoneProjectionRepository.open(context);
-      this.useCases = new PhoneV3UseCases(repository, local, new PhoneV3DeviceRemote(context));
+      this.useCases = new PhoneV3UseCases(repository, local, new PhoneV3DeviceRemote(context),
+        new PhoneV3ReminderScheduler(context));
       await this.refreshSnapshot();
       if (this.refreshQueued) {
         this.refreshQueued = false;

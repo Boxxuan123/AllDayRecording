@@ -88,23 +88,42 @@ export class PhoneV3Utterance {
   sessionId: string;
   speakerTrackId: string | null;
   speakerLabel: string | null;
+  originalSpeakerTrackId: string | null;
+  originalSpeakerLabel: string | null;
+  identity: string;
+  originalIdentity: string;
+  identityEvidenceJson: string;
   startMs: number;
   endMs: number;
+  startAt: string;
+  endAt: string;
   text: string;
+  originalText: string;
   revision: number;
   status: string;
   evidenceJson: string;
 
   constructor(utteranceId: string, sessionId: string, speakerTrackId: string | null,
-    speakerLabel: string | null, startMs: number, endMs: number, text: string,
+    speakerLabel: string | null, originalSpeakerTrackId: string | null,
+    originalSpeakerLabel: string | null, identity: string, originalIdentity: string,
+    identityEvidenceJson: string, startMs: number, endMs: number,
+    startAt: string, endAt: string, text: string, originalText: string,
     revision: number, status: string, evidenceJson: string) {
     this.utteranceId = utteranceId;
     this.sessionId = sessionId;
     this.speakerTrackId = speakerTrackId;
     this.speakerLabel = speakerLabel;
+    this.originalSpeakerTrackId = originalSpeakerTrackId;
+    this.originalSpeakerLabel = originalSpeakerLabel;
+    this.identity = identity;
+    this.originalIdentity = originalIdentity;
+    this.identityEvidenceJson = identityEvidenceJson;
     this.startMs = startMs;
     this.endMs = endMs;
+    this.startAt = startAt;
+    this.endAt = endAt;
     this.text = text;
+    this.originalText = originalText;
     this.revision = revision;
     this.status = status;
     this.evidenceJson = evidenceJson;
@@ -251,17 +270,53 @@ export class PhoneV3DeviceState {
   }
 }
 
+export class PhoneV3Reminder {
+  eventId: string;
+  sessionId: string;
+  eventRevision: number;
+  sourceCandidateId: string;
+  title: string;
+  actorPersonId: string;
+  commitmentDirection: string;
+  relatedPersonIds: Array<string>;
+  scheduledAt: string;
+  location: string | null;
+  status: string;
+  updatedAt: string;
+
+  constructor(eventId: string, sessionId: string, eventRevision: number,
+    sourceCandidateId: string, title: string, actorPersonId: string,
+    commitmentDirection: string, relatedPersonIds: Array<string>, scheduledAt: string,
+    location: string | null, status: string, updatedAt: string) {
+    this.eventId = eventId;
+    this.sessionId = sessionId;
+    this.eventRevision = eventRevision;
+    this.sourceCandidateId = sourceCandidateId;
+    this.title = title;
+    this.actorPersonId = actorPersonId;
+    this.commitmentDirection = commitmentDirection;
+    this.relatedPersonIds = relatedPersonIds;
+    this.scheduledAt = scheduledAt;
+    this.location = location;
+    this.status = status;
+    this.updatedAt = updatedAt;
+  }
+}
+
 export class PhoneV3Snapshot {
   sessions: Array<PhoneV3SessionCard>;
   conflicts: Array<PhoneV3Conflict>;
   sync: PhoneV3SyncStatus;
   paired: boolean;
+  reminders: Array<PhoneV3Reminder>;
 
   constructor(sessions: Array<PhoneV3SessionCard> = [], conflicts: Array<PhoneV3Conflict> = [],
-    sync: PhoneV3SyncStatus = new PhoneV3SyncStatus(), paired: boolean = false) {
+    sync: PhoneV3SyncStatus = new PhoneV3SyncStatus(), paired: boolean = false,
+    reminders: Array<PhoneV3Reminder> = []) {
     this.sessions = sessions;
     this.conflicts = conflicts;
     this.sync = sync;
     this.paired = paired;
+    this.reminders = reminders;
   }
 }

@@ -2,6 +2,7 @@ import { formatRecordingDuration } from 'common';
 import { PhoneV3SessionCard, PhoneV3Utterance } from '../domain/PhoneV3Models';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 import {
+  phoneV3AbsoluteTime,
   phoneV3ComputerStage,
   phoneV3ProcessingStage,
   phoneV3SessionMeta,
@@ -10,12 +11,27 @@ import {
   phoneV3WatchStage
 } from './PhoneV3UiFormat';
 
+class PhoneV3SpeakerChoice {
+  id: string | null;
+  label: string;
+
+  constructor(id: string | null, label: string) {
+    this.id = id;
+    this.label = label;
+  }
+}
+
 @Component
 export struct PhoneV3SessionDetailPage {
   @ObjectLink viewModel: PhoneV3ViewModel;
   onDeleted: () => void = (): void => {};
   @State private isSeeking: boolean = false;
   @State private seeking: number = 0;
+  @State private correctionVisible: boolean = false;
+  @State private correctionText: string = '';
+  @State private correctionSpeakerTrackId: string = '';
+  @State private correctionIdentity: string = 'unknown';
+  private correctionTarget: PhoneV3Utterance | undefined = undefined;
 
   aboutToDisappear(): void {
     this.viewModel.stopPlayback();
@@ -43,6 +59,134 @@ export struct PhoneV3SessionDetailPage {
     }
   }
 
+  private editUtterance(utterance: PhoneV3Utterance): void {
+    this.correctionTarget = utterance;
+    this.correctionText = utterance.text;
+    this.correctionSpeakerTrackId = utterance.speakerTrackId === null ? '' : utterance.speakerTrackId;
+    this.correctionIdentity = utterance.identity;
+    this.correctionVisible = true;
+  }
+
+  private identityLabel(identity: string): string {
+    if (identity === 'self') {
+      return '本人';
+    }
+    if (identity === 'not_self') {
+      return '非本人';
+    }
+    return '未知';
+  }
+
+  private identityChoices(): Array<string> {
+    return ['self', 'not_self', 'unknown'];
+  }
+
+  private speakerChoices(): Array<PhoneV3SpeakerChoice> {
+    const choices: Array<PhoneV3SpeakerChoice> = [new PhoneV3SpeakerChoice(null, '未分配 / unknown')];
+    const seen: Set<string> = new Set<string>();
+    const session = this.viewModel.selectedSession();
+    if (session === undefined) {
+      return choices;
+    }
+    for (let index = 0; index < session.utterances.length; index += 1) {
+      const utterance = session.utterances[index];
+      if (utterance.speakerTrackId !== null && !seen.has(utterance.speakerTrackId)) {
+        seen.add(utterance.speakerTrackId);
+        choices.push(new PhoneV3SpeakerChoice(utterance.speakerTrackId,
+          utterance.speakerLabel === null ? utterance.speakerTrackId : utterance.speakerLabel));
+      }
+    }
+    return choices;
+  }
+
+  private submitCorrection(): void {
+    if (this.correctionTarget === undefined) {
+      return;
+    }
+    this.viewModel.correctUtterance(this.correctionTarget, this.correctionText,
+      this.correctionSpeakerTrackId.length === 0 ? null : this.correctionSpeakerTrackId,
+      this.correctionIdentity,
+      (): void => {
+        this.correctionVisible = false;
+        this.correctionTarget = undefined;
+      });
+  }
+
+  @Builder
+  private correctionSheet() {
+    Column({ space: 14 }) {
+      Text('校正这句话')
+        .width('100%')
+        .fontSize(22)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary'))
+      if (this.correctionTarget !== undefined) {
+        Text(`模型原始结果 · ${this.correctionTarget.originalSpeakerLabel === null ?
+          '未分配说话人' : this.correctionTarget.originalSpeakerLabel} · ` +
+          `${this.identityLabel(this.correctionTarget.originalIdentity)}`)
+          .width('100%')
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+        Text(this.correctionTarget.originalText)
+          .width('100%')
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
+      }
+      TextArea({ text: this.correctionText, placeholder: '输入校正后的转写' })
+        .width('100%')
+        .height(110)
+        .onChange((value: string): void => {
+          this.correctionText = value;
+        })
+      Text('说话人轨道')
+        .width('100%')
+        .fontSize(12)
+        .fontColor($r('app.color.text_secondary'))
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+        ForEach(this.speakerChoices(), (choice: PhoneV3SpeakerChoice) => {
+          Button(choice.label, { type: ButtonType.Capsule })
+            .margin({ right: 8, bottom: 8 })
+            .fontSize(12)
+            .fontColor(this.correctionSpeakerTrackId === (choice.id === null ? '' : choice.id) ?
+              Color.White : $r('app.color.text_primary'))
+            .backgroundColor(this.correctionSpeakerTrackId === (choice.id === null ? '' : choice.id) ?
+              $r('app.color.brand_primary') : $r('app.color.surface_primary'))
+            .onClick((): void => {
+              this.correctionSpeakerTrackId = choice.id === null ? '' : choice.id;
+            })
+        }, (choice: PhoneV3SpeakerChoice): string => choice.id === null ? 'unknown' : choice.id)
+      }
+      Text('本人身份')
+        .width('100%')
+        .fontSize(12)
+        .fontColor($r('app.color.text_secondary'))
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+        ForEach(this.identityChoices(), (identity: string) => {
+          Button(this.identityLabel(identity), { type: ButtonType.Capsule })
+            .margin({ right: 8, bottom: 8 })
+            .fontSize(12)
+            .fontColor(this.correctionIdentity === identity ?
+              Color.White : $r('app.color.text_primary'))
+            .backgroundColor(this.correctionIdentity === identity ?
+              $r('app.color.brand_primary') : $r('app.color.surface_primary'))
+            .onClick((): void => {
+              this.correctionIdentity = identity;
+            })
+        }, (identity: string): string => identity)
+      }
+      Button('保存到离线 outbox', { type: ButtonType.Capsule })
+        .width('100%')
+        .height(46)
+        .enabled(!this.viewModel.state.busy && this.correctionText.trim().length > 0)
+        .fontColor(Color.White)
+        .backgroundColor($r('app.color.brand_primary'))
+        .onClick((): void => this.submitCorrection())
+    }
+    .width('100%')
+    .padding({ left: 20, right: 20, top: 24, bottom: 24 })
+    .alignItems(HorizontalAlign.Start)
+  }
+
   @Builder
   private stage(label: string, value: string) {
     Row({ space: 12 }) {
@@ -62,7 +206,8 @@ export struct PhoneV3SessionDetailPage {
   @Builder
   private timeline(utterance: PhoneV3Utterance) {
     Column({ space: 6 }) {
-      Text(`${phoneV3TimelineTime(utterance.startMs)}–${phoneV3TimelineTime(utterance.endMs)}`)
+      Text(`${phoneV3AbsoluteTime(utterance.startAt)}–${phoneV3AbsoluteTime(utterance.endAt)} · ` +
+        `${phoneV3TimelineTime(utterance.startMs)}`)
         .fontSize(12)
         .fontColor($r('app.color.brand_primary'))
       Text(utterance.text.length > 0 ? utterance.text : '（空文本）')
@@ -70,7 +215,8 @@ export struct PhoneV3SessionDetailPage {
         .fontSize(15)
         .fontColor($r('app.color.text_primary'))
       Text(`${utterance.speakerLabel === null ? '未分配说话人' : utterance.speakerLabel} · ` +
-        `utterance_id ${utterance.utteranceId} · revision ${utterance.revision} · ${utterance.status}`)
+        `${this.identityLabel(utterance.identity)} · utterance_id ${utterance.utteranceId} · ` +
+        `revision ${utterance.revision} · ${utterance.status}`)
         .width('100%')
         .fontSize(11)
         .fontColor($r('app.color.text_secondary'))
@@ -80,6 +226,12 @@ export struct PhoneV3SessionDetailPage {
         .fontSize(11)
         .fontColor($r('app.color.text_secondary'))
         .maxLines(3)
+      Button('校正文本、说话人或身份', { type: ButtonType.Capsule })
+        .height(34)
+        .fontSize(12)
+        .fontColor($r('app.color.brand_primary'))
+        .backgroundColor($r('app.color.surface_secondary'))
+        .onClick((): void => this.editUtterance(utterance))
     }
     .width('100%')
     .padding(14)
@@ -219,7 +371,7 @@ export struct PhoneV3SessionDetailPage {
           .borderRadius(16)
         }
 
-        Text('只读时间线')
+        Text('统一对话时间线')
           .width('100%')
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
@@ -256,5 +408,12 @@ export struct PhoneV3SessionDetailPage {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.page_background'))
+    .bindSheet(this.correctionVisible, this.correctionSheet(), {
+      height: 680,
+      showClose: true,
+      onDisappear: (): void => {
+        this.correctionVisible = false;
+      }
+    })
   }
 }

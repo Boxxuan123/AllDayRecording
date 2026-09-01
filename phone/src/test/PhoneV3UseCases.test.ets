@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@ohos/hypium';
 import {
+  DeviceV3ClientOperation,
   DeviceV3Change,
   DeviceV3OperationReceipt,
   DeviceV3StatusResponse,
@@ -9,6 +10,7 @@ import {
 import {
   PhoneV3LocalAudioRepositoryPort,
   PhoneV3ProjectionRepositoryPort,
+  PhoneV3ReminderSchedulerPort,
   PhoneV3RemotePort,
   PhoneV3RemoteSession
 } from '../main/ets/v3/application/PhoneV3Ports';
@@ -19,6 +21,7 @@ import {
   PhoneV3LocalAudioFact,
   PhoneV3LocalAudioLink,
   PhoneV3ProjectionRow,
+  PhoneV3Reminder,
   PhoneV3SyncStatus
 } from '../main/ets/v3/domain/PhoneV3Models';
 
@@ -30,14 +33,25 @@ interface EvidenceFixture {
   asset_id: string;
 }
 
+interface CorrectionEvidenceFixture {
+  source: string;
+}
+
+interface IdentityEvidenceFixture {
+  source: string;
+  decision: string;
+}
+
 class FakePhoneV3Repository implements PhoneV3ProjectionRepositoryPort {
   recordingRows: Array<PhoneV3ProjectionRow> = [];
   processingRows: Array<PhoneV3ProjectionRow> = [];
   utteranceRows: Array<PhoneV3ProjectionRow> = [];
+  reminderRows: Array<PhoneV3ProjectionRow> = [];
   links: Array<PhoneV3LocalAudioLink> = [];
   conflicts: Array<PhoneV3Conflict> = [];
   cursor: string = 'cursor-0';
   failure: string = '';
+  operations: Array<DeviceV3ClientOperation> = [];
 
   async beginTransaction(): Promise<void> {}
   async commit(): Promise<void> {}
@@ -45,6 +59,7 @@ class FakePhoneV3Repository implements PhoneV3ProjectionRepositoryPort {
   async applyChange(_change: DeviceV3Change): Promise<void> {}
   async acknowledgeReceipt(_receipt: DeviceV3OperationReceipt): Promise<void> {}
   async clearRebuildableRows(): Promise<void> {}
+  async enqueue(operation: DeviceV3ClientOperation): Promise<void> { this.operations.push(operation); }
   async pendingOperations(_limit: number = 500): Promise<Array<PhonePendingOperation>> { return []; }
   async currentCursor(): Promise<string> { return this.cursor; }
   async setCursor(cursor: string, _serverTime: string): Promise<void> { this.cursor = cursor; }
@@ -56,6 +71,7 @@ class FakePhoneV3Repository implements PhoneV3ProjectionRepositoryPort {
     this.recordingRows = [];
     this.processingRows = [];
     this.utteranceRows = [];
+    this.reminderRows = [];
     this.cursor = 'cursor-0';
   }
 
@@ -65,6 +81,9 @@ class FakePhoneV3Repository implements PhoneV3ProjectionRepositoryPort {
     }
     if (resourceType === 'processing_run') {
       return this.processingRows;
+    }
+    if (resourceType === 'reminder') {
+      return this.reminderRows;
     }
     return this.utteranceRows;
   }
@@ -82,12 +101,12 @@ class FakePhoneV3LocalAudio implements PhoneV3LocalAudioRepositoryPort {
 
 class FakePhoneV3RemoteSession implements PhoneV3RemoteSession {
   async status(): Promise<DeviceV3StatusResponse> {
-    return { contract_version: '3.0.0', projection_version: 1, server_time: '2026-08-31T00:00:00Z' };
+    return { contract_version: '3.3.0', projection_version: 4, server_time: '2026-08-31T00:00:00Z' };
   }
 
   async sync(_request: DeviceV3SyncRequest): Promise<DeviceV3SyncResponse> {
     return {
-      projection_version: 1,
+      projection_version: 4,
       receipts: [],
       changes: [],
       next_cursor: 'cursor-1',
@@ -103,6 +122,14 @@ class FakePhoneV3Remote implements PhoneV3RemotePort {
   async connect(): Promise<PhoneV3RemoteSession> {
     this.connectCount += 1;
     return new FakePhoneV3RemoteSession();
+  }
+}
+
+class FakeReminderScheduler implements PhoneV3ReminderSchedulerPort {
+  reconciled: Array<PhoneV3Reminder> = [];
+
+  async reconcile(reminders: Array<PhoneV3Reminder>): Promise<void> {
+    this.reconciled = reminders.slice();
   }
 }
 
@@ -133,9 +160,17 @@ export default function phoneV3UseCasesTest() {
         session_id: SESSION_ID,
         speaker_track_id: '01ARZ3NDEKTSV4RRFFQ69G5FAZ',
         speaker_label: 'SPEAKER_00',
+        original_speaker_track_id: '01ARZ3NDEKTSV4RRFFQ69G5FAZ',
+        original_speaker_label: 'SPEAKER_00',
+        identity: 'unknown',
+        original_identity: 'unknown',
+        identity_evidence: { source: 'none', decision: 'unknown' } as IdentityEvidenceFixture,
         start_ms: 100,
         end_ms: 900,
+        start_at: '2026-01-01T00:00:00.100Z',
+        end_at: '2026-01-01T00:00:00.900Z',
         text: '测试文本',
+        original_text: '测试文本',
         revision: 7,
         status: 'active',
         evidence: evidence
@@ -156,11 +191,67 @@ export default function phoneV3UseCasesTest() {
       expect(cards[0].utterances[0].evidenceJson.includes('asset-1')).assertTrue();
     });
 
+    it('queuesOptimisticUtteranceCorrectionInTheDurableOutbox', 0, async () => {
+      const repository = new FakePhoneV3Repository();
+      const useCases = new PhoneV3UseCases(repository,
+        new FakePhoneV3LocalAudio([]), new FakePhoneV3Remote());
+      const utterance = mergePhoneV3Sessions([], [], [new PhoneV3ProjectionRow(
+        SESSION_ID, 1, JSON.stringify({
+          session_id: SESSION_ID,
+          session_key: SESSION_KEY,
+          captured_start: '2026-01-01T00:00:00Z'
+        }), 1000)], [], [new PhoneV3ProjectionRow(
+        '01ARZ3NDEKTSV4RRFFQ69G5FAY', 7, JSON.stringify({
+          utterance_id: '01ARZ3NDEKTSV4RRFFQ69G5FAY',
+          session_id: SESSION_ID,
+          speaker_track_id: '01ARZ3NDEKTSV4RRFFQ69G5FAZ',
+          speaker_label: 'SPEAKER_00',
+          original_speaker_track_id: '01ARZ3NDEKTSV4RRFFQ69G5FAZ',
+          original_speaker_label: 'SPEAKER_00',
+          identity: 'unknown',
+          original_identity: 'unknown',
+          identity_evidence: { source: 'none', decision: 'unknown' } as IdentityEvidenceFixture,
+          start_ms: 100,
+          end_ms: 900,
+          start_at: '2026-01-01T00:00:00.100Z',
+          end_at: '2026-01-01T00:00:00.900Z',
+          text: '测试文本',
+          original_text: '测试文本',
+          revision: 7,
+          status: 'active',
+          evidence: { source: 'test' } as CorrectionEvidenceFixture
+        }), 2000)])[0].utterances[0];
+
+      await useCases.queueUtteranceCorrection(utterance, ' 修订文本 ', null, 'self');
+
+      expect(repository.operations.length).assertEqual(1);
+      expect(repository.operations[0].kind).assertEqual('utterance.correct');
+      expect(repository.operations[0].base_revision).assertEqual(7);
+      expect(JSON.stringify(repository.operations[0].payload).includes('修订文本')).assertTrue();
+      expect(JSON.stringify(repository.operations[0].payload).includes('self')).assertTrue();
+    });
+
     it('loadsOfflineFirstThroughFakeRepositoryWithoutOpeningRemote', 0, async () => {
       const repository = new FakePhoneV3Repository();
+      repository.reminderRows = [new PhoneV3ProjectionRow(
+        '01ARZ3NDEKTSV4RRFFQ69G5FB0', 1, JSON.stringify({
+          event_id: '01ARZ3NDEKTSV4RRFFQ69G5FB0',
+          session_id: SESSION_ID,
+          event_revision: 1,
+          source_candidate_id: '01ARZ3NDEKTSV4RRFFQ69G5FB1',
+          title: '发送修订后的文档',
+          actor_person_id: 'self',
+          commitment_direction: 'self_to_other',
+          related_person_ids: ['person-zhang'],
+          scheduled_at: '2026-09-02T02:00:00Z',
+          location: '学校',
+          status: 'scheduled',
+          updated_at: '2026-09-01T02:29:00Z'
+        }), 3000)];
       const remote = new FakePhoneV3Remote();
+      const scheduler = new FakeReminderScheduler();
       const useCases = new PhoneV3UseCases(repository,
-        new FakePhoneV3LocalAudio([localFact()]), remote);
+        new FakePhoneV3LocalAudio([localFact()]), remote, scheduler);
 
       const local = await useCases.loadLocal();
       const snapshot = await useCases.loadCached(local);
@@ -169,6 +260,10 @@ export default function phoneV3UseCasesTest() {
       expect(snapshot.sessions[0].sessionKey).assertEqual(SESSION_KEY);
       expect(snapshot.sessions[0].sessionId).assertEqual('');
       expect(snapshot.paired).assertTrue();
+      expect(snapshot.reminders.length).assertEqual(1);
+      expect(snapshot.reminders[0].title).assertEqual('发送修订后的文档');
+      expect(scheduler.reconciled.length).assertEqual(1);
+      expect(scheduler.reconciled[0].eventId).assertEqual('01ARZ3NDEKTSV4RRFFQ69G5FB0');
       expect(remote.connectCount).assertEqual(0);
     });
 

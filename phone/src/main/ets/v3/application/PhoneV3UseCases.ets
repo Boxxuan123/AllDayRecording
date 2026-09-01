@@ -5,6 +5,7 @@ import {
 import {
   V3_CONTRACT_VERSION,
   V3_PROJECTION_VERSION,
+  validateV3ReminderDto,
   validateV3UtteranceDto
 } from '../contracts/V3ContractModels';
 import { applySyncResponse } from '../data/PhoneSyncProjection';
@@ -12,6 +13,7 @@ import {
   PhoneV3LocalAudioFact,
   PhoneV3LocalAudioLink,
   PhoneV3ProjectionRow,
+  PhoneV3Reminder,
   PhoneV3SessionCard,
   PhoneV3Snapshot,
   PhoneV3Utterance
@@ -19,6 +21,7 @@ import {
 import {
   PhoneV3LocalAudioRepositoryPort,
   PhoneV3ProjectionRepositoryPort,
+  PhoneV3ReminderSchedulerPort,
   PhoneV3RemotePort
 } from './PhoneV3Ports';
 
@@ -40,6 +43,13 @@ interface ProcessingPayload {
   progress?: number;
 }
 
+interface UtteranceCorrectionPayload {
+  utterance_id: string;
+  text: string;
+  speaker_track_id: string | null;
+  identity: string;
+}
+
 export class PhoneV3SyncResult {
   batches: number;
   submittedOperations: number;
@@ -56,12 +66,15 @@ export class PhoneV3UseCases {
   private repository: PhoneV3ProjectionRepositoryPort;
   private localAudio: PhoneV3LocalAudioRepositoryPort;
   private remote: PhoneV3RemotePort;
+  private reminderScheduler: PhoneV3ReminderSchedulerPort | undefined;
 
   constructor(repository: PhoneV3ProjectionRepositoryPort,
-    localAudio: PhoneV3LocalAudioRepositoryPort, remote: PhoneV3RemotePort) {
+    localAudio: PhoneV3LocalAudioRepositoryPort, remote: PhoneV3RemotePort,
+    reminderScheduler?: PhoneV3ReminderSchedulerPort) {
     this.repository = repository;
     this.localAudio = localAudio;
     this.remote = remote;
+    this.reminderScheduler = reminderScheduler;
   }
 
   async loadLocal(): Promise<Array<PhoneV3LocalAudioFact>> {
@@ -72,13 +85,16 @@ export class PhoneV3UseCases {
     const recordings = await this.repository.projectionRows('recording_session');
     const processing = await this.repository.projectionRows('processing_run');
     const utterances = await this.repository.projectionRows('utterance');
+    const reminders = await this.repository.projectionRows('reminder');
     const links = await this.repository.localAudioLinks();
     const conflicts = await this.repository.conflictRows();
     const status = await this.repository.v3Status();
     const paired = await this.remote.isPaired();
+    const reminderValues = phoneV3Reminders(reminders);
+    await this.reconcileReminders(reminderValues);
     return new PhoneV3Snapshot(
       mergePhoneV3Sessions(localFacts, links, recordings, processing, utterances),
-      conflicts, status, paired);
+      conflicts, status, paired, reminderValues);
   }
 
   async localAudioIsProtected(sessionKey: string): Promise<boolean> {
@@ -97,6 +113,34 @@ export class PhoneV3UseCases {
       }
     }
     return false;
+  }
+
+  async queueUtteranceCorrection(utterance: PhoneV3Utterance,
+    textValue: string, speakerTrackId: string | null, identity: string): Promise<void> {
+    const text = textValue.trim();
+    if (text.length === 0) {
+      throw new Error('utterance 校正文本不能为空');
+    }
+    if (['self', 'not_self', 'unknown'].indexOf(identity) < 0) {
+      throw new Error('utterance 本人身份无效');
+    }
+    if (text === utterance.text && speakerTrackId === utterance.speakerTrackId &&
+      identity === utterance.identity) {
+      throw new Error('utterance 校正没有产生变化');
+    }
+    const payload: UtteranceCorrectionPayload = {
+      utterance_id: utterance.utteranceId,
+      text: text,
+      speaker_track_id: speakerTrackId,
+      identity: identity
+    };
+    const operation: DeviceV3ClientOperation = {
+      operation_id: newOperationId(),
+      kind: 'utterance.correct',
+      base_revision: utterance.revision,
+      payload: payload
+    };
+    await this.repository.enqueue(operation);
   }
 
   async synchronize(): Promise<PhoneV3SyncResult> {
@@ -147,6 +191,17 @@ export class PhoneV3UseCases {
   async rebuild(): Promise<PhoneV3SyncResult> {
     await this.repository.rebuildFromComputer();
     return this.synchronize();
+  }
+
+  private async reconcileReminders(reminders: Array<PhoneV3Reminder>): Promise<void> {
+    if (this.reminderScheduler === undefined) {
+      return;
+    }
+    try {
+      await this.reminderScheduler.reconcile(reminders);
+    } catch (error) {
+      // Notification permission is optional; the durable in-app reminder list remains available.
+    }
   }
 }
 
@@ -233,7 +288,10 @@ function sessionUtterances(rows: Array<PhoneV3ProjectionRow>, sessionId: string)
       }
       values.push(new PhoneV3Utterance(
         payload.utterance_id, sessionId, payload.speaker_track_id, payload.speaker_label,
-        payload.start_ms, payload.end_ms, payload.text, payload.revision, payload.status,
+        payload.original_speaker_track_id, payload.original_speaker_label,
+        payload.identity, payload.original_identity, JSON.stringify(payload.identity_evidence),
+        payload.start_ms, payload.end_ms, payload.start_at, payload.end_at,
+        payload.text, payload.original_text, payload.revision, payload.status,
         JSON.stringify(payload.evidence)));
     } catch (error) {
     }
@@ -241,6 +299,48 @@ function sessionUtterances(rows: Array<PhoneV3ProjectionRow>, sessionId: string)
   values.sort((left: PhoneV3Utterance, right: PhoneV3Utterance): number =>
     left.startMs - right.startMs || left.utteranceId.localeCompare(right.utteranceId));
   return values;
+}
+
+function phoneV3Reminders(rows: Array<PhoneV3ProjectionRow>): Array<PhoneV3Reminder> {
+  const values: Array<PhoneV3Reminder> = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    try {
+      const payload = validateV3ReminderDto(JSON.parse(rows[index].payloadJson) as Object);
+      values.push(new PhoneV3Reminder(
+        payload.event_id, payload.session_id, payload.event_revision,
+        payload.source_candidate_id, payload.title, payload.actor_person_id,
+        payload.commitment_direction, payload.related_person_ids.slice(),
+        payload.scheduled_at, payload.location, payload.status, payload.updated_at));
+    } catch (error) {
+    }
+  }
+  values.sort((left: PhoneV3Reminder, right: PhoneV3Reminder): number =>
+    Date.parse(left.scheduledAt) - Date.parse(right.scheduledAt) ||
+      left.eventId.localeCompare(right.eventId));
+  return values;
+}
+
+const ULID_ALPHABET: string = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+let lastOperationTime: number = 0;
+let operationSequence: number = 0;
+
+function newOperationId(): string {
+  const current = Date.now();
+  operationSequence = current === lastOperationTime ? (operationSequence + 1) % 1024 : 0;
+  lastOperationTime = current;
+  let time = current;
+  let prefix = '';
+  for (let index = 0; index < 10; index += 1) {
+    prefix = ULID_ALPHABET.charAt(time % 32) + prefix;
+    time = Math.floor(time / 32);
+  }
+  let suffix = '';
+  for (let index = 0; index < 14; index += 1) {
+    suffix += ULID_ALPHABET.charAt(Math.floor(Math.random() * 32));
+  }
+  suffix += ULID_ALPHABET.charAt(Math.floor(operationSequence / 32));
+  suffix += ULID_ALPHABET.charAt(operationSequence % 32);
+  return prefix + suffix;
 }
 
 function parseRecording(value: string): RecordingPayload | undefined {

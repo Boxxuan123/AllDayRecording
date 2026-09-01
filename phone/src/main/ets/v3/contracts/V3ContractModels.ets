@@ -3,8 +3,8 @@
  * Canonical schemas and enums remain in the Computer repository.
  */
 
-export const V3_CONTRACT_VERSION: string = '3.0.0';
-export const V3_PROJECTION_VERSION: number = 1;
+export const V3_CONTRACT_VERSION: string = '3.3.0';
+export const V3_PROJECTION_VERSION: number = 4;
 export const V3_UNKNOWN_ENUM_VALUE: string = 'unknown';
 export const V3_FEATURE_ENABLED_BY_DEFAULT: boolean = true;
 
@@ -23,7 +23,7 @@ const PROCESSING_STATUSES: string[] = [
 ];
 const RECEIPT_STATUSES: string[] = ['pending', 'applied', 'conflict', 'rejected'];
 const RESOURCE_TYPES: string[] = [
-  'recording_session', 'audio_asset', 'processing_run', 'utterance', 'review_item'
+  'recording_session', 'audio_asset', 'processing_run', 'utterance', 'review_item', 'reminder'
 ];
 const SYNC_OPERATIONS: string[] = ['upsert', 'tombstone'];
 const STABLE_ID: RegExp = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[0-9A-HJKMNP-TV-Z]{26})$/;
@@ -33,12 +33,35 @@ export interface V3UtteranceDto {
   session_id: string;
   speaker_track_id: string | null;
   speaker_label: string | null;
+  original_speaker_track_id: string | null;
+  original_speaker_label: string | null;
+  identity: string;
+  original_identity: string;
+  identity_evidence: Object;
   start_ms: number;
   end_ms: number;
+  start_at: string;
+  end_at: string;
   text: string;
+  original_text: string;
   revision: number;
   status: string;
   evidence: Object;
+}
+
+export interface V3ReminderDto {
+  event_id: string;
+  session_id: string;
+  event_revision: number;
+  source_candidate_id: string;
+  title: string;
+  actor_person_id: string;
+  commitment_direction: string;
+  related_person_ids: string[];
+  scheduled_at: string;
+  location: string | null;
+  status: string;
+  updated_at: string;
 }
 
 export interface V3RecordingSessionFixture {
@@ -116,12 +139,46 @@ export function validateV3UtteranceDto(value: Object): V3UtteranceDto {
   if (!STABLE_ID.test(utterance.utterance_id) || !STABLE_ID.test(utterance.session_id) ||
     (utterance.speaker_track_id !== null && !STABLE_ID.test(utterance.speaker_track_id)) ||
     (utterance.speaker_label !== null && typeof utterance.speaker_label !== 'string') ||
+    (utterance.original_speaker_track_id !== null &&
+      !STABLE_ID.test(utterance.original_speaker_track_id)) ||
+    (utterance.original_speaker_label !== null &&
+      typeof utterance.original_speaker_label !== 'string') ||
+    ['self', 'not_self', 'unknown'].indexOf(utterance.identity) < 0 ||
+    ['self', 'not_self', 'unknown'].indexOf(utterance.original_identity) < 0 ||
+    typeof utterance.identity_evidence !== 'object' || utterance.identity_evidence === null ||
     !Number.isSafeInteger(utterance.start_ms) || utterance.start_ms < 0 ||
     !Number.isSafeInteger(utterance.end_ms) || utterance.end_ms <= utterance.start_ms ||
-    typeof utterance.text !== 'string' || !Number.isSafeInteger(utterance.revision) ||
+    typeof utterance.start_at !== 'string' || Number.isNaN(Date.parse(utterance.start_at)) ||
+    typeof utterance.end_at !== 'string' || Number.isNaN(Date.parse(utterance.end_at)) ||
+    Date.parse(utterance.end_at) <= Date.parse(utterance.start_at) ||
+    typeof utterance.text !== 'string' || typeof utterance.original_text !== 'string' ||
+    !Number.isSafeInteger(utterance.revision) ||
     utterance.revision < 1 || ['active', 'stale'].indexOf(utterance.status) < 0 ||
     typeof utterance.evidence !== 'object' || utterance.evidence === null) {
     throw new Error('电脑返回的 V3 Utterance DTO 无效');
   }
   return utterance;
+}
+
+export function validateV3ReminderDto(value: Object): V3ReminderDto {
+  const reminder = value as V3ReminderDto;
+  if (!STABLE_ID.test(reminder.event_id) || !STABLE_ID.test(reminder.session_id) ||
+    !STABLE_ID.test(reminder.source_candidate_id) ||
+    !Number.isSafeInteger(reminder.event_revision) || reminder.event_revision < 1 ||
+    typeof reminder.title !== 'string' || reminder.title.length === 0 ||
+    typeof reminder.actor_person_id !== 'string' || reminder.actor_person_id.length === 0 ||
+    ['self_to_other', 'other_to_self', 'mutual', 'not_applicable']
+      .indexOf(reminder.commitment_direction) < 0 ||
+    !Array.isArray(reminder.related_person_ids) ||
+    reminder.related_person_ids.some((item: string): boolean => item.length === 0) ||
+    new Set<string>(reminder.related_person_ids).size !== reminder.related_person_ids.length ||
+    typeof reminder.scheduled_at !== 'string' || !reminder.scheduled_at.endsWith('Z') ||
+    Number.isNaN(Date.parse(reminder.scheduled_at)) ||
+    (reminder.location !== null && typeof reminder.location !== 'string') ||
+    ['scheduled', 'delivered', 'completed', 'cancelled', 'stale'].indexOf(reminder.status) < 0 ||
+    typeof reminder.updated_at !== 'string' || !reminder.updated_at.endsWith('Z') ||
+    Number.isNaN(Date.parse(reminder.updated_at))) {
+    throw new Error('电脑返回的 V3 Reminder DTO 无效');
+  }
+  return reminder;
 }

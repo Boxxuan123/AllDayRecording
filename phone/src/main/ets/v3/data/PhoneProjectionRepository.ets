@@ -19,10 +19,10 @@ import {
 import { PhoneV3ProjectionRepositoryPort } from '../application/PhoneV3Ports';
 
 const DATABASE_NAME: string = 'phone_v3_projection.db';
-const SCHEMA_VERSION: number = 4;
+const SCHEMA_VERSION: number = 7;
 const TABLES: Array<string> = [
   'projection_recordings', 'projection_audio_assets', 'projection_processing_runs',
-  'projection_utterances', 'projection_review_items'
+  'projection_utterances', 'projection_review_items', 'projection_reminders'
 ];
 const CREATE_STATEMENTS: Array<string> = [
   `CREATE TABLE IF NOT EXISTS projection_recordings (
@@ -34,6 +34,8 @@ const CREATE_STATEMENTS: Array<string> = [
   `CREATE TABLE IF NOT EXISTS projection_utterances (
     resource_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, payload_json TEXT NOT NULL, updated_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS projection_review_items (
+    resource_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, payload_json TEXT NOT NULL, updated_at INTEGER NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS projection_reminders (
     resource_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, payload_json TEXT NOT NULL, updated_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS projection_tombstones (
     resource_type TEXT NOT NULL, resource_id TEXT NOT NULL, revision INTEGER NOT NULL,
@@ -66,6 +68,17 @@ const VERSION_3_STATEMENTS: Array<string> = [
 ];
 const VERSION_4_STATEMENTS: Array<string> = [
   "ALTER TABLE conflicts ADD COLUMN status TEXT NOT NULL DEFAULT 'conflict'"
+];
+const VERSION_5_STATEMENTS: Array<string> = [
+  "UPDATE sync_state SET projection_version = 2, cursor = 'cursor-0' WHERE singleton_id = 1"
+];
+const VERSION_6_STATEMENTS: Array<string> = [
+  "UPDATE sync_state SET projection_version = 3, cursor = 'cursor-0' WHERE singleton_id = 1"
+];
+const VERSION_7_STATEMENTS: Array<string> = [
+  `CREATE TABLE IF NOT EXISTS projection_reminders (
+    resource_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, payload_json TEXT NOT NULL, updated_at INTEGER NOT NULL)`,
+  "UPDATE sync_state SET projection_version = 4, cursor = 'cursor-0' WHERE singleton_id = 1"
 ];
 
 export interface PhoneProjectionStatus {
@@ -394,6 +407,24 @@ async function migrate(store: relationalStore.RdbStore): Promise<void> {
       }
       store.version = 4;
     }
+    if (store.version < 5) {
+      for (let index = 0; index < VERSION_5_STATEMENTS.length; index += 1) {
+        await store.executeSql(VERSION_5_STATEMENTS[index]);
+      }
+      store.version = 5;
+    }
+    if (store.version < 6) {
+      for (let index = 0; index < VERSION_6_STATEMENTS.length; index += 1) {
+        await store.executeSql(VERSION_6_STATEMENTS[index]);
+      }
+      store.version = 6;
+    }
+    if (store.version < 7) {
+      for (let index = 0; index < VERSION_7_STATEMENTS.length; index += 1) {
+        await store.executeSql(VERSION_7_STATEMENTS[index]);
+      }
+      store.version = 7;
+    }
     store.commit();
   } catch (error) {
     store.rollBack();
@@ -419,6 +450,7 @@ function projectionTable(resourceType: string): string {
     case 'processing_run': return 'projection_processing_runs';
     case 'utterance': return 'projection_utterances';
     case 'review_item': return 'projection_review_items';
+    case 'reminder': return 'projection_reminders';
     default: throw new Error(`不支持的 V3 投影资源：${resourceType}`);
   }
 }
