@@ -13,9 +13,9 @@ import {
 // Generated with the fixture bodies. Python contract tests verify these receipts
 // against the canonical JSON files when both repositories are checked out.
 const CORE_FIXTURE_SHA256: string =
-  'dcc41f6eac4a8ab76a73a4e955d02010b882f16a82290f3fbe2f3b9eeadb2653';
+  '2bf6e96f2187bb28659bcdc3b21a347fc55b7e549f2a6ac34f70d65cdb90a7a1';
 const FORWARD_FIXTURE_SHA256: string =
-  'a762d4af71674dbd454e62bb108f0059394e126fd1b6bfc57ca03f2271db88c0';
+  '09aaf5c5fe7323950b0f281d5ab8ae4a861f8a0db36195d2a129275a8bb194aa';
 
 interface UtteranceEvidenceFixture {
   media_id: string;
@@ -30,7 +30,7 @@ interface IdentityEvidenceFixture {
 
 function canonicalFixture(): V3ContractFixture {
   return {
-    contract_version: '3.5.0',
+    contract_version: '3.6.0',
     recording_session: {
       state: 'ready_for_processing',
       status_code: 'ready'
@@ -46,7 +46,7 @@ function canonicalFixture(): V3ContractFixture {
 
 function futureEnumFixture(): V3ContractFixture {
   return {
-    contract_version: '3.5.0',
+    contract_version: '3.6.0',
     recording_session: {
       state: 'future_archived_state',
       status_code: 'future_aggregate_status'
@@ -68,7 +68,7 @@ export default function v3ContractFixtureTest() {
     it('decodesCanonicalComputerFixture', 0, () => {
       expect(CORE_FIXTURE_SHA256.length).assertEqual(64);
       expectDecoded(decodeV3ContractFixture(canonicalFixture()), {
-        contract_version: '3.5.0',
+        contract_version: '3.6.0',
         session_state: 'ready_for_processing',
         aggregate_status: 'ready',
         processing_status: 'running',
@@ -82,7 +82,7 @@ export default function v3ContractFixtureTest() {
     it('degradesUnknownEnumsAndKeepsV3EnabledByDefault', 0, () => {
       expect(FORWARD_FIXTURE_SHA256.length).assertEqual(64);
       expectDecoded(decodeV3ContractFixture(futureEnumFixture()), {
-        contract_version: '3.5.0',
+        contract_version: '3.6.0',
         session_state: 'unknown',
         aggregate_status: 'unknown',
         processing_status: 'unknown',
