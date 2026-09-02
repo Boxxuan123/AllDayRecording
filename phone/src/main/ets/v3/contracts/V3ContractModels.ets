@@ -3,7 +3,7 @@
  * Canonical schemas and enums remain in the Computer repository.
  */
 
-export const V3_CONTRACT_VERSION: string = '3.3.0';
+export const V3_CONTRACT_VERSION: string = '3.7.0';
 export const V3_PROJECTION_VERSION: number = 4;
 export const V3_UNKNOWN_ENUM_VALUE: string = 'unknown';
 export const V3_FEATURE_ENABLED_BY_DEFAULT: boolean = true;

@@ -58,12 +58,12 @@ export function phoneV3ReminderState(reminder: PhoneV3Reminder): string {
   if (reminder.status === 'scheduled' && Date.parse(reminder.scheduledAt) <= Date.now()) {
     return '已到提醒时间';
   }
-  const labels: Record<string, string> = {
-    scheduled: '待提醒',
-    delivered: '已通知',
-    completed: '已完成',
-    cancelled: '已取消',
-    stale: '证据已变更'
-  };
-  return labels[reminder.status] ?? reminder.status;
+  switch (reminder.status) {
+    case 'scheduled': return '待提醒';
+    case 'delivered': return '已通知';
+    case 'completed': return '已完成';
+    case 'cancelled': return '已取消';
+    case 'stale': return '证据已变更';
+    default: return reminder.status;
+  }
 }

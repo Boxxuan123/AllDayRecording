@@ -1,16 +1,38 @@
+import {
+  ExceptionPromptV2,
+  MarginTypeV2,
+  PromptOptionsV2,
+  SymbolGlyphModifier
+} from '@kit.ArkUI';
 import { PhoneV3SessionCard } from '../domain/PhoneV3Models';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 import {
-  phoneV3ComputerStage,
   phoneV3SessionMeta,
-  phoneV3SessionTitle,
-  phoneV3UpdatedLabel
+  phoneV3SessionTitle
 } from './PhoneV3UiFormat';
+import { phoneV3ImmersiveMaterial } from './PhoneV3NativeUi';
 
 @Component
 export struct PhoneV3RecordingListPage {
   @ObjectLink viewModel: PhoneV3ViewModel;
   onOpenSession: (session: PhoneV3SessionCard) => void = (_session: PhoneV3SessionCard): void => {};
+
+  private storageLabel(session: PhoneV3SessionCard): string {
+    if (session.sessionId.length > 0) {
+      return '已同步电脑';
+    }
+    if (session.uploadStatus === 'uploaded') {
+      return '等待电脑入库';
+    }
+    return session.localPaths.length > 0 ? '仅手机' : '无本地音频';
+  }
+
+  private deleteMenuLabel(session: PhoneV3SessionCard): string {
+    if (this.viewModel.canDeleteLocalAudio(session)) {
+      return '删除录音';
+    }
+    return session.localPaths.length > 0 ? '已同步电脑，不能删除' : '手机没有本地音频';
+  }
 
   private confirmDelete(session: PhoneV3SessionCard): void {
     if (!this.viewModel.canDeleteLocalAudio(session)) {
@@ -35,112 +57,126 @@ export struct PhoneV3RecordingListPage {
   }
 
   @Builder
-  private row(session: PhoneV3SessionCard) {
-    Column({ space: 8 }) {
-      Row() {
-        Column({ space: 4 }) {
-          Text(phoneV3SessionTitle(session))
-            .fontSize(17)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_primary'))
-          Text(phoneV3SessionMeta(session))
-            .fontSize(13)
-            .fontColor($r('app.color.text_secondary'))
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
-        .onClick((): void => this.onOpenSession(session))
+  private sessionMenu(session: PhoneV3SessionCard) {
+    Menu() {
+      MenuItem({ content: this.deleteMenuLabel(session) })
+        .enabled(this.viewModel.canDeleteLocalAudio(session) && !this.viewModel.state.busy)
+        .onClick((): void => this.confirmDelete(session))
+    }
+    .backgroundColor($r('app.color.surface_primary'))
+    .borderRadius(14)
+  }
 
-        if (session.localPaths.length > 0) {
-          Button(this.viewModel.canDeleteLocalAudio(session) ? '删除' : '已保护',
-          { type: ButtonType.Capsule })
-          .height(36)
-          .fontSize(12)
-          .fontColor(this.viewModel.canDeleteLocalAudio(session) ?
-            $r('app.color.brand_danger') : $r('app.color.text_secondary'))
-          .backgroundColor($r('app.color.surface_secondary'))
-          .enabled(this.viewModel.canDeleteLocalAudio(session) && !this.viewModel.state.busy)
-          .accessibilityText(this.viewModel.canDeleteLocalAudio(session) ?
-            '删除未同步到电脑的本地音频' : '已同步到电脑，不能删除')
-          .onClick((): void => this.confirmDelete(session))
-        }
-
-        SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(18)
-          .fontColor([$r('app.color.text_secondary')])
-      }
-      .width('100%')
-
-      Row({ space: 8 }) {
-        Text(session.localPaths.length > 0 ? '可离线播放' : '仅电脑投影')
-          .fontSize(12)
-          .fontColor(session.localPaths.length > 0 ? $r('app.color.brand_primary') :
-            $r('app.color.text_secondary'))
-        Text(phoneV3ComputerStage(session))
-          .fontSize(12)
-          .fontColor($r('app.color.text_secondary'))
-      }
-      .width('100%')
-      Text(phoneV3UpdatedLabel(session.updatedAt))
-        .width('100%')
-        .fontSize(11)
-        .fontColor($r('app.color.text_secondary'))
-      if (session.localPaths.length > 0) {
-        Text(this.viewModel.canDeleteLocalAudio(session) ?
-          '尚未同步到电脑 · 可删除本地音频' : '已同步到电脑 · 本地音频受保护')
-          .width('100%')
-          .fontSize(11)
-          .fontColor(this.viewModel.canDeleteLocalAudio(session) ?
-            $r('app.color.brand_danger') : $r('app.color.brand_success'))
+  @Builder
+  private moreButton(session: PhoneV3SessionCard) {
+    Button({ type: ButtonType.Circle, stateEffect: true }) {
+      if (this.viewModel.state.busy) {
+        LoadingProgress()
+          .width(18)
+          .height(18)
+          .color($r('app.color.text_secondary'))
+      } else {
+        Image($r('sys.media.ohos_ic_public_more'))
+          .width(20)
+          .height(20)
+          .fillColor($r('app.color.text_secondary'))
       }
     }
+    .width(36)
+    .height(36)
+    .buttonStyle(ButtonStyleMode.TEXTUAL)
+    .accessibilityText('更多录音操作')
+    .enabled(!this.viewModel.state.busy)
+    .bindMenu(this.sessionMenu(session), {
+      systemMaterial: phoneV3ImmersiveMaterial()
+    })
+  }
+
+  @Builder
+  private row(session: PhoneV3SessionCard) {
+    Row({ space: 8 }) {
+      Column({ space: 4 }) {
+        Text(phoneV3SessionTitle(session))
+          .width('100%')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(`${phoneV3SessionMeta(session)} · ${this.storageLabel(session)}`)
+          .width('100%')
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      .onClick((): void => this.onOpenSession(session))
+
+      this.moreButton(session)
+    }
     .width('100%')
-    .padding(16)
-    .alignItems(HorizontalAlign.Start)
+    .padding({ left: 14, right: 8, top: 10, bottom: 10 })
+    .alignItems(VerticalAlign.Center)
     .backgroundColor($r('app.color.surface_primary'))
     .borderRadius(14)
   }
 
   build() {
-    Column({ space: 14 }) {
+    Column({ space: 12 }) {
       Row() {
-        Column({ space: 3 }) {
-          Text('录音')
-            .fontSize(28)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_primary'))
-          Text('本地音频与电脑状态已合并')
-            .fontSize(13)
-            .fontColor($r('app.color.text_secondary'))
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
-        Button('刷新', { type: ButtonType.Capsule })
-          .backgroundColor($r('app.color.surface_secondary'))
+        Text('录音')
+          .fontSize(28)
+          .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
-          .onClick((): void => this.viewModel.refresh())
+        Blank()
+        Text(`${this.viewModel.state.snapshot.sessions.length} 条`)
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
       }
       .width('100%')
 
       if (this.viewModel.state.error.length > 0) {
-        Text(this.viewModel.state.error)
+        ExceptionPromptV2({
+          options: new PromptOptionsV2({
+            marginType: MarginTypeV2.DEFAULT_MARGIN,
+            marginTop: 0,
+            symbolStyle: new SymbolGlyphModifier($r('sys.symbol.exclamationmark_circle_fill')),
+            tip: this.viewModel.state.error,
+            actionText: this.viewModel.canRetry() ? '重试' : undefined,
+            isShown: true
+          }),
+          onActionTextClick: (): void => this.viewModel.retryLastAction()
+        })
           .width('100%')
-          .padding(12)
-          .fontSize(13)
-          .fontColor($r('app.color.brand_danger'))
-          .backgroundColor($r('app.color.surface_primary'))
-          .borderRadius(12)
       }
 
       if (this.viewModel.state.snapshot.sessions.length === 0) {
-        Text('手机上还没有录音，Watch 接收完成后会自动显示在这里。')
+        Column({ space: 14 }) {
+          Stack() {
+            SymbolGlyph($r('sys.symbol.waveform'))
+              .fontSize(38)
+              .fontColor([$r('app.color.brand_primary')])
+          }
+          .width(84)
+          .height(84)
+          .borderRadius(42)
+          .backgroundColor($r('app.color.surface_accent'))
+          Text('还没有录音')
+            .fontSize(18)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_primary'))
+          Text('手表录音接收完成后，会自动出现在这里')
+            .width('100%')
+            .fontSize(14)
+            .fontColor($r('app.color.text_secondary'))
+            .textAlign(TextAlign.Center)
+        }
           .width('100%')
-          .layoutWeight(1)
-          .fontSize(14)
-          .fontColor($r('app.color.text_secondary'))
-          .textAlign(TextAlign.Center)
+          .padding({ top: 24 })
       } else {
-        List({ space: 10 }) {
+        List({ space: 8 }) {
           ForEach(this.viewModel.state.snapshot.sessions, (session: PhoneV3SessionCard) => {
             ListItem() { this.row(session) }
           }, (session: PhoneV3SessionCard): string => session.id)
@@ -151,7 +187,8 @@ export struct PhoneV3RecordingListPage {
     }
     .width('100%')
     .height('100%')
-    .padding({ left: 18, right: 18, top: 22, bottom: 90 })
+    .padding({ left: 20, right: 20, top: 8, bottom: 100 })
+    .alignItems(HorizontalAlign.Start)
     .backgroundColor($r('app.color.page_background'))
   }
 }

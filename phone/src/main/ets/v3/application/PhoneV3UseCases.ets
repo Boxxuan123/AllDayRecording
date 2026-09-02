@@ -19,6 +19,8 @@ import {
   PhoneV3Utterance
 } from '../domain/PhoneV3Models';
 import {
+  PhoneV3AudioBackupPort,
+  PhoneV3AudioBackupResult,
   PhoneV3LocalAudioRepositoryPort,
   PhoneV3ProjectionRepositoryPort,
   PhoneV3ReminderSchedulerPort,
@@ -54,11 +56,14 @@ export class PhoneV3SyncResult {
   batches: number;
   submittedOperations: number;
   finalCursor: string;
+  backup: PhoneV3AudioBackupResult;
 
-  constructor(batches: number, submittedOperations: number, finalCursor: string) {
+  constructor(batches: number, submittedOperations: number, finalCursor: string,
+    backup: PhoneV3AudioBackupResult = new PhoneV3AudioBackupResult()) {
     this.batches = batches;
     this.submittedOperations = submittedOperations;
     this.finalCursor = finalCursor;
+    this.backup = backup;
   }
 }
 
@@ -67,14 +72,17 @@ export class PhoneV3UseCases {
   private localAudio: PhoneV3LocalAudioRepositoryPort;
   private remote: PhoneV3RemotePort;
   private reminderScheduler: PhoneV3ReminderSchedulerPort | undefined;
+  private audioBackup: PhoneV3AudioBackupPort | undefined;
 
   constructor(repository: PhoneV3ProjectionRepositoryPort,
     localAudio: PhoneV3LocalAudioRepositoryPort, remote: PhoneV3RemotePort,
-    reminderScheduler?: PhoneV3ReminderSchedulerPort) {
+    reminderScheduler?: PhoneV3ReminderSchedulerPort,
+    audioBackup?: PhoneV3AudioBackupPort) {
     this.repository = repository;
     this.localAudio = localAudio;
     this.remote = remote;
     this.reminderScheduler = reminderScheduler;
+    this.audioBackup = audioBackup;
   }
 
   async loadLocal(): Promise<Array<PhoneV3LocalAudioFact>> {
@@ -107,8 +115,8 @@ export class PhoneV3UseCases {
     }
     const recordings = await this.repository.projectionRows('recording_session');
     for (let index = 0; index < recordings.length; index += 1) {
-      const payload = parseRecording(recordings[index].payloadJson);
-      if (payload !== undefined && payload.session_key === sessionKey) {
+      const payload = parseRecording(recordings[index]);
+      if (payload.session_key === sessionKey) {
         return true;
       }
     }
@@ -145,6 +153,8 @@ export class PhoneV3UseCases {
 
   async synchronize(): Promise<PhoneV3SyncResult> {
     try {
+      const backup = this.audioBackup === undefined ? new PhoneV3AudioBackupResult() :
+        await this.audioBackup.backup();
       const session = await this.remote.connect();
       const status = await session.status();
       if (status.contract_version !== V3_CONTRACT_VERSION ||
@@ -180,7 +190,7 @@ export class PhoneV3UseCases {
         hasMore = response.has_more;
         batches += 1;
       }
-      return new PhoneV3SyncResult(batches, operations.length, cursor);
+      return new PhoneV3SyncResult(batches, operations.length, cursor, backup);
     } catch (error) {
       const message = error instanceof Error ? error.message : JSON.stringify(error);
       await this.repository.markSyncFailure(message);
@@ -212,10 +222,7 @@ export function mergePhoneV3Sessions(localFacts: Array<PhoneV3LocalAudioFact>,
   const cards: Array<PhoneV3SessionCard> = [];
   for (let rowIndex = 0; rowIndex < recordingRows.length; rowIndex += 1) {
     const row = recordingRows[rowIndex];
-    const payload = parseRecording(row.payloadJson);
-    if (payload === undefined) {
-      continue;
-    }
+    const payload = parseRecording(row);
     const sessionId = text(payload.session_id, row.resourceId);
     const sessionKey = text(payload.session_key, linkedSessionKey(links, sessionId));
     const local = findLocal(localFacts, links, sessionId, sessionKey);
@@ -267,12 +274,14 @@ class ProcessingMatch {
 function latestProcessing(rows: Array<PhoneV3ProjectionRow>, sessionId: string): ProcessingMatch | undefined {
   let match: ProcessingMatch | undefined = undefined;
   for (let index = 0; index < rows.length; index += 1) {
+    let payload: ProcessingPayload;
     try {
-      const payload = JSON.parse(rows[index].payloadJson) as ProcessingPayload;
-      if (payload.session_id === sessionId && (match === undefined || rows[index].updatedAt > match.updatedAt)) {
-        match = new ProcessingMatch(payload, rows[index].updatedAt);
-      }
+      payload = parseProjectionObject(rows[index]) as ProcessingPayload;
     } catch (error) {
+      throw projectionRowError(rows[index], 'processing_run', error as Object);
+    }
+    if (payload.session_id === sessionId && (match === undefined || rows[index].updatedAt > match.updatedAt)) {
+      match = new ProcessingMatch(payload, rows[index].updatedAt);
     }
   }
   return match;
@@ -282,7 +291,7 @@ function sessionUtterances(rows: Array<PhoneV3ProjectionRow>, sessionId: string)
   const values: Array<PhoneV3Utterance> = [];
   for (let index = 0; index < rows.length; index += 1) {
     try {
-      const payload = validateV3UtteranceDto(JSON.parse(rows[index].payloadJson) as Object);
+      const payload = validateV3UtteranceDto(parseProjectionObject(rows[index]));
       if (payload.session_id !== sessionId) {
         continue;
       }
@@ -294,6 +303,7 @@ function sessionUtterances(rows: Array<PhoneV3ProjectionRow>, sessionId: string)
         payload.text, payload.original_text, payload.revision, payload.status,
         JSON.stringify(payload.evidence)));
     } catch (error) {
+      throw projectionRowError(rows[index], 'utterance', error as Object);
     }
   }
   values.sort((left: PhoneV3Utterance, right: PhoneV3Utterance): number =>
@@ -305,13 +315,14 @@ function phoneV3Reminders(rows: Array<PhoneV3ProjectionRow>): Array<PhoneV3Remin
   const values: Array<PhoneV3Reminder> = [];
   for (let index = 0; index < rows.length; index += 1) {
     try {
-      const payload = validateV3ReminderDto(JSON.parse(rows[index].payloadJson) as Object);
+      const payload = validateV3ReminderDto(parseProjectionObject(rows[index]));
       values.push(new PhoneV3Reminder(
         payload.event_id, payload.session_id, payload.event_revision,
         payload.source_candidate_id, payload.title, payload.actor_person_id,
         payload.commitment_direction, payload.related_person_ids.slice(),
         payload.scheduled_at, payload.location, payload.status, payload.updated_at));
     } catch (error) {
+      throw projectionRowError(rows[index], 'reminder', error as Object);
     }
   }
   values.sort((left: PhoneV3Reminder, right: PhoneV3Reminder): number =>
@@ -343,12 +354,25 @@ function newOperationId(): string {
   return prefix + suffix;
 }
 
-function parseRecording(value: string): RecordingPayload | undefined {
+function parseRecording(row: PhoneV3ProjectionRow): RecordingPayload {
   try {
-    return JSON.parse(value) as RecordingPayload;
+    return parseProjectionObject(row) as RecordingPayload;
   } catch (error) {
-    return undefined;
+    throw projectionRowError(row, 'recording_session', error as Object);
   }
+}
+
+function parseProjectionObject(row: PhoneV3ProjectionRow): Object {
+  const value = JSON.parse(row.payloadJson) as Object;
+  if (value === null || Array.isArray(value) || typeof value !== 'object') {
+    throw new Error('payload 必须是 JSON 对象');
+  }
+  return value;
+}
+
+function projectionRowError(row: PhoneV3ProjectionRow, resourceType: string, error: Object): Error {
+  const detail = error instanceof Error ? error.message : JSON.stringify(error);
+  return new Error(`V3 ${resourceType} 投影 ${row.resourceId} 无法解析：${detail}`);
 }
 
 function findLocal(facts: Array<PhoneV3LocalAudioFact>, links: Array<PhoneV3LocalAudioLink>,

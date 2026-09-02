@@ -1,11 +1,26 @@
 import { formatRecordingSize } from 'common';
+import { ChipV2, ExceptionPromptV2, MarginTypeV2, PromptOptionsV2, SymbolGlyphModifier } from '@kit.ArkUI';
 import { PhoneV3FileTransferState } from '../domain/PhoneV3Models';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
+import { phoneV3StatusChip } from './PhoneV3NativeUi';
 
 @Component
 export struct PhoneV3SyncCenterPage {
   @ObjectLink viewModel: PhoneV3ViewModel;
   onOpenComputerConnection: () => void = (): void => {};
+
+  private syncErrorText(): string {
+    if (this.viewModel.state.error.length > 0) {
+      return this.viewModel.state.error;
+    }
+    if (this.viewModel.state.device.watchTransfer.error.length > 0) {
+      return this.viewModel.state.device.watchTransfer.error;
+    }
+    if (this.viewModel.state.device.wifi.error.length > 0) {
+      return this.viewModel.state.device.wifi.error;
+    }
+    return this.viewModel.state.snapshot.sync.lastError;
+  }
 
   @Builder
   private watchProgress(transfer: PhoneV3FileTransferState) {
@@ -45,56 +60,62 @@ export struct PhoneV3SyncCenterPage {
     }
   }
 
-  @Builder
-  private valueRow(label: string, value: string) {
-    Row() {
-      Text(label)
-        .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
-      Blank()
-      Text(value)
-        .fontSize(13)
-        .fontColor($r('app.color.text_primary'))
-        .maxLines(2)
-    }
-    .width('100%')
-  }
-
   build() {
     Scroll() {
-      Column({ space: 16 }) {
-        Column({ space: 3 }) {
-          Text('同步中心')
-            .fontSize(28)
+      Column({ space: 18 }) {
+        Column({ space: 4 }) {
+          Text('同步')
+            .fontSize(30)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_primary'))
-          Text('增量游标、离线队列与错误均保存在 Phone RDB')
-            .fontSize(13)
+          Text('从手表接收录音，并安全备份到电脑')
+            .fontSize(14)
             .fontColor($r('app.color.text_secondary'))
         }
         .width('100%')
         .alignItems(HorizontalAlign.Start)
 
-        Column({ space: 10 }) {
-          Text('Watch 文件同步')
-            .width('100%')
-            .fontSize(17)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_primary'))
+        Column({ space: 14 }) {
+          Row({ space: 12 }) {
+            Stack() {
+              SymbolGlyph($r('sys.symbol.waveform'))
+                .fontSize(24)
+                .fontColor([$r('app.color.brand_primary')])
+            }
+            .width(46)
+            .height(46)
+            .borderRadius(14)
+            .backgroundColor($r('app.color.surface_accent'))
+            Column({ space: 3 }) {
+              Text('从手表接收')
+                .fontSize(18)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.text_primary'))
+              Text(this.viewModel.state.device.watchSyncing ?
+                `正在接收 ${this.viewModel.state.device.watchReceived}/${this.viewModel.state.device.watchTotal}` :
+                '手机会保留完整本地音频')
+                .fontSize(13)
+                .fontColor($r('app.color.text_secondary'))
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+          }
+          .width('100%')
+
           Text(this.viewModel.state.device.watchSyncing ?
             `正在接收 ${this.viewModel.state.device.watchReceived}/${this.viewModel.state.device.watchTotal}` :
-            '可使用 Wear Engine 普通同步，或在同一 WLAN 下使用加密 Wi-Fi 快传')
+            '普通接收更稳定；同一 Wi-Fi 下可用快传')
             .width('100%')
             .fontSize(13)
             .fontColor($r('app.color.text_secondary'))
           Row({ space: 8 }) {
-            Button('同步 Watch', { type: ButtonType.Capsule })
+            Button(this.viewModel.state.device.watchSyncing ? '正在接收…' : '普通接收',
+            { type: ButtonType.Capsule })
               .layoutWeight(1)
               .height(44)
               .enabled(!this.viewModel.state.device.watchSyncing &&
                 !this.viewModel.state.device.wifi.busy && !this.viewModel.state.device.wifi.ready)
-              .fontColor(Color.White)
-              .backgroundColor($r('app.color.brand_primary'))
+              .buttonStyle(ButtonStyleMode.EMPHASIZED)
               .onClick((): void => this.viewModel.requestWatchSync())
             Button(this.viewModel.state.device.wifi.busy ?
               this.viewModel.state.device.wifi.stopping ? '正在停止…' : '正在准备…' :
@@ -103,116 +124,199 @@ export struct PhoneV3SyncCenterPage {
               .layoutWeight(1)
               .height(44)
               .enabled(!this.viewModel.state.device.wifi.busy && !this.viewModel.state.device.watchSyncing)
-              .fontColor(this.viewModel.state.device.wifi.ready ? Color.White : $r('app.color.text_primary'))
-              .backgroundColor(this.viewModel.state.device.wifi.ready ?
-                $r('app.color.brand_success') : $r('app.color.surface_secondary'))
+              .buttonStyle(ButtonStyleMode.NORMAL)
               .onClick((): void => this.viewModel.toggleWifiReceiver())
           }
           this.watchProgress(this.viewModel.state.device.watchTransfer)
+
           if (this.viewModel.state.device.wifi.ready || this.viewModel.state.device.wifi.percent > 0 ||
             this.viewModel.state.device.wifi.error.length > 0) {
-            Text(this.viewModel.state.device.wifi.status)
-              .width('100%')
-              .fontSize(13)
-              .fontColor(this.viewModel.state.device.wifi.error.length > 0 ?
-                $r('app.color.brand_danger') : $r('app.color.text_secondary'))
-              .maxLines(2)
-            if (this.viewModel.state.device.wifi.percent > 0) {
-              Progress({ value: this.viewModel.state.device.wifi.percent, total: 100, type: ProgressType.Linear })
+            Column({ space: 8 }) {
+              Text(this.viewModel.state.device.wifi.status)
                 .width('100%')
-                .height(6)
-                .color($r('app.color.brand_success'))
+                .fontSize(13)
+                .fontColor(this.viewModel.state.device.wifi.error.length > 0 ?
+                  $r('app.color.brand_danger') : $r('app.color.text_secondary'))
+                .maxLines(2)
+              if (this.viewModel.state.device.wifi.percent > 0) {
+                Progress({ value: this.viewModel.state.device.wifi.percent, total: 100,
+                  type: ProgressType.Linear })
+                  .width('100%')
+                  .height(6)
+                  .color($r('app.color.brand_success'))
+              }
             }
-          }
-          Text(this.viewModel.state.device.wifi.capability)
             .width('100%')
-            .fontSize(11)
+            .padding(12)
+            .alignItems(HorizontalAlign.Start)
+            .backgroundColor($r('app.color.surface_progress'))
+            .borderRadius(12)
+          }
+        }
+        .width('100%')
+        .padding(18)
+        .alignItems(HorizontalAlign.Start)
+        .backgroundColor($r('app.color.surface_primary'))
+        .borderRadius(20)
+
+        if (this.syncErrorText().length > 0) {
+          ExceptionPromptV2({
+            options: new PromptOptionsV2({
+              marginType: MarginTypeV2.DEFAULT_MARGIN,
+              marginTop: 0,
+              symbolStyle: new SymbolGlyphModifier($r('sys.symbol.exclamationmark_circle_fill')),
+              tip: this.syncErrorText(),
+              actionText: this.viewModel.canRetry() ? '重试' : undefined,
+              isShown: true
+            }),
+            onActionTextClick: (): void => this.viewModel.retryLastAction()
+          })
+            .width('100%')
+        }
+
+        Column({ space: 14 }) {
+          Row({ space: 12 }) {
+            Stack() {
+              SymbolGlyph($r('sys.symbol.cloud_and_arrow_up'))
+                .fontSize(23)
+                .fontColor([$r('app.color.brand_success')])
+            }
+            .width(46)
+            .height(46)
+            .borderRadius(14)
+            .backgroundColor($r('app.color.surface_progress'))
+            Column({ space: 3 }) {
+              Text('备份到电脑')
+                .fontSize(18)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.text_primary'))
+              Text(this.viewModel.state.snapshot.paired ?
+                `${this.viewModel.state.snapshot.sync.pendingOperations} 项更新等待备份` :
+                '连接电脑后可安全备份和同步转写')
+                .fontSize(13)
+                .fontColor($r('app.color.text_secondary'))
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+            ChipV2({
+              chipV2Options: phoneV3StatusChip(this.viewModel.state.snapshot.paired ? '已连接' : '未连接')
+            })
+          }
+          .width('100%')
+
+          Button(this.viewModel.state.busy ? '正在备份…' : '立即备份更新', { type: ButtonType.Capsule })
+            .width('100%')
+            .height(50)
+            .enabled(!this.viewModel.state.busy && this.viewModel.state.snapshot.paired)
+            .buttonStyle(ButtonStyleMode.EMPHASIZED)
+            .onClick((): void => this.viewModel.synchronize())
+
+          Button(this.viewModel.state.snapshot.paired ? '管理电脑连接' : '连接电脑',
+          { type: ButtonType.Capsule })
+            .width('100%')
+            .height(46)
+            .buttonStyle(ButtonStyleMode.NORMAL)
+            .onClick((): void => this.onOpenComputerConnection())
+
+          if (this.viewModel.state.message.length > 0) {
+            Text(this.viewModel.state.message)
+              .width('100%')
+              .fontSize(12)
+              .fontColor($r('app.color.text_secondary'))
+              .textAlign(TextAlign.Center)
+          }
+        }
+        .width('100%')
+        .padding(18)
+        .alignItems(HorizontalAlign.Start)
+        .backgroundColor($r('app.color.surface_primary'))
+        .borderRadius(20)
+
+        Column({ space: 12 }) {
+          Text('同步详情')
+            .width('100%')
+            .fontSize(17)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_primary'))
+          Row() {
+            Text('待备份更新')
+              .fontSize(13)
+              .fontColor($r('app.color.text_secondary'))
+            Blank()
+            Text(this.viewModel.state.snapshot.sync.pendingOperations.toString())
+              .fontSize(13)
+              .fontColor($r('app.color.text_primary'))
+              .maxLines(2)
+          }
+          .width('100%')
+          Row() {
+            Text('自动重试')
+              .fontSize(13)
+              .fontColor($r('app.color.text_secondary'))
+            Blank()
+            Text(this.viewModel.state.snapshot.sync.retryCount.toString())
+              .fontSize(13)
+              .fontColor($r('app.color.text_primary'))
+              .maxLines(2)
+          }
+          .width('100%')
+          Row() {
+            Text('上次成功同步')
+              .fontSize(13)
+              .fontColor($r('app.color.text_secondary'))
+            Blank()
+            Text(this.viewModel.state.snapshot.sync.lastServerTime.length > 0 ?
+              this.viewModel.state.snapshot.sync.lastServerTime : '暂无')
+              .fontSize(13)
+              .fontColor($r('app.color.text_primary'))
+              .maxLines(2)
+          }
+          .width('100%')
+          Row() {
+            Text('Wi-Fi 快传能力')
+              .fontSize(13)
+              .fontColor($r('app.color.text_secondary'))
+            Blank()
+            Text(this.viewModel.state.device.wifi.capability.length > 0 ?
+              this.viewModel.state.device.wifi.capability : '等待检测')
+              .fontSize(13)
+              .fontColor($r('app.color.text_primary'))
+              .maxLines(2)
+          }
+          .width('100%')
+          Row() {
+            Text('同步游标')
+              .fontSize(13)
+              .fontColor($r('app.color.text_secondary'))
+            Blank()
+            Text(this.viewModel.state.snapshot.sync.cursor)
+              .fontSize(13)
+              .fontColor($r('app.color.text_primary'))
+              .maxLines(2)
+          }
+          .width('100%')
+          Button('修复同步缓存', { type: ButtonType.Capsule })
+            .width('100%')
+            .height(44)
+            .enabled(!this.viewModel.state.busy && this.viewModel.state.snapshot.paired)
+            .buttonStyle(ButtonStyleMode.TEXTUAL)
+            .onClick((): void => this.viewModel.rebuild())
+          Text('仅重建可从电脑恢复的缓存，不会删除手机本地音频。')
+            .width('100%')
+            .fontSize(12)
             .fontColor($r('app.color.text_secondary'))
-            .maxLines(2)
         }
         .width('100%')
         .padding(16)
         .alignItems(HorizontalAlign.Start)
         .backgroundColor($r('app.color.surface_primary'))
         .borderRadius(16)
-
-        Column({ space: 12 }) {
-          this.valueRow('电脑连接', this.viewModel.state.snapshot.paired ? '已配对' : '未配对')
-          this.valueRow('增量游标', this.viewModel.state.snapshot.sync.cursor)
-          this.valueRow('待提交操作', this.viewModel.state.snapshot.sync.pendingOperations.toString())
-          this.valueRow('重试次数', this.viewModel.state.snapshot.sync.retryCount.toString())
-          this.valueRow('服务端时间', this.viewModel.state.snapshot.sync.lastServerTime.length > 0 ?
-            this.viewModel.state.snapshot.sync.lastServerTime : '尚未成功同步')
-        }
-        .width('100%')
-        .padding(16)
-        .backgroundColor($r('app.color.surface_primary'))
-        .borderRadius(16)
-
-        if (this.viewModel.state.error.length > 0 || this.viewModel.state.snapshot.sync.lastError.length > 0 ||
-          this.viewModel.state.device.watchTransfer.error.length > 0 ||
-          this.viewModel.state.device.wifi.error.length > 0) {
-          Column({ space: 10 }) {
-            Text(this.viewModel.state.error.length > 0 ? this.viewModel.state.error :
-              this.viewModel.state.device.watchTransfer.error.length > 0 ?
-                this.viewModel.state.device.watchTransfer.error :
-                this.viewModel.state.device.wifi.error.length > 0 ? this.viewModel.state.device.wifi.error :
-                  this.viewModel.state.snapshot.sync.lastError)
-              .width('100%')
-              .fontSize(13)
-              .fontColor($r('app.color.brand_danger'))
-            if (this.viewModel.canRetry()) {
-              Button('重试上一步操作', { type: ButtonType.Capsule })
-                .height(40)
-                .fontColor(Color.White)
-                .backgroundColor($r('app.color.brand_danger'))
-                .onClick((): void => this.viewModel.retryLastAction())
-            }
-          }
-          .width('100%')
-          .padding(14)
-          .alignItems(HorizontalAlign.Start)
-          .backgroundColor($r('app.color.surface_primary'))
-          .borderRadius(12)
-        }
-
-        Button(this.viewModel.state.busy ? '正在同步…' : '立即增量同步', { type: ButtonType.Capsule })
-          .width('100%')
-          .height(50)
-          .enabled(!this.viewModel.state.busy && this.viewModel.state.snapshot.paired)
-          .backgroundColor($r('app.color.brand_primary'))
-          .fontColor(Color.White)
-          .onClick((): void => this.viewModel.synchronize())
-
-        Button('电脑连接与安全上传', { type: ButtonType.Capsule })
-          .width('100%')
-          .height(48)
-          .backgroundColor($r('app.color.surface_secondary'))
-          .fontColor($r('app.color.text_primary'))
-          .onClick((): void => this.onOpenComputerConnection())
-
-        Button('重建可缓存投影', { type: ButtonType.Capsule })
-          .width('100%')
-          .height(48)
-          .enabled(!this.viewModel.state.busy && this.viewModel.state.snapshot.paired)
-          .backgroundColor($r('app.color.surface_secondary'))
-          .fontColor($r('app.color.text_primary'))
-          .onClick((): void => this.viewModel.rebuild())
-
-        Text('重建只清理可从电脑恢复的投影；本地音频、outbox、冲突和配对信息会保留。')
-          .width('100%')
-          .fontSize(12)
-          .fontColor($r('app.color.text_secondary'))
-
-        Text(this.viewModel.state.message)
-          .width('100%')
-          .fontSize(13)
-          .fontColor($r('app.color.text_secondary'))
       }
       .width('100%')
-      .padding({ left: 18, right: 18, top: 22, bottom: 100 })
+      .padding({ left: 20, right: 20, top: 8, bottom: 106 })
       .alignItems(HorizontalAlign.Start)
     }
+    .align(Alignment.TopStart)
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.page_background'))

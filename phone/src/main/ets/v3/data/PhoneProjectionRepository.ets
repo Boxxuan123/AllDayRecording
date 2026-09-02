@@ -316,6 +316,9 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
   async applyChange(change: DeviceV3Change): Promise<void> {
     const table = projectionTable(change.resource_type);
     if (change.operation === 'tombstone') {
+      if (change.resource_type === 'recording_session') {
+        await this.rebindCanonicalSession(change.resource_id, change.resource);
+      }
       await this.store.executeSql(`DELETE FROM ${table} WHERE resource_id = ?`, [change.resource_id]);
       await this.store.executeSql(
         `INSERT INTO projection_tombstones (resource_type, resource_id, revision, updated_at)
@@ -324,14 +327,16 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
         [change.resource_type, change.resource_id, change.revision, Date.now()]);
       return;
     }
+    const resource = change.resource_type === 'recording_session' ?
+      await this.preserveRecordingSessionKey(change.resource_id, change.resource) : change.resource;
     await this.store.executeSql(
       `INSERT INTO ${table} (resource_id, revision, payload_json, updated_at)
        VALUES (?, ?, ?, ?) ON CONFLICT(resource_id) DO UPDATE SET
        revision = excluded.revision, payload_json = excluded.payload_json,
        updated_at = excluded.updated_at WHERE excluded.revision >= revision`,
-      [change.resource_id, change.revision, JSON.stringify(change.resource), Date.now()]);
+      [change.resource_id, change.revision, JSON.stringify(resource), Date.now()]);
     if (change.resource_type === 'recording_session') {
-      await this.bindLocalSession(change.resource_id, change.resource as Object);
+      await this.bindLocalSession(change.resource_id, resource as Object);
     }
     await this.store.executeSql(
       'DELETE FROM projection_tombstones WHERE resource_type = ? AND resource_id = ? AND revision <= ?',
@@ -371,6 +376,42 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
     await this.store.executeSql(
       'UPDATE local_audio_links SET session_id = ?, updated_at = ? WHERE session_key = ?',
       [sessionId, Date.now(), payload.session_key]);
+  }
+
+  private async rebindCanonicalSession(sessionId: string, resource: Object | null): Promise<void> {
+    const payload = resource as RecordingSessionTombstonePayload | null;
+    if (payload === null || typeof payload.canonical_session_id !== 'string' ||
+      payload.canonical_session_id.length === 0 || payload.canonical_session_id === sessionId) {
+      return;
+    }
+    await this.store.executeSql(
+      'UPDATE local_audio_links SET session_id = ?, updated_at = ? WHERE session_id = ?',
+      [payload.canonical_session_id, Date.now(), sessionId]);
+  }
+
+  private async preserveRecordingSessionKey(resourceId: string, resource: Object | null): Promise<Object | null> {
+    if (resource === null) {
+      return null;
+    }
+    const incoming = resource as RecordingSessionLinkPayload;
+    if (typeof incoming.session_key === 'string' && incoming.session_key.length > 0) {
+      return resource;
+    }
+    const result = await this.store.querySql(
+      'SELECT payload_json FROM projection_recordings WHERE resource_id = ?', [resourceId]);
+    try {
+      if (!result.goToNextRow()) {
+        return resource;
+      }
+      const previous = JSON.parse(result.getString(result.getColumnIndex('payload_json'))) as RecordingSessionLinkPayload;
+      if (typeof previous.session_key !== 'string' || previous.session_key.length === 0) {
+        return resource;
+      }
+      incoming.session_key = previous.session_key;
+      return incoming as Object;
+    } finally {
+      result.close();
+    }
   }
 }
 
@@ -434,6 +475,10 @@ async function migrate(store: relationalStore.RdbStore): Promise<void> {
 
 interface RecordingSessionLinkPayload {
   session_key?: string;
+}
+
+interface RecordingSessionTombstonePayload {
+  canonical_session_id?: string;
 }
 
 function repositoryError(error: Object): Error {

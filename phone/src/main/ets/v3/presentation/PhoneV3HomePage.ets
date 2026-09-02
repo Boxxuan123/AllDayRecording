@@ -1,4 +1,5 @@
 import { formatRecordingSize } from 'common';
+import { ChipV2, ExceptionPromptV2, MarginTypeV2, PromptOptionsV2, SymbolGlyphModifier } from '@kit.ArkUI';
 import { PhoneV3FileTransferState, PhoneV3Reminder, PhoneV3SessionCard } from '../domain/PhoneV3Models';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 import {
@@ -10,11 +11,22 @@ import {
   phoneV3UpdatedLabel,
   phoneV3WatchStage
 } from './PhoneV3UiFormat';
+import { phoneV3StatusChip } from './PhoneV3NativeUi';
 
 @Component
 export struct PhoneV3HomePage {
   @ObjectLink viewModel: PhoneV3ViewModel;
   onOpenSession: (session: PhoneV3SessionCard) => void = (_session: PhoneV3SessionCard): void => {};
+
+  private operationErrorText(): string {
+    if (this.viewModel.state.error.length > 0) {
+      return this.viewModel.state.error;
+    }
+    if (this.viewModel.state.device.watchTransfer.error.length > 0) {
+      return this.viewModel.state.device.watchTransfer.error;
+    }
+    return this.viewModel.state.device.operationError;
+  }
 
   @Builder
   private watchProgress(transfer: PhoneV3FileTransferState) {
@@ -58,34 +70,43 @@ export struct PhoneV3HomePage {
 
   @Builder
   private operationError() {
-    if (this.viewModel.state.device.watchTransfer.error.length > 0 ||
-      this.viewModel.state.device.operationError.length > 0) {
-      Column({ space: 10 }) {
-        Text(this.viewModel.state.device.watchTransfer.error.length > 0 ?
-          this.viewModel.state.device.watchTransfer.error : this.viewModel.state.device.operationError)
-          .width('100%')
-          .fontSize(13)
-          .fontColor($r('app.color.brand_danger'))
-        if (this.viewModel.canRetry()) {
-          Button('重试上一步操作', { type: ButtonType.Capsule })
-            .height(40)
-            .fontColor(Color.White)
-            .backgroundColor($r('app.color.brand_danger'))
-            .onClick((): void => this.viewModel.retryLastAction())
-        }
-      }
-      .width('100%')
-      .padding(12)
-      .alignItems(HorizontalAlign.Start)
-      .backgroundColor($r('app.color.surface_primary'))
-      .borderRadius(12)
+    if (this.operationErrorText().length > 0) {
+      ExceptionPromptV2({
+        options: new PromptOptionsV2({
+          marginType: MarginTypeV2.DEFAULT_MARGIN,
+          marginTop: 0,
+          symbolStyle: new SymbolGlyphModifier($r('sys.symbol.exclamationmark_circle_fill')),
+          tip: this.operationErrorText(),
+          actionText: this.viewModel.canRetry() ? '重试' : undefined,
+          isShown: true
+        }),
+        onActionTextClick: (): void => this.viewModel.retryLastAction()
+      })
+        .width('100%')
     }
+  }
+
+  @Builder
+  private summary(value: string, label: string) {
+    Column({ space: 4 }) {
+      Text(value)
+        .fontSize(25)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary'))
+      Text(label)
+        .fontSize(12)
+        .fontColor($r('app.color.text_secondary'))
+    }
+    .layoutWeight(1)
+    .padding({ top: 14, bottom: 14 })
+    .backgroundColor($r('app.color.surface_primary'))
+    .borderRadius(14)
   }
 
   @Builder
   private latestSession(session: PhoneV3SessionCard) {
     Column({ space: 10 }) {
-      Row() {
+      Row({ space: 10 }) {
         Column({ space: 4 }) {
           Text(phoneV3SessionTitle(session))
             .fontSize(18)
@@ -98,24 +119,26 @@ export struct PhoneV3HomePage {
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
 
-        Text(session.sessionId.length > 0 ? '已投影' : '本地')
-          .fontSize(12)
-          .fontColor($r('app.color.brand_primary'))
-          .padding({ left: 10, right: 10, top: 5, bottom: 5 })
-          .backgroundColor($r('app.color.surface_accent'))
-          .borderRadius(12)
+        ChipV2({ chipV2Options: phoneV3StatusChip(session.sessionId.length > 0 ? '已备份' : '本地') })
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(17)
+          .fontColor([$r('app.color.text_secondary')])
       }
       .width('100%')
 
-      Text(`Watch → Phone  ${phoneV3WatchStage(session)}`)
-        .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
-      Text(`Phone → Computer  ${phoneV3ComputerStage(session)}`)
-        .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
-      Text(`Computer 处理  ${phoneV3ProcessingStage(session)}`)
-        .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
+      Column({ space: 7 }) {
+        Text(`手表录音  ${phoneV3WatchStage(session)}`)
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
+        Text(`电脑备份  ${phoneV3ComputerStage(session)}`)
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
+        Text(`转写处理  ${phoneV3ProcessingStage(session)}`)
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
     .padding(16)
@@ -161,101 +184,86 @@ export struct PhoneV3HomePage {
 
   build() {
     Scroll() {
-      Column({ space: 16 }) {
-        Column({ space: 4 }) {
-          Text('全天候录音 V3')
-            .fontSize(28)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_primary'))
-          Text('手机本地优先 · 电脑可离线')
-            .fontSize(14)
-            .fontColor($r('app.color.text_secondary'))
-        }
-        .width('100%')
-        .alignItems(HorizontalAlign.Start)
-
-        Row({ space: 10 }) {
+      Column({ space: 18 }) {
+        Row({ space: 12 }) {
           Column({ space: 4 }) {
-            Text(this.viewModel.state.snapshot.sessions.length.toString())
-              .fontSize(26)
+            Text('全天录音')
+              .fontSize(30)
               .fontWeight(FontWeight.Bold)
               .fontColor($r('app.color.text_primary'))
-            Text('会话')
-              .fontSize(12)
+            Text('手表录音会自动安全回到手机')
+              .fontSize(14)
               .fontColor($r('app.color.text_secondary'))
           }
+          .alignItems(HorizontalAlign.Start)
           .layoutWeight(1)
-          .padding(14)
-          .backgroundColor($r('app.color.surface_primary'))
-          .borderRadius(14)
-
-          Column({ space: 4 }) {
-            Text(this.viewModel.state.snapshot.sync.pendingOperations.toString())
-              .fontSize(26)
-              .fontWeight(FontWeight.Bold)
-              .fontColor($r('app.color.text_primary'))
-            Text('待同步操作')
-              .fontSize(12)
-              .fontColor($r('app.color.text_secondary'))
-          }
-          .layoutWeight(1)
-          .padding(14)
-          .backgroundColor($r('app.color.surface_primary'))
-          .borderRadius(14)
+          ChipV2({
+            chipV2Options: phoneV3StatusChip(this.viewModel.state.snapshot.paired ? '电脑已连接' : '离线可用')
+          })
         }
         .width('100%')
 
-        if (this.viewModel.state.snapshot.reminders.length > 0) {
-          Row() {
-            Text('提醒通知')
-              .fontSize(18)
-              .fontWeight(FontWeight.Bold)
-              .fontColor($r('app.color.text_primary'))
-              .layoutWeight(1)
-            Text(`${this.viewModel.state.snapshot.reminders.length} 条`)
-              .fontSize(12)
-              .fontColor($r('app.color.text_secondary'))
-          }
-          .width('100%')
-          ForEach(this.viewModel.state.snapshot.reminders.slice(0, 3), (reminder: PhoneV3Reminder) => {
-            this.reminderNotification(reminder)
-          }, (reminder: PhoneV3Reminder): string => reminder.eventId)
-        }
-
-        Column({ space: 10 }) {
-          Row() {
-            Column({ space: 4 }) {
-              Text('手表状态')
-                .fontSize(13)
+        Column({ space: 14 }) {
+          Row({ space: 10 }) {
+            Column()
+              .width(12)
+              .height(12)
+              .borderRadius(6)
+              .backgroundColor(this.viewModel.state.device.remoteRecordingState === 'recording' ?
+                $r('app.color.brand_danger') : $r('app.color.brand_success'))
+            Column({ space: 3 }) {
+              Text('手表')
+                .fontSize(12)
                 .fontColor($r('app.color.text_secondary'))
               Text(this.viewModel.state.device.watchStatus)
-                .fontSize(17)
+                .fontSize(18)
                 .fontWeight(FontWeight.Medium)
-                .fontColor(this.viewModel.state.device.remoteRecordingState === 'recording' ?
-                  $r('app.color.brand_success') : $r('app.color.text_primary'))
+                .fontColor($r('app.color.text_primary'))
             }
             .alignItems(HorizontalAlign.Start)
             .layoutWeight(1)
             if (this.viewModel.state.device.receiverReconnecting) {
-              LoadingProgress().width(24).height(24)
+              LoadingProgress().width(24).height(24).color($r('app.color.brand_primary'))
             }
           }
           .width('100%')
+
           Button(this.viewModel.state.device.watchControlBusy ? '正在等待手表…' :
             this.viewModel.state.device.remoteRecordingState === 'recording' ? '停止并保存' : '开始录音',
           { type: ButtonType.Capsule })
             .width('100%')
-            .height(50)
+            .height(54)
+            .fontSize(17)
+            .fontWeight(FontWeight.Medium)
             .enabled(!this.viewModel.state.device.watchControlBusy &&
               !this.viewModel.state.device.receiverReconnecting)
-            .fontColor(Color.White)
-            .backgroundColor(this.viewModel.state.device.remoteRecordingState === 'recording' ?
-              $r('app.color.brand_danger') : $r('app.color.brand_primary'))
+            .buttonStyle(ButtonStyleMode.EMPHASIZED)
+            .role(this.viewModel.state.device.remoteRecordingState === 'recording' ?
+              ButtonRole.ERROR : ButtonRole.NORMAL)
             .onClick((): void => this.viewModel.requestWatchRecordingState(
               this.viewModel.state.device.remoteRecordingState === 'recording' ? 'stopped' : 'recording'))
+
+          Row({ space: 10 }) {
+            Button(this.viewModel.state.device.watchSyncing ? '正在同步…' : '接收手表录音',
+            { type: ButtonType.Capsule })
+              .layoutWeight(1)
+              .height(44)
+              .buttonStyle(ButtonStyleMode.NORMAL)
+              .enabled(!this.viewModel.state.device.watchSyncing)
+              .onClick((): void => this.viewModel.requestWatchSync())
+            Button(this.viewModel.state.device.receiverReconnecting ? '正在重连…' : '重新连接',
+            { type: ButtonType.Capsule })
+              .layoutWeight(1)
+              .height(44)
+              .buttonStyle(ButtonStyleMode.NORMAL)
+              .enabled(!this.viewModel.state.device.receiverReconnecting &&
+                !this.viewModel.state.device.watchSyncing)
+              .onClick((): void => this.viewModel.reconnectReceiver())
+          }
+
           Text(this.viewModel.state.device.operationMessage.length > 0 ?
             this.viewModel.state.device.operationMessage : this.viewModel.state.message.length > 0 ?
-              this.viewModel.state.message : '保持手机与手表连接，可自动接收新录音')
+              this.viewModel.state.message : '保持手机与手表连接，完成后会自动刷新录音')
             .width('100%')
             .fontSize(12)
             .fontColor($r('app.color.text_secondary'))
@@ -263,55 +271,21 @@ export struct PhoneV3HomePage {
             .maxLines(2)
         }
         .width('100%')
-        .padding(16)
+        .padding(18)
         .alignItems(HorizontalAlign.Start)
         .backgroundColor($r('app.color.surface_primary'))
-        .borderRadius(16)
-
-        Row({ space: 10 }) {
-          Button('同步 Watch', { type: ButtonType.Capsule })
-            .layoutWeight(1)
-            .height(46)
-            .backgroundColor($r('app.color.brand_primary'))
-            .fontColor(Color.White)
-            .enabled(!this.viewModel.state.device.watchSyncing)
-            .onClick((): void => this.viewModel.requestWatchSync())
-          Button(this.viewModel.state.device.receiverReconnecting ? '正在重连…' : '重新连接',
-          { type: ButtonType.Capsule })
-            .layoutWeight(1)
-            .height(46)
-            .backgroundColor($r('app.color.surface_secondary'))
-            .fontColor($r('app.color.text_primary'))
-            .enabled(!this.viewModel.state.device.receiverReconnecting &&
-              !this.viewModel.state.device.watchSyncing)
-            .onClick((): void => this.viewModel.reconnectReceiver())
-        }
+        .borderRadius(20)
 
         this.watchProgress(this.viewModel.state.device.watchTransfer)
         this.operationError()
 
-        if (this.viewModel.state.error.length > 0) {
-          Column({ space: 10 }) {
-            Text(this.viewModel.state.error)
-              .width('100%')
-              .fontSize(13)
-              .fontColor($r('app.color.brand_danger'))
-            if (this.viewModel.canRetry()) {
-              Button('重试上一步操作', { type: ButtonType.Capsule })
-                .height(40)
-                .fontColor(Color.White)
-                .backgroundColor($r('app.color.brand_danger'))
-                .onClick((): void => this.viewModel.retryLastAction())
-            }
-          }
-          .width('100%')
-          .padding(12)
-          .alignItems(HorizontalAlign.Start)
-          .backgroundColor($r('app.color.surface_primary'))
-          .borderRadius(12)
+        Row({ space: 10 }) {
+          this.summary(this.viewModel.state.snapshot.sessions.length.toString(), '录音会话')
+          this.summary(this.viewModel.state.snapshot.sync.pendingOperations.toString(), '待备份更新')
         }
+        .width('100%')
 
-        Text('最近会话')
+        Text('最近录音')
           .width('100%')
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
@@ -330,10 +304,29 @@ export struct PhoneV3HomePage {
         } else {
           LoadingProgress().width(32).height(32)
         }
+
+        if (this.viewModel.state.snapshot.reminders.length > 0) {
+          Row() {
+            Text('接下来')
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.text_primary'))
+              .layoutWeight(1)
+            Text(`${this.viewModel.state.snapshot.reminders.length} 条提醒`)
+              .fontSize(12)
+              .fontColor($r('app.color.text_secondary'))
+          }
+          .width('100%')
+          ForEach(this.viewModel.state.snapshot.reminders.slice(0, 3), (reminder: PhoneV3Reminder) => {
+            this.reminderNotification(reminder)
+          }, (reminder: PhoneV3Reminder): string => reminder.eventId)
+        }
       }
       .width('100%')
-      .padding({ left: 18, right: 18, top: 22, bottom: 100 })
+      .padding({ left: 20, right: 20, top: 8, bottom: 106 })
+      .alignItems(HorizontalAlign.Start)
     }
+    .align(Alignment.TopStart)
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.page_background'))

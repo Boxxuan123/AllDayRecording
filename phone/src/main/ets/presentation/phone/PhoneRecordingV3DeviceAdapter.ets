@@ -1,12 +1,12 @@
-import { PhoneRecordingViewModel } from '../../presentation/phone/PhoneRecordingViewModel';
-import { PhoneV3DeviceBridgePort } from '../application/PhoneV3Ports';
+import { PhoneV3DeviceBridgePort } from '../../v3/application/PhoneV3Ports';
 import {
   PhoneV3DeviceState,
   PhoneV3FileTransferState,
   PhoneV3WifiState
-} from '../domain/PhoneV3Models';
+} from '../../v3/domain/PhoneV3Models';
+import { PhoneRecordingViewModel } from './PhoneRecordingViewModel';
 
-export class PhoneV3LegacyBridge implements PhoneV3DeviceBridgePort {
+export class PhoneRecordingV3DeviceAdapter implements PhoneV3DeviceBridgePort {
   private viewModel: PhoneRecordingViewModel;
 
   constructor(viewModel: PhoneRecordingViewModel) {

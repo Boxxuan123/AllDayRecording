@@ -1,7 +1,9 @@
 import { common } from '@kit.AbilityKit';
 import { ReceivedRecordingFile } from 'common';
 import {
-  ComputerRecordingUploadService,
+  createComputerRecordingBackupService
+} from '../../computer/ComputerRecordingBackupService';
+import {
   ComputerUploadProgress,
   computerDeviceName
 } from '../../computer/ComputerRecordingUploadService';
@@ -19,6 +21,7 @@ import {
   parseComputerPairingBootstrap
 } from '../../computer/ComputerTransferProtocol';
 import { prepareComputerSessions } from '../../computer/ComputerSessionManifest';
+import { ReceivedRecordingStore } from '../../services/ReceivedRecordingStore';
 import { PhonePasskeyClient } from '../../computer/PhonePasskeyClient';
 import {
   PhoneProjectionRepository,
@@ -94,15 +97,20 @@ export class PhoneComputerTransferViewModel {
     }
   }
 
-  start(context: common.UIAbilityContext, recordings: Array<ReceivedRecordingFile>): void {
+  start(context: common.UIAbilityContext): void {
     this.context = context;
     this.store = new ComputerTransferConfigStore(context);
     this.projectionPromise = PhoneProjectionRepository.open(context);
-    this.updateRecordings(recordings);
+    this.refreshRecordings();
     this.loadState(context);
   }
 
-  updateRecordings(recordings: Array<ReceivedRecordingFile>): void {
+  refreshRecordings(): void {
+    const context = this.requireContext();
+    this.updateRecordings(new ReceivedRecordingStore(context.filesDir).list());
+  }
+
+  private updateRecordings(recordings: Array<ReceivedRecordingFile>): void {
     this.recordings = recordings.slice();
     try {
       const sessions = prepareComputerSessions(this.recordings);
@@ -179,7 +187,6 @@ export class PhoneComputerTransferViewModel {
 
   async upload(): Promise<void> {
     const context = this.requireContext();
-    const store = this.requireStore();
     if (this.busy) {
       return;
     }
@@ -188,37 +195,26 @@ export class PhoneComputerTransferViewModel {
     this.completedFiles = 0;
     this.totalFiles = 0;
     try {
-      if (!this.config.isPaired()) {
-        throw new Error('请先完成电脑 Passkey 配对');
-      }
+      this.refreshRecordings();
       this.status = '正在自动发现已配对电脑…';
-      const discoveredUrl = await new ComputerReceiverDiscovery(context).discover(this.config.receiverId);
-      const updated = await store.saveLastAddress(discoveredUrl);
-      this.applyConfig(updated);
-      this.status = '已发现电脑，正在用设备密钥静默认证…';
-      const service = new ComputerRecordingUploadService(context, updated);
-      const result = await service.upload(this.recordings, (progress: ComputerUploadProgress): void => {
-        this.progressPercent = progress.percent();
-        this.completedFiles = progress.completedFiles;
-        this.totalFiles = progress.totalFiles;
-        this.status = progress.message;
-      });
+      const projection = await this.requireProjection();
+      const outcome = await createComputerRecordingBackupService(context, projection)
+        .backup(this.recordings, (progress: ComputerUploadProgress): void => {
+          this.progressPercent = progress.percent();
+          this.completedFiles = progress.completedFiles;
+          this.totalFiles = progress.totalFiles;
+          this.status = progress.message;
+        });
+      this.applyConfig(outcome.config);
+      const result = outcome.upload;
       this.progressPercent = 100;
       const newFiles = result.recordings + result.manifests - result.skippedFiles;
       this.status = `上传检查完成：新增 ${newFiles} 个文件，电脑已有并跳过 ${result.skippedFiles} 个；` +
         `共 ${result.sessions} 个会话，手机原文件已保留`;
-      const projection = await this.requireProjection();
-      const sessions = prepareComputerSessions(this.recordings);
-      for (let sessionIndex = 0; sessionIndex < sessions.length; sessionIndex += 1) {
-        const session = sessions[sessionIndex];
-        for (let recordingIndex = 0; recordingIndex < session.recordings.length; recordingIndex += 1) {
-          await projection.linkLocalAudio(session.manifest.sessionKey,
-            session.recordings[recordingIndex].path, '', 'uploaded');
-        }
-      }
       try {
         const sync = await new PhoneSyncCoordinator(
-          new ComputerTransferHttpClient(context, updated.baseUrl, updated.caPath, updated.deviceId),
+          new ComputerTransferHttpClient(context, outcome.config.baseUrl,
+            outcome.config.caPath, outcome.config.deviceId),
           projection).synchronize();
         await this.refreshProjectionStatus(projection);
         this.cancelRetry();

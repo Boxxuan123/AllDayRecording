@@ -8,6 +8,8 @@ import {
   DeviceV3SyncResponse
 } from '../main/ets/computer/ComputerTransferProtocol';
 import {
+  PhoneV3AudioBackupPort,
+  PhoneV3AudioBackupResult,
   PhoneV3LocalAudioRepositoryPort,
   PhoneV3ProjectionRepositoryPort,
   PhoneV3ReminderSchedulerPort,
@@ -74,6 +76,8 @@ class FakePhoneV3Repository implements PhoneV3ProjectionRepositoryPort {
     this.reminderRows = [];
     this.cursor = 'cursor-0';
   }
+  async linkLocalAudio(_sessionKey: string, _localPath: string, _sha256: string,
+    _uploadStatus: string): Promise<void> {}
 
   async projectionRows(resourceType: string): Promise<Array<PhoneV3ProjectionRow>> {
     if (resourceType === 'recording_session') {
@@ -101,7 +105,7 @@ class FakePhoneV3LocalAudio implements PhoneV3LocalAudioRepositoryPort {
 
 class FakePhoneV3RemoteSession implements PhoneV3RemoteSession {
   async status(): Promise<DeviceV3StatusResponse> {
-    return { contract_version: '3.3.0', projection_version: 4, server_time: '2026-08-31T00:00:00Z' };
+    return { contract_version: '3.7.0', projection_version: 4, server_time: '2026-08-31T00:00:00Z' };
   }
 
   async sync(_request: DeviceV3SyncRequest): Promise<DeviceV3SyncResponse> {
@@ -130,6 +134,15 @@ class FakeReminderScheduler implements PhoneV3ReminderSchedulerPort {
 
   async reconcile(reminders: Array<PhoneV3Reminder>): Promise<void> {
     this.reconciled = reminders.slice();
+  }
+}
+
+class FakeAudioBackup implements PhoneV3AudioBackupPort {
+  calls: number = 0;
+
+  async backup(): Promise<PhoneV3AudioBackupResult> {
+    this.calls += 1;
+    return new PhoneV3AudioBackupResult(1, 3, 4);
   }
 }
 
@@ -267,6 +280,39 @@ export default function phoneV3UseCasesTest() {
       expect(remote.connectCount).assertEqual(0);
     });
 
+    it('surfacesMalformedProjectionWithItsResourceIdentity', 0, async () => {
+      const repository = new FakePhoneV3Repository();
+      repository.reminderRows = [new PhoneV3ProjectionRow(
+        '01ARZ3NDEKTSV4RRFFQ69G5BAD', 1, '{"event_id":', 3000)];
+      const useCases = new PhoneV3UseCases(repository,
+        new FakePhoneV3LocalAudio([]), new FakePhoneV3Remote());
+      let message = '';
+
+      try {
+        await useCases.loadCached([]);
+      } catch (error) {
+        message = error instanceof Error ? error.message : JSON.stringify(error);
+      }
+
+      expect(message.includes('reminder')).assertTrue();
+      expect(message.includes('01ARZ3NDEKTSV4RRFFQ69G5BAD')).assertTrue();
+    });
+
+    it('surfacesContractInvalidUtteranceInsteadOfDroppingIt', 0, () => {
+      let message = '';
+      try {
+        mergePhoneV3Sessions([], [], [new PhoneV3ProjectionRow(
+          SESSION_ID, 1, JSON.stringify({ session_id: SESSION_ID }), 1000)], [], [
+          new PhoneV3ProjectionRow('01ARZ3NDEKTSV4RRFFQ69G5ERR', 1, '{}', 2000)
+        ]);
+      } catch (error) {
+        message = error instanceof Error ? error.message : JSON.stringify(error);
+      }
+
+      expect(message.includes('utterance')).assertTrue();
+      expect(message.includes('01ARZ3NDEKTSV4RRFFQ69G5ERR')).assertTrue();
+    });
+
     it('allowsDeletingOnlyAudioThatHasNoComputerProjectionOrUploadedLink', 0, async () => {
       const repository = new FakePhoneV3Repository();
       const useCases = new PhoneV3UseCases(repository,
@@ -290,6 +336,36 @@ export default function phoneV3UseCasesTest() {
         new FakePhoneV3LocalAudio([localFact()]), new FakePhoneV3Remote());
 
       expect(await useCases.localAudioIsProtected(SESSION_KEY)).assertTrue();
+    });
+
+    it('mergesCanonicalProjectionThroughTombstoneReboundLink', 0, () => {
+      const cards = mergePhoneV3Sessions([localFact()], [
+        new PhoneV3LocalAudioLink(SESSION_KEY, SESSION_ID, '/phone/segment_0.wav', 'uploaded', 1500)
+      ], [new PhoneV3ProjectionRow(SESSION_ID, 5, JSON.stringify({
+        session_id: SESSION_ID,
+        captured_start: '2026-01-01T00:00:00Z',
+        revision: 5
+      }), 3000)], [], []);
+
+      expect(cards.length).assertEqual(1);
+      expect(cards[0].sessionKey).assertEqual(SESSION_KEY);
+      expect(cards[0].localPaths.length).assertEqual(1);
+      expect(cards[0].sessionId).assertEqual(SESSION_ID);
+    });
+
+    it('backsUpAudioBeforePullingComputerProjection', 0, async () => {
+      const repository = new FakePhoneV3Repository();
+      const remote = new FakePhoneV3Remote();
+      const backup = new FakeAudioBackup();
+      const useCases = new PhoneV3UseCases(repository,
+        new FakePhoneV3LocalAudio([localFact()]), remote, undefined, backup);
+
+      const result = await useCases.synchronize();
+
+      expect(backup.calls).assertEqual(1);
+      expect(remote.connectCount).assertEqual(1);
+      expect(result.backup.uploadedFiles).assertEqual(3);
+      expect(result.backup.skippedFiles).assertEqual(4);
     });
   });
 }

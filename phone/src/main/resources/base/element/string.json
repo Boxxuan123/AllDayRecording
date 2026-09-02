@@ -18,7 +18,15 @@
     },
     {
       "name": "tab_recordings",
-      "value": "录音记录"
+      "value": "录音"
+    },
+    {
+      "name": "tab_sync",
+      "value": "同步"
+    },
+    {
+      "name": "tab_more",
+      "value": "更多"
     },
     {
       "name": "tab_settings",

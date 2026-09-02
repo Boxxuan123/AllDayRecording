@@ -71,8 +71,9 @@ export struct PhoneLegacyReadOnlyPage {
         }
       }
       .width('100%')
-      .padding({ left: 18, right: 18, top: 22, bottom: 48 })
+      .padding({ left: 18, right: 18, top: 8, bottom: 48 })
     }
+    .align(Alignment.TopStart)
     .width('100%')
     .height('100%')
   }

@@ -79,17 +79,35 @@ function prepareOneSession(directory: string, recordings: Array<ReceivedRecordin
   timezone: string): PreparedComputerSession {
   const chunks: Array<ComputerManifestChunk> = [];
   const ordered = recordings.slice();
-  ordered.sort((left: ReceivedRecordingFile, right: ReceivedRecordingFile): number =>
-    parseSegment(left).firstSample - parseSegment(right).firstSample);
+  const isRestoredSession = directory.startsWith('restored_auto_');
+  ordered.sort((left: ReceivedRecordingFile, right: ReceivedRecordingFile): number => {
+    if (isRestoredSession) {
+      return restoredSegmentIndex(left) - restoredSegmentIndex(right);
+    }
+    return parseSegment(left).firstSample - parseSegment(right).firstSample;
+  });
   let totalSamples = 0;
   let continuityValid = true;
+  let previousRestoredIndex: number | undefined = undefined;
   for (let index = 0; index < ordered.length; index += 1) {
-    const chunk = parseSegment(ordered[index]);
+    const parsed = parseSegment(ordered[index]);
+    const restoredIndex = isRestoredSession ? restoredSegmentIndex(ordered[index]) : parsed.index;
+    const chunk: ComputerManifestChunk = isRestoredSession ? {
+      index: restoredIndex,
+      fileName: parsed.fileName,
+      firstSample: totalSamples,
+      sampleCount: parsed.sampleCount
+    } : parsed;
+    if (isRestoredSession && previousRestoredIndex !== undefined &&
+      restoredIndex !== previousRestoredIndex + 1) {
+      continuityValid = false;
+    }
     if (chunk.firstSample !== totalSamples) {
       continuityValid = false;
     }
     totalSamples = Math.max(totalSamples, chunk.firstSample + chunk.sampleCount);
     chunks.push(chunk);
+    previousRestoredIndex = restoredIndex;
   }
   const startedAt = sessionStartedAt(directory);
   return new PreparedComputerSession(directory, ordered, {
@@ -120,7 +138,7 @@ function parseSegment(recording: ReceivedRecordingFile): ComputerManifestChunk {
   }
   return {
     index: Number(indexMatch[1]),
-    fileName: recording.fileName,
+    fileName: sourceFileName(recording.sourcePath),
     firstSample: Number(sampleMatch[1]),
     sampleCount: sampleCount
   };
@@ -135,7 +153,28 @@ function safeSessionDirectory(sourcePath: string): string {
     return '';
   }
   const directory = sourcePath.substring(0, separator);
-  return /^pcm_(gap_test|session)_[0-9]{13,}$/.test(directory) ? directory : '';
+  return /^(pcm_(gap_test|session)|restored_auto)_[0-9]{13,}$/.test(directory) ? directory : '';
+}
+
+function sourceFileName(sourcePath: string): string {
+  const separator = sourcePath.lastIndexOf('/');
+  const value = separator >= 0 ? sourcePath.substring(separator + 1) : sourcePath;
+  if (value.length === 0 || value.includes('\\') || value.includes('..')) {
+    throw new Error(`无法识别录音源文件名：${sourcePath}`);
+  }
+  return value;
+}
+
+function restoredSegmentIndex(recording: ReceivedRecordingFile): number {
+  const match = /^([0-9]+)_segment_/.exec(sourceFileName(recording.sourcePath));
+  if (match === null) {
+    throw new Error(`恢复录音缺少可验证的顺序编号：${recording.sourcePath}`);
+  }
+  const value = Number(match[1]);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`恢复录音顺序编号无效：${recording.sourcePath}`);
+  }
+  return value;
 }
 
 function isSupportedPcmWav(recording: ReceivedRecordingFile): boolean {

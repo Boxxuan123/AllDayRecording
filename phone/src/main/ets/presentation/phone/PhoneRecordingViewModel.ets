@@ -534,6 +534,9 @@ export class PhoneRecordingViewModel {
     if (!this.lifecycle.isActive(token)) {
       return;
     }
+    if (!this.lifecycle.isActive(token)) {
+      return;
+    }
     this.playbackService = new AudioPlaybackService(
       (playing: boolean, message: string): void => {
         if (!this.lifecycle.isActive(token)) {

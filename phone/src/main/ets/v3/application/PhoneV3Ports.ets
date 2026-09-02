@@ -25,10 +25,28 @@ export interface PhoneV3ProjectionRepositoryPort extends PhoneProjectionStorage 
   v3Status(): Promise<PhoneV3SyncStatus>;
   markSyncFailure(message: string): Promise<void>;
   rebuildFromComputer(): Promise<void>;
+  linkLocalAudio(sessionKey: string, localPath: string, sha256: string,
+    uploadStatus: string): Promise<void>;
 }
 
 export interface PhoneV3LocalAudioRepositoryPort {
   list(): Promise<Array<PhoneV3LocalAudioFact>>;
+}
+
+export class PhoneV3AudioBackupResult {
+  sessions: number;
+  uploadedFiles: number;
+  skippedFiles: number;
+
+  constructor(sessions: number = 0, uploadedFiles: number = 0, skippedFiles: number = 0) {
+    this.sessions = sessions;
+    this.uploadedFiles = uploadedFiles;
+    this.skippedFiles = skippedFiles;
+  }
+}
+
+export interface PhoneV3AudioBackupPort {
+  backup(): Promise<PhoneV3AudioBackupResult>;
 }
 
 export interface PhoneV3ReminderSchedulerPort {

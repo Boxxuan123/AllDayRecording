@@ -1,8 +1,8 @@
 import { common } from '@kit.AbilityKit';
-import { PhoneRecordingViewModel } from '../../presentation/phone/PhoneRecordingViewModel';
 import { PhoneV3UseCases, mergePhoneV3Sessions } from '../application/PhoneV3UseCases';
 import { PhoneV3DeviceBridgePort } from '../application/PhoneV3Ports';
 import { PhoneProjectionRepository } from '../data/PhoneProjectionRepository';
+import { PhoneV3ComputerBackup } from '../data/PhoneV3ComputerBackup';
 import { PhoneV3DeviceRemote } from '../data/PhoneV3DeviceRemote';
 import { PhoneV3LocalAudioRepository } from '../data/PhoneV3LocalAudioRepository';
 import { PhoneV3ReminderScheduler } from '../data/PhoneV3ReminderScheduler';
@@ -12,7 +12,6 @@ import {
   PhoneV3Snapshot,
   PhoneV3Utterance
 } from '../domain/PhoneV3Models';
-import { PhoneV3LegacyBridge } from './PhoneV3LegacyBridge';
 import {
   PhoneV3UiAction,
   PhoneV3UiActionType,
@@ -46,12 +45,12 @@ export class PhoneV3ViewModel {
   private lastDesiredRecordingState: string = 'recording';
   private localAudioListener: () => void = (): void => this.onLocalAudioChanged();
 
-  start(context: common.UIAbilityContext, legacy: PhoneRecordingViewModel): void {
+  start(context: common.UIAbilityContext, deviceBridge: PhoneV3DeviceBridgePort): void {
     if (this.started) {
       return;
     }
     this.started = true;
-    this.bridge = new PhoneV3LegacyBridge(legacy);
+    this.bridge = deviceBridge;
     this.bridge.addLocalAudioChangeListener(this.localAudioListener);
     this.timerId = setInterval((): void => this.refreshDeviceState(), 500);
     this.initialize(context);
@@ -108,7 +107,8 @@ export class PhoneV3ViewModel {
       undefined, undefined, '正在发现电脑并同步增量状态…'));
     useCases.synchronize().then((result): Promise<void> => {
       this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SUCCESS, undefined, undefined,
-        `同步完成：${result.batches} 批，游标 ${result.finalCursor}`));
+        `备份完成：新增 ${result.backup.uploadedFiles} 个文件，电脑已有 ${result.backup.skippedFiles} 个；` +
+        `状态同步 ${result.batches} 批，游标 ${result.finalCursor}`));
       return this.refreshSnapshot();
     }).catch((error: Object): void => this.fail(error));
   }
@@ -276,7 +276,7 @@ export class PhoneV3ViewModel {
         undefined, `手机本地已有 ${this.localFacts.length} 条录音`));
       const repository = await PhoneProjectionRepository.open(context);
       this.useCases = new PhoneV3UseCases(repository, local, new PhoneV3DeviceRemote(context),
-        new PhoneV3ReminderScheduler(context));
+        new PhoneV3ReminderScheduler(context), new PhoneV3ComputerBackup(context, repository));
       await this.refreshSnapshot();
       if (this.refreshQueued) {
         this.refreshQueued = false;

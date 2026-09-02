@@ -2,16 +2,14 @@ import { common } from '@kit.AbilityKit';
 import { picker } from '@kit.CoreFileKit';
 import { scanBarcode, scanCore } from '@kit.ScanKit';
 import { PhoneComputerTransferViewModel } from './PhoneComputerTransferViewModel';
-import { PhoneRecordingViewModel } from './PhoneRecordingViewModel';
 
 @Component
 export struct PhoneComputerTransferPage {
-  @ObjectLink recordingViewModel: PhoneRecordingViewModel;
   @State private transferViewModel: PhoneComputerTransferViewModel = new PhoneComputerTransferViewModel();
 
   aboutToAppear(): void {
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    this.transferViewModel.start(context, this.recordingViewModel.receivedRecordings);
+    this.transferViewModel.start(context);
   }
 
   private async chooseCa(): Promise<void> {
@@ -231,7 +229,6 @@ export struct PhoneComputerTransferPage {
             .fontColor(Color.White)
             .backgroundColor($r('app.color.brand_primary'))
             .onClick((): void => {
-              this.transferViewModel.updateRecordings(this.recordingViewModel.receivedRecordings);
               this.transferViewModel.upload();
             })
 
@@ -293,9 +290,10 @@ export struct PhoneComputerTransferPage {
           .borderRadius(12)
       }
       .width('100%')
-      .padding({ left: 20, right: 20, top: 20, bottom: 40 })
+      .padding({ left: 20, right: 20, top: 8, bottom: 40 })
       .alignItems(HorizontalAlign.Start)
     }
+    .align(Alignment.TopStart)
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.page_background'))

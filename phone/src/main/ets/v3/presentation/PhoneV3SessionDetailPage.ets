@@ -1,4 +1,17 @@
 import { formatRecordingDuration } from 'common';
+import {
+  CapsuleSegmentButtonV2,
+  ChipGroupV2,
+  ChipGroupV2ItemConfig,
+  ChipGroupV2Items,
+  ChipGroupV2ItemStyle,
+  ChipV2,
+  ExceptionPromptV2,
+  MarginTypeV2,
+  PromptOptionsV2,
+  SegmentButtonV2Items,
+  SymbolGlyphModifier
+} from '@kit.ArkUI';
 import { PhoneV3SessionCard, PhoneV3Utterance } from '../domain/PhoneV3Models';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 import {
@@ -6,10 +19,10 @@ import {
   phoneV3ComputerStage,
   phoneV3ProcessingStage,
   phoneV3SessionMeta,
-  phoneV3SessionTitle,
   phoneV3TimelineTime,
   phoneV3WatchStage
 } from './PhoneV3UiFormat';
+import { phoneV3ImmersiveMaterial, phoneV3StatusChip } from './PhoneV3NativeUi';
 
 class PhoneV3SpeakerChoice {
   id: string | null;
@@ -24,7 +37,6 @@ class PhoneV3SpeakerChoice {
 @Component
 export struct PhoneV3SessionDetailPage {
   @ObjectLink viewModel: PhoneV3ViewModel;
-  onDeleted: () => void = (): void => {};
   @State private isSeeking: boolean = false;
   @State private seeking: number = 0;
   @State private correctionVisible: boolean = false;
@@ -37,34 +49,18 @@ export struct PhoneV3SessionDetailPage {
     this.viewModel.stopPlayback();
   }
 
-  private confirmDelete(session: PhoneV3SessionCard): void {
-    if (!this.viewModel.canDeleteLocalAudio(session)) {
-      return;
-    }
-    try {
-      this.getUIContext().getPromptAction().showDialog({
-        title: '删除手机本地音频？',
-        message: '这条录音尚未同步到电脑。删除后无法恢复。',
-        buttons: [
-          { text: '取消', color: $r('app.color.text_secondary') },
-          { text: '删除', color: $r('app.color.brand_danger') }
-        ]
-      }).then((result): void => {
-        if (result.index === 1) {
-          this.viewModel.deleteLocalAudio(session, this.onDeleted);
-        }
-      }, (): void => {});
-    } catch (_error) {
-      this.viewModel.state.error = '无法显示删除确认框，请重试';
-    }
-  }
-
   private editUtterance(utterance: PhoneV3Utterance): void {
     this.correctionTarget = utterance;
     this.correctionText = utterance.text;
     this.correctionSpeakerTrackId = utterance.speakerTrackId === null ? '' : utterance.speakerTrackId;
     this.correctionIdentity = utterance.identity;
     this.correctionVisible = true;
+  }
+
+  private skipPlayback(session: PhoneV3SessionCard, deltaMs: number): void {
+    const duration = Math.max(session.durationMs, this.viewModel.state.device.playbackDurationMs);
+    const next = Math.max(0, Math.min(duration, this.viewModel.state.device.playbackPositionMs + deltaMs));
+    this.viewModel.seekPlayback(next);
   }
 
   private identityLabel(identity: string): string {
@@ -81,8 +77,21 @@ export struct PhoneV3SessionDetailPage {
     return ['self', 'not_self', 'unknown'];
   }
 
+  private identityItems(): SegmentButtonV2Items {
+    return new SegmentButtonV2Items([
+      { text: '本人' },
+      { text: '非本人' },
+      { text: '未知' }
+    ]);
+  }
+
+  private selectedIdentityIndex(): number {
+    const index = this.identityChoices().indexOf(this.correctionIdentity);
+    return index < 0 ? 2 : index;
+  }
+
   private speakerChoices(): Array<PhoneV3SpeakerChoice> {
-    const choices: Array<PhoneV3SpeakerChoice> = [new PhoneV3SpeakerChoice(null, '未分配 / unknown')];
+    const choices: Array<PhoneV3SpeakerChoice> = [new PhoneV3SpeakerChoice(null, '未指定说话人')];
     const seen: Set<string> = new Set<string>();
     const session = this.viewModel.selectedSession();
     if (session === undefined) {
@@ -97,6 +106,35 @@ export struct PhoneV3SessionDetailPage {
       }
     }
     return choices;
+  }
+
+  private speakerItems(): ChipGroupV2Items {
+    return new ChipGroupV2Items(this.speakerChoices().map((choice: PhoneV3SpeakerChoice):
+      ChipGroupV2ItemConfig => {
+      return { label: { text: choice.label } };
+    }));
+  }
+
+  private selectedSpeakerIndexes(): Array<number> {
+    const choices = this.speakerChoices();
+    const selectedId = this.correctionSpeakerTrackId;
+    for (let index = 0; index < choices.length; index += 1) {
+      if ((choices[index].id === null ? '' : choices[index].id) === selectedId) {
+        return [index];
+      }
+    }
+    return [0];
+  }
+
+  private selectSpeaker(indexes: Array<number>): void {
+    if (indexes.length === 0) {
+      return;
+    }
+    const choices = this.speakerChoices();
+    const choice = choices[indexes[0]];
+    if (choice !== undefined) {
+      this.correctionSpeakerTrackId = choice.id === null ? '' : choice.id;
+    }
   }
 
   private submitCorrection(): void {
@@ -115,14 +153,14 @@ export struct PhoneV3SessionDetailPage {
   @Builder
   private correctionSheet() {
     Column({ space: 14 }) {
-      Text('校正这句话')
+      Text('编辑转写')
         .width('100%')
         .fontSize(22)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.text_primary'))
       if (this.correctionTarget !== undefined) {
-        Text(`模型原始结果 · ${this.correctionTarget.originalSpeakerLabel === null ?
-          '未分配说话人' : this.correctionTarget.originalSpeakerLabel} · ` +
+        Text(`原始结果 · ${this.correctionTarget.originalSpeakerLabel === null ?
+          '未指定说话人' : this.correctionTarget.originalSpeakerLabel} · ` +
           `${this.identityLabel(this.correctionTarget.originalIdentity)}`)
           .width('100%')
           .fontSize(12)
@@ -138,48 +176,38 @@ export struct PhoneV3SessionDetailPage {
         .onChange((value: string): void => {
           this.correctionText = value;
         })
-      Text('说话人轨道')
+      Text('说话人')
         .width('100%')
         .fontSize(12)
         .fontColor($r('app.color.text_secondary'))
-      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
-        ForEach(this.speakerChoices(), (choice: PhoneV3SpeakerChoice) => {
-          Button(choice.label, { type: ButtonType.Capsule })
-            .margin({ right: 8, bottom: 8 })
-            .fontSize(12)
-            .fontColor(this.correctionSpeakerTrackId === (choice.id === null ? '' : choice.id) ?
-              Color.White : $r('app.color.text_primary'))
-            .backgroundColor(this.correctionSpeakerTrackId === (choice.id === null ? '' : choice.id) ?
-              $r('app.color.brand_primary') : $r('app.color.surface_primary'))
-            .onClick((): void => {
-              this.correctionSpeakerTrackId = choice.id === null ? '' : choice.id;
-            })
-        }, (choice: PhoneV3SpeakerChoice): string => choice.id === null ? 'unknown' : choice.id)
-      }
-      Text('本人身份')
+      ChipGroupV2({
+        items: this.speakerItems(),
+        itemStyle: new ChipGroupV2ItemStyle({
+          backgroundSystemMaterial: phoneV3ImmersiveMaterial()
+        }),
+        selectedIndexes: this.selectedSpeakerIndexes(),
+        multiple: false,
+        onChange: (indexes: Array<number>): void => this.selectSpeaker(indexes)
+      })
+        .width('100%')
+      Text('身份标记')
         .width('100%')
         .fontSize(12)
         .fontColor($r('app.color.text_secondary'))
-      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
-        ForEach(this.identityChoices(), (identity: string) => {
-          Button(this.identityLabel(identity), { type: ButtonType.Capsule })
-            .margin({ right: 8, bottom: 8 })
-            .fontSize(12)
-            .fontColor(this.correctionIdentity === identity ?
-              Color.White : $r('app.color.text_primary'))
-            .backgroundColor(this.correctionIdentity === identity ?
-              $r('app.color.brand_primary') : $r('app.color.surface_primary'))
-            .onClick((): void => {
-              this.correctionIdentity = identity;
-            })
-        }, (identity: string): string => identity)
-      }
-      Button('保存到离线 outbox', { type: ButtonType.Capsule })
+      CapsuleSegmentButtonV2({
+        items: this.identityItems(),
+        selectedIndex: this.selectedIdentityIndex(),
+        onItemClicked: (index: number): void => {
+          this.correctionIdentity = this.identityChoices()[index];
+        },
+        backgroundSystemMaterial: phoneV3ImmersiveMaterial()
+      })
+        .width('100%')
+      Button('保存修改', { type: ButtonType.Capsule })
         .width('100%')
         .height(46)
         .enabled(!this.viewModel.state.busy && this.correctionText.trim().length > 0)
-        .fontColor(Color.White)
-        .backgroundColor($r('app.color.brand_primary'))
+        .buttonStyle(ButtonStyleMode.EMPHASIZED)
         .onClick((): void => this.submitCorrection())
     }
     .width('100%')
@@ -214,23 +242,15 @@ export struct PhoneV3SessionDetailPage {
         .width('100%')
         .fontSize(15)
         .fontColor($r('app.color.text_primary'))
-      Text(`${utterance.speakerLabel === null ? '未分配说话人' : utterance.speakerLabel} · ` +
-        `${this.identityLabel(utterance.identity)} · utterance_id ${utterance.utteranceId} · ` +
-        `revision ${utterance.revision} · ${utterance.status}`)
+      Text(`${utterance.speakerLabel === null ? '未指定说话人' : utterance.speakerLabel} · ` +
+        `${this.identityLabel(utterance.identity)}${utterance.status === 'corrected' ? ' · 已校正' : ''}`)
         .width('100%')
-        .fontSize(11)
+        .fontSize(12)
         .fontColor($r('app.color.text_secondary'))
-        .maxLines(2)
-      Text(`evidence ${utterance.evidenceJson}`)
-        .width('100%')
-        .fontSize(11)
-        .fontColor($r('app.color.text_secondary'))
-        .maxLines(3)
-      Button('校正文本、说话人或身份', { type: ButtonType.Capsule })
+      Button('编辑转写', { type: ButtonType.Capsule })
         .height(34)
         .fontSize(12)
-        .fontColor($r('app.color.brand_primary'))
-        .backgroundColor($r('app.color.surface_secondary'))
+        .buttonStyle(ButtonStyleMode.TEXTUAL)
         .onClick((): void => this.editUtterance(utterance))
     }
     .width('100%')
@@ -243,34 +263,20 @@ export struct PhoneV3SessionDetailPage {
   @Builder
   private content(session: PhoneV3SessionCard) {
     Scroll() {
-      Column({ space: 16 }) {
-        Column({ space: 5 }) {
-          Text(phoneV3SessionTitle(session))
-            .fontSize(24)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_primary'))
+      Column({ space: 12 }) {
+        Row({ space: 10 }) {
           Text(phoneV3SessionMeta(session))
             .fontSize(13)
             .fontColor($r('app.color.text_secondary'))
-          Text(session.sessionId.length > 0 ? session.sessionId : '尚无 Computer session_id')
-            .fontSize(11)
-            .fontColor($r('app.color.text_secondary'))
+            .layoutWeight(1)
+          ChipV2({
+            chipV2Options: phoneV3StatusChip(session.sessionId.length > 0 ? '已备份' : '本地')
+          })
         }
         .width('100%')
-        .alignItems(HorizontalAlign.Start)
-
-        Column({ space: 12 }) {
-          this.stage('Watch → Phone', phoneV3WatchStage(session))
-          this.stage('Phone → Computer', phoneV3ComputerStage(session))
-          this.stage('Computer 处理', phoneV3ProcessingStage(session))
-        }
-        .width('100%')
-        .padding(16)
-        .backgroundColor($r('app.color.surface_primary'))
-        .borderRadius(16)
 
         if (session.localPaths.length > 0) {
-          Column({ space: 10 }) {
+          Column({ space: 14 }) {
             Row() {
               Text(this.viewModel.state.device.isPlaying ? '正在播放' :
                 this.viewModel.state.device.playbackPositionMs > 0 ? '已暂停' : '本地播放')
@@ -278,22 +284,24 @@ export struct PhoneV3SessionDetailPage {
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.text_primary'))
               Blank()
-              Text(`${formatRecordingDuration(this.isSeeking ? this.seeking :
-                this.viewModel.state.device.playbackPositionMs)} / ` +
-                `${formatRecordingDuration(Math.max(session.durationMs,
-                  this.viewModel.state.device.playbackDurationMs))}`)
+              Text(this.viewModel.state.device.isPlaying ? '播放中' : '就绪')
                 .fontSize(12)
-                .fontColor($r('app.color.text_secondary'))
+                .fontColor(this.viewModel.state.device.isPlaying ?
+                  $r('app.color.brand_success') : $r('app.color.text_secondary'))
             }
             .width('100%')
             Slider({
               value: this.isSeeking ? this.seeking : this.viewModel.state.device.playbackPositionMs,
               min: 0,
               max: Math.max(1, session.durationMs, this.viewModel.state.device.playbackDurationMs),
-              step: 1
+              step: 1,
+              style: SliderStyle.OutSet
             })
               .width('100%')
+              .trackThickness(4)
+              .blockColor($r('app.color.brand_primary'))
               .selectedColor($r('app.color.brand_primary'))
+              .trackColor($r('app.color.surface_secondary'))
               .enabled(!this.viewModel.state.device.playbackBusy)
               .onChange((value: number, mode: SliderChangeMode): void => {
                 this.seeking = value;
@@ -306,78 +314,126 @@ export struct PhoneV3SessionDetailPage {
                   this.viewModel.seekPlayback(value);
                 }
               })
-            Button(this.viewModel.state.device.playbackBusy ? '正在载入…' :
-              this.viewModel.state.device.isPlaying ? '暂停' : '播放', { type: ButtonType.Capsule })
-              .width('100%')
-              .height(46)
+            Row() {
+              Text(formatRecordingDuration(this.isSeeking ? this.seeking :
+                this.viewModel.state.device.playbackPositionMs))
+                .fontSize(12)
+                .fontColor($r('app.color.text_secondary'))
+              Text(formatRecordingDuration(Math.max(session.durationMs,
+                this.viewModel.state.device.playbackDurationMs)))
+                .fontSize(12)
+                .fontColor($r('app.color.text_secondary'))
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.SpaceBetween)
+
+            Row() {
+              Button({ type: ButtonType.Normal }) {
+                Column({ space: 5 }) {
+                  SymbolGlyph($r('sys.symbol.gobackward_15'))
+                    .fontSize(28)
+                    .fontColor([$r('app.color.text_primary')])
+                  Text('15 秒')
+                    .fontSize(11)
+                    .fontColor($r('app.color.text_secondary'))
+                }
+              }
+              .width(78)
+              .height(64)
+              .buttonStyle(ButtonStyleMode.TEXTUAL)
               .enabled(!this.viewModel.state.device.playbackBusy)
-              .backgroundColor($r('app.color.brand_primary'))
-              .fontColor(Color.White)
+              .onClick((): void => this.skipPlayback(session, -15000))
+
+              Button({ type: ButtonType.Circle }) {
+                if (this.viewModel.state.device.playbackBusy) {
+                  LoadingProgress()
+                    .width(28)
+                    .height(28)
+                    .color(Color.White)
+                } else {
+                  SymbolGlyph(this.viewModel.state.device.isPlaying ?
+                    $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
+                    .fontSize(30)
+                    .fontColor([Color.White])
+                }
+              }
+              .width(64)
+              .height(64)
+              .buttonStyle(ButtonStyleMode.EMPHASIZED)
+              .enabled(!this.viewModel.state.device.playbackBusy)
               .onClick((): void => this.viewModel.togglePlayback())
+
+              Button({ type: ButtonType.Normal }) {
+                Column({ space: 5 }) {
+                  SymbolGlyph($r('sys.symbol.goforward_15'))
+                    .fontSize(28)
+                    .fontColor([$r('app.color.text_primary')])
+                  Text('15 秒')
+                    .fontSize(11)
+                    .fontColor($r('app.color.text_secondary'))
+                }
+              }
+              .width(78)
+              .height(64)
+              .buttonStyle(ButtonStyleMode.TEXTUAL)
+              .enabled(!this.viewModel.state.device.playbackBusy)
+              .onClick((): void => this.skipPlayback(session, 15000))
+            }
+              .width('100%')
+              .justifyContent(FlexAlign.SpaceAround)
           }
           .width('100%')
           .padding(16)
           .backgroundColor($r('app.color.surface_primary'))
           .borderRadius(16)
-        }
-
-        if (this.viewModel.state.error.length > 0 || this.viewModel.state.device.operationError.length > 0) {
-          Column({ space: 10 }) {
-            Text(this.viewModel.state.error.length > 0 ? this.viewModel.state.error :
-              this.viewModel.state.device.operationError)
-              .width('100%')
-              .fontSize(13)
-              .fontColor($r('app.color.brand_danger'))
-            if (this.viewModel.canRetry()) {
-              Button('重试上一步操作', { type: ButtonType.Capsule })
-                .height(40)
-                .fontColor(Color.White)
-                .backgroundColor($r('app.color.brand_danger'))
-                .onClick((): void => this.viewModel.retryLastAction())
-            }
+        } else {
+          Row({ space: 8 }) {
+            SymbolGlyph($r('sys.symbol.waveform'))
+              .fontSize(20)
+              .fontColor([$r('app.color.text_secondary')])
+            Text('手机暂无可播放音频')
+              .fontSize(14)
+              .fontColor($r('app.color.text_secondary'))
           }
           .width('100%')
           .padding(14)
-          .alignItems(HorizontalAlign.Start)
           .backgroundColor($r('app.color.surface_primary'))
-          .borderRadius(12)
+          .borderRadius(14)
         }
 
-        if (session.localPaths.length > 0) {
-          Column({ space: 10 }) {
-            Text('本地音频保护')
-              .width('100%')
-              .fontSize(16)
-              .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.text_primary'))
-            Text(this.viewModel.localDeleteProtection(session))
-              .width('100%')
-              .fontSize(13)
-              .fontColor($r('app.color.text_secondary'))
-            if (this.viewModel.canDeleteLocalAudio(session)) {
-              Button('删除手机本地音频', { type: ButtonType.Capsule })
-                .width('100%')
-                .height(44)
-                .enabled(!this.viewModel.state.busy)
-                .fontColor(Color.White)
-                .backgroundColor($r('app.color.brand_danger'))
-                .onClick((): void => this.confirmDelete(session))
-            }
-          }
-          .width('100%')
-          .padding(16)
-          .alignItems(HorizontalAlign.Start)
-          .backgroundColor($r('app.color.surface_primary'))
-          .borderRadius(16)
+        if (this.viewModel.state.error.length > 0 || this.viewModel.state.device.operationError.length > 0) {
+          ExceptionPromptV2({
+            options: new PromptOptionsV2({
+              marginType: MarginTypeV2.DEFAULT_MARGIN,
+              marginTop: 0,
+              symbolStyle: new SymbolGlyphModifier($r('sys.symbol.exclamationmark_circle_fill')),
+              tip: this.viewModel.state.error.length > 0 ? this.viewModel.state.error :
+                this.viewModel.state.device.operationError,
+              actionText: this.viewModel.canRetry() ? '重试' : undefined,
+              isShown: true
+            }),
+            onActionTextClick: (): void => this.viewModel.retryLastAction()
+          })
+            .width('100%')
         }
 
-        Text('统一对话时间线')
+        Column({ space: 10 }) {
+          this.stage('手表录音', phoneV3WatchStage(session))
+          this.stage('电脑备份', phoneV3ComputerStage(session))
+          this.stage('转写处理', phoneV3ProcessingStage(session))
+        }
+        .width('100%')
+        .padding(14)
+        .backgroundColor($r('app.color.surface_primary'))
+        .borderRadius(14)
+
+        Text('转写时间线')
           .width('100%')
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
         if (session.utterances.length === 0) {
-          Text('电脑尚未生成 utterance 投影；已有本地音频仍可播放。')
+          Text('电脑尚未生成转写，已有本地音频仍可播放。')
             .width('100%')
             .fontSize(14)
             .fontColor($r('app.color.text_secondary'))
@@ -391,8 +447,9 @@ export struct PhoneV3SessionDetailPage {
         }
       }
       .width('100%')
-      .padding({ left: 18, right: 18, top: 18, bottom: 32 })
+      .padding({ left: 18, right: 18, top: 8, bottom: 32 })
     }
+    .align(Alignment.TopStart)
     .width('100%')
     .height('100%')
   }
