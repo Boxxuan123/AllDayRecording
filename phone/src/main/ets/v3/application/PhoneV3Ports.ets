@@ -4,6 +4,7 @@ import {
   DeviceV3SyncRequest,
   DeviceV3SyncResponse
 } from '../../computer/ComputerTransferProtocol';
+import { ComputerRecordingBackupReceiptPort } from '../../computer/ComputerRecordingBackupService';
 import { PhonePendingOperation, PhoneProjectionStorage } from '../data/PhoneSyncProjection';
 import {
   PhoneV3Conflict,
@@ -15,7 +16,8 @@ import {
   PhoneV3SyncStatus
 } from '../domain/PhoneV3Models';
 
-export interface PhoneV3ProjectionRepositoryPort extends PhoneProjectionStorage {
+export interface PhoneV3ProjectionRepositoryPort extends PhoneProjectionStorage,
+  ComputerRecordingBackupReceiptPort {
   enqueue(operation: DeviceV3ClientOperation): Promise<void>;
   pendingOperations(limit?: number): Promise<Array<PhonePendingOperation>>;
   currentCursor(): Promise<string>;

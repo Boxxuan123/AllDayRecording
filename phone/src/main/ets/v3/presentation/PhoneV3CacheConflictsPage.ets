@@ -7,7 +7,6 @@ import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 @Component
 export struct PhoneV3CacheConflictsPage {
   @ObjectLink viewModel: PhoneV3ViewModel;
-  onOpenLegacy: () => void = (): void => {};
 
   build() {
     Scroll() {
@@ -97,28 +96,6 @@ export struct PhoneV3CacheConflictsPage {
             .borderRadius(12)
           }, (conflict: PhoneV3Conflict): string => conflict.operationId)
         }
-
-        Column({ space: 8 }) {
-          Text('旧版数据查看')
-            .width('100%')
-            .fontSize(17)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_primary'))
-          Text('用于核对 V2 时期的本地录音。该入口只能查看和试听，不会修改数据。')
-            .width('100%')
-            .fontSize(13)
-            .fontColor($r('app.color.text_secondary'))
-          Button('查看 V2 旧版录音', { type: ButtonType.Capsule })
-            .width('100%')
-            .height(46)
-            .buttonStyle(ButtonStyleMode.NORMAL)
-            .onClick((): void => this.onOpenLegacy())
-        }
-        .width('100%')
-        .padding(16)
-        .alignItems(HorizontalAlign.Start)
-        .backgroundColor($r('app.color.surface_primary'))
-        .borderRadius(16)
       }
       .width('100%')
       .padding({ left: 20, right: 20, top: 8, bottom: 106 })

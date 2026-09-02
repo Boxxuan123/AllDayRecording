@@ -2,7 +2,7 @@
 
 AllDayRecording 是一个同时交付到手机与 HUAWEI WATCH 5 的 HarmonyOS 应用。手表负责连续 PCM 录音、WAV 安全封口、中断恢复和源文件生命周期；手机负责 Wear Engine 接收、持久化索引和试听。
 
-当前工程按设备交付两个 HAP，并通过本地 `common` HAR 复用协议和纯逻辑：Watch 使用 `entry` HAP，Phone 使用 `phone` HAP。应用版本为 `1.0.1`（`versionCode = 1000001`），两个 HAP 保持同一 `bundleName`、Client ID、签名配置和 API 23/26 边界。V3.0-G 已把 Phone V3 本地优先工作台设为默认入口；原 V2 手机页面只保留查看和本地试听能力，作为明确的只读回退入口。
+当前工程按设备交付两个 HAP，并通过本地 `common` HAR 复用协议和纯逻辑：Watch 使用 `entry` HAP，Phone 使用 `phone` HAP。应用版本为 `1.0.1`（`versionCode = 1000001`），两个 HAP 保持同一 `bundleName`、Client ID、签名配置和 API 23/26 边界。Phone 只保留 V3 本地优先工作台；V2 页面、只读回退入口和旧表现层 ViewModel 已移除。
 
 ## 主要目录
 
@@ -10,9 +10,8 @@ AllDayRecording 是一个同时交付到手机与 HUAWEI WATCH 5 的 HarmonyOS �
 - `phone`：仅面向 `phone` 的 Phone HAP；包含手机页面、接收端、接收索引和试听入口。
 - `common`：本地 HAR；包含模型、共享表现状态、WAV/原子文件、协议、Transport、同步/控制协调器和播放服务。
 - `entry/src/main/ets/presentation/watch`：手表圆屏页面、Root 和 ViewModel。
-- `phone/src/main/ets/presentation/phone`：手机页面、Root 和 ViewModel。
-- `phone/src/main/ets/v3`：默认 Phone V3 领域模型、用例、RDB 投影、Device client、UI reducer 与页面。
-- `phone/src/main/ets/presentation/phone/PhoneLegacyReadOnlyPage.ets`：V2 手机索引的只读查看与试听回退；不暴露同步、上传、删除或修改。
+- `phone/src/main/ets/presentation/phone`：Phone V3 的应用 Root 与电脑传输页面。
+- `phone/src/main/ets/v3`：Phone V3 领域模型、用例、RDB 投影、设备运行时、Device client、UI reducer 与页面。
 - `entry/src/main/ets/recording`：AudioCapturer 生命周期、后台任务、WAV 文件槽和会话契约。
 - `common/src/main/ets/sync`：协议、Wear Engine Transport、手机/手表协调器、自动队列和控制状态机。
 - `common/src/main/ets/shared/io`：WAV 格式、原子文件和版本化 JSON 基础设施。

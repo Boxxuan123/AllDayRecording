@@ -18,12 +18,12 @@
 
 ```text
 Watch HAP -> Watch Root/ViewModel -> recording / Watch Sender
-Phone HAP -> Phone Root/ViewModel -> Phone Receiver / receive store
-                                -> computer transfer VM -> QR/mDNS/HTTPS/HUKS upload service
+Phone HAP -> Phone Root -> V3 ViewModel / Device Runtime -> Phone Receiver / receive store
+                       -> computer transfer VM -> QR/mDNS/HTTPS/HUKS upload service
                          both -> common HAR -> coordinator -> transport / shared IO
 ```
 
-- `entry/.../pages/Index.ets` 只挂载 `WatchRootPage`；`phone/.../pages/Index.ets` 只挂载 `PhoneRootPage`，不再做运行时设备分支。V3.0-G 后 `PhoneRootPage` 默认挂载 V3 本地优先工作台，旧录音索引只经 `PhoneLegacyReadOnlyPage` 提供查看和试听回退。
+- `entry/.../pages/Index.ets` 只挂载 `WatchRootPage`；`phone/.../pages/Index.ets` 只挂载 `PhoneRootPage`，不再做运行时设备分支。`PhoneRootPage` 只挂载 V3 本地优先工作台；V2 页面和只读回退入口均已移除。
 - Phone `EntryAbility` 固定加载 `pages/Index`，启动错误使用稳定日志标签 `PhoneEntryAbility` 和正式的 Phone root page 文案；协议中的 `control_probe` 与默认关闭的 Watch 诊断 Probe 保持原有语义。
 - 页面组件只展示状态并转发事件，不直接操作 CoreFileKit、Wear Engine 或录音后台任务。
 - ViewModel 负责页面生命周期与用户动作编排；持久化和协议状态由领域服务承担。
@@ -49,10 +49,11 @@ Phone HAP -> Phone Root/ViewModel -> Phone Receiver / receive store
 2. `WatchSyncCoordinator` 串行自动/手动请求；当前手动批次最多发送 1 个缺失文件，库存键按每页 24 个分页交换，后续点击继续补拉剩余文件。
 3. `WearEngineTransport` 负责发现对端、应用身份、receiver 注册、消息、文件、远端启动和通道销毁。
 4. Phone 先把收到的文件原子复制到 `phone` 模块沙箱的 `synced_from_watch/<requestId>/`，再由 `ReceivedRecordingStore` 更新 `received_index_v1.json`。
-5. 索引损坏或缺失时，Phone 扫描同步目录和旧 `received_*.wav` 重建可见列表。
+5. 索引损坏或缺失时，Phone 扫描同步目录和旧 `received_*.wav` 重建可见列表；这些旧文件名和
+   `legacySyncKey` 读取能力继续作为数据兼容层保留，不会重新引入 V2 页面或运行入口。
 6. 只有文件已落盘且索引流程完成后，Phone 才发送 `sync_file_received`；Watch 在 ACK 丢失或通信失败时保留源文件并重试。
 7. 普通 Wear Engine 同步不删除 Watch 源文件。加密 Wi-Fi 全量同步会对新文件和 Phone 已有文件逐一核对 SHA-256；只有所有文件 ACK 及批次 ACK 完成后，Watch 才重新核对路径、大小和 SHA-256 并删除本批快照中的源文件。批次失败时一个也不删，单文件清理失败时只保留该文件；进程重启后可通过 Phone 的重复文件校验继续清理。
-8. Phone 到电脑的传输是独立出口：`computer` 目录隔离二维码配对、mDNS 发现、配对配置、FIDO2/HUKS 封装、HTTPS 请求、会话清单和断点上传；单独的 `PhoneComputerTransferViewModel` 承担页面状态，没有继续扩大 `PhoneRecordingViewModel`。
+8. Phone 到电脑的传输是独立出口：`computer` 目录隔离二维码配对、mDNS 发现、配对配置、FIDO2/HUKS 封装、HTTPS 请求、会话清单和断点上传；单独的 `PhoneComputerTransferViewModel` 承担页面状态，没有扩大 `PhoneV3ViewModel` 或 `PhoneV3DeviceRuntime`。
 9. 手机扫码验证并固定电脑 CA 的 DER SHA-256 指纹，以首次配对码和系统 Passkey 授权登记 HUKS P-256 设备公钥。后续每个受保护请求都用一次性 challenge 生成静默设备签名，绑定 method、path、正文 SHA-256 和分片 offset，不保存访问令牌；换 Wi-Fi 通过稳定 `receiver_id` 自动重新发现电脑地址。
 10. 上传以 `ReceivedRecordingFile.sourcePath` 恢复原 Watch 会话路径，先传全部音频，再生成并上传 `AllDayRecording session manifest v1` 清单。电脑确认最终 SHA-256 后才计为完成，手机原文件始终保留。
 

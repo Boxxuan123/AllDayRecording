@@ -13,7 +13,6 @@ export struct PhoneV3RootPage {
   private tabsController: TabsController = new TabsController();
   onOpenSession: (session: PhoneV3SessionCard) => void = (_session: PhoneV3SessionCard): void => {};
   onOpenComputerTransfer: () => void = (): void => {};
-  onOpenLegacy: () => void = (): void => {};
 
   private openSession(session: PhoneV3SessionCard): void {
     this.onOpenSession(session);
@@ -59,10 +58,7 @@ export struct PhoneV3RootPage {
       .tabBar(this.bottomTabStyle($r('app.string.tab_sync'), $r('sys.symbol.arrow_2_circlepath')))
 
       TabContent() {
-        PhoneV3CacheConflictsPage({
-          viewModel: this.viewModel,
-          onOpenLegacy: (): void => this.onOpenLegacy()
-        })
+        PhoneV3CacheConflictsPage({ viewModel: this.viewModel })
       }
       .tabBar(this.bottomTabStyle($r('app.string.tab_more'), $r('sys.symbol.gearshape')))
     }

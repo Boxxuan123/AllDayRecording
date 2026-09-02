@@ -1,9 +1,9 @@
 import { describe, it, expect } from '@ohos/hypium';
 import { ReceivedRecordingFile, WAV_HEADER_BYTES } from 'common';
 import {
-  groupReceivedRecordings,
-  receivedRecordingDurationMs
-} from '../main/ets/presentation/phone/PhoneRecordingGroups';
+  groupPhoneV3LocalAudio,
+  phoneV3ReceivedRecordingDurationMs
+} from '../main/ets/v3/data/PhoneV3LocalAudioGroups';
 
 function recording(sourcePath: string, fileName: string, receivedAt: number, size: number,
   durationMs: number = 0): ReceivedRecordingFile {
@@ -18,12 +18,12 @@ function recording(sourcePath: string, fileName: string, receivedAt: number, siz
   };
 }
 
-export default function phoneRecordingGroupsTest() {
-  describe('PhoneRecordingGroups', () => {
+export default function phoneV3LocalAudioGroupsTest() {
+  describe('PhoneV3LocalAudioGroups', () => {
     it('groupsContinuousSegmentsByWatchSessionAndSortsThem', 0, () => {
       const firstSize = WAV_HEADER_BYTES + 32000;
       const secondSize = WAV_HEADER_BYTES + 64000;
-      const groups = groupReceivedRecordings([
+      const groups = groupPhoneV3LocalAudio([
         recording('pcm_gap_test_1788000000000/segment_000002_first_000000016000.wav',
           'segment_000002_first_000000016000.wav', 300, secondSize),
         recording('pcm_gap_test_1788000000000/segment_000001_first_000000000000.wav',
@@ -41,7 +41,7 @@ export default function phoneRecordingGroupsTest() {
     });
 
     it('keepsStandaloneRecordingsSeparate', 0, () => {
-      const groups = groupReceivedRecordings([
+      const groups = groupPhoneV3LocalAudio([
         recording('手表手动发送', 'received_1.wav', 200, WAV_HEADER_BYTES + 32000),
         recording('手表手动发送', 'received_2.wav', 100, WAV_HEADER_BYTES + 32000)
       ]);
@@ -56,8 +56,8 @@ export default function phoneRecordingGroupsTest() {
       const derived = recording('session/segment_2.wav', 'segment_2.wav', 1,
         WAV_HEADER_BYTES + 96000);
 
-      expect(receivedRecordingDurationMs(stored)).assertEqual(4321);
-      expect(receivedRecordingDurationMs(derived)).assertEqual(3000);
+      expect(phoneV3ReceivedRecordingDurationMs(stored)).assertEqual(4321);
+      expect(phoneV3ReceivedRecordingDurationMs(derived)).assertEqual(3000);
     });
   });
 }

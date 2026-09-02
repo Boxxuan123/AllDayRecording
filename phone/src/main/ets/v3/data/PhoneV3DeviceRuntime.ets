@@ -19,13 +19,13 @@ import {
 } from '../../services/RecordingTransferService';
 import { ReceivedRecordingStore } from '../../services/ReceivedRecordingStore';
 import {
-  PhoneRecordingGroup,
-  groupReceivedRecordings,
-  receivedRecordingDurationMs
-} from './PhoneRecordingGroups';
+  PhoneV3LocalAudioGroup,
+  groupPhoneV3LocalAudio,
+  phoneV3ReceivedRecordingDurationMs
+} from './PhoneV3LocalAudioGroups';
 
 @Observed
-export class PhoneRecordingViewModel {
+export class PhoneV3DeviceRuntime {
   status: string = '';
   isPlaying: boolean = false;
   isPlaybackBusy: boolean = false;
@@ -35,7 +35,7 @@ export class PhoneRecordingViewModel {
   syncState: PhoneSyncUiState = new PhoneSyncUiState();
   receivedRecordingCount: number = 0;
   receivedRecordings: Array<ReceivedRecordingFile> = [];
-  receivedRecordingGroups: Array<PhoneRecordingGroup> = [];
+  receivedRecordingGroups: Array<PhoneV3LocalAudioGroup> = [];
   selectedRecordingGroupKey: string = '';
   deletingRecordingGroupKey: string = '';
   isControllingWatch: boolean = false;
@@ -301,10 +301,6 @@ export class PhoneRecordingViewModel {
     });
   }
 
-  skipPlayback(offsetMs: number): void {
-    this.seekPlayback(this.playbackPositionMs + offsetMs);
-  }
-
   stopPlayback(): void {
     const playback = this.playbackService;
     if (playback === undefined) {
@@ -325,20 +321,7 @@ export class PhoneRecordingViewModel {
     });
   }
 
-  selectRecording(recording: ReceivedRecordingFile, showDeveloperStatus: boolean = false): void {
-    if (this.playbackService?.hasActiveSession() === true) {
-      this.stopPlayback();
-    }
-    this.selectedRecordingGroupKey = '';
-    this.latestRecording = recording;
-    this.playbackPositionMs = 0;
-    this.playbackDurationMs = receivedRecordingDurationMs(recording);
-    if (showDeveloperStatus) {
-      this.status = `已选择 ${recording.fileName}，可以试听`;
-    }
-  }
-
-  selectRecordingGroup(group: PhoneRecordingGroup): void {
+  selectRecordingGroup(group: PhoneV3LocalAudioGroup): void {
     if (group.recordings.length === 0) {
       return;
     }
@@ -354,7 +337,7 @@ export class PhoneRecordingViewModel {
     }
   }
 
-  recordingGroup(key: string): PhoneRecordingGroup | undefined {
+  recordingGroup(key: string): PhoneV3LocalAudioGroup | undefined {
     for (let index = 0; index < this.receivedRecordingGroups.length; index += 1) {
       if (this.receivedRecordingGroups[index].key === key) {
         return this.receivedRecordingGroups[index];
@@ -363,11 +346,7 @@ export class PhoneRecordingViewModel {
     return undefined;
   }
 
-  isDeletingRecordingGroup(group: PhoneRecordingGroup): boolean {
-    return this.deletingRecordingGroupKey === group.key;
-  }
-
-  deleteRecordingGroup(group: PhoneRecordingGroup, onDeleted: () => void = (): void => {},
+  deleteRecordingGroup(group: PhoneV3LocalAudioGroup, onDeleted: () => void = (): void => {},
     onError: (error: Object) => void = (_error: Object): void => {}): void {
     const recordingStore = this.recordingStore;
     if (recordingStore === undefined || this.deletingRecordingGroupKey.length > 0 || group.recordings.length === 0) {
@@ -393,32 +372,6 @@ export class PhoneRecordingViewModel {
       this.status = message;
       onError(new Error(message));
     });
-  }
-
-  syncButtonLabel(): string {
-    if (!this.syncState.inProgress) {
-      return '同步录音';
-    }
-    return this.syncState.total <= 0 ? '等待手表…' :
-      `${this.syncState.received}/${this.syncState.total}`;
-  }
-
-  wifiButtonLabel(): string {
-    if (this.wifiBusy) {
-      if (this.wifiStopping) {
-        return '正在停止…';
-      }
-      return this.wifiReceiverReady ? '自动传输中…' : '正在准备…';
-    }
-    return this.wifiReceiverReady ? '停止接收' : 'Wi-Fi 快传';
-  }
-
-  developerSyncButtonLabel(): string {
-    if (!this.syncState.inProgress) {
-      return '同步手表文件';
-    }
-    return this.syncState.total <= 0 ? '等待手表响应…' :
-      `同步中 ${this.syncState.received}/${this.syncState.total}`;
   }
 
   transferStageLabel(): string {
@@ -456,16 +409,6 @@ export class PhoneRecordingViewModel {
       return '等待手表确认';
     }
     return '正在确认手表状态';
-  }
-
-  userStatusMessage(): string {
-    if (this.status.includes('失败') || this.status.includes('无法') || this.status.includes('错误')) {
-      return '操作没有完成，请确认手机与手表已连接后重试';
-    }
-    if (this.remoteRecordingState === 'pending_user_action') {
-      return '请在手表上点击录音通知';
-    }
-    return '保持手机与手表连接，可自动接收新录音';
   }
 
   private async startReceiver(context: common.UIAbilityContext, token: number,
@@ -658,7 +601,7 @@ export class PhoneRecordingViewModel {
       const durations: Array<number> = [];
       for (let index = 0; index < selectedGroup.recordings.length; index += 1) {
         paths.push(selectedGroup.recordings[index].path);
-        durations.push(receivedRecordingDurationMs(selectedGroup.recordings[index]));
+        durations.push(phoneV3ReceivedRecordingDurationMs(selectedGroup.recordings[index]));
       }
       await playback.playSequence(paths, durations);
     } else if (this.latestRecording !== undefined) {
@@ -677,7 +620,7 @@ export class PhoneRecordingViewModel {
       const durations: Array<number> = [];
       for (let index = 0; index < selectedGroup.recordings.length; index += 1) {
         paths.push(selectedGroup.recordings[index].path);
-        durations.push(receivedRecordingDurationMs(selectedGroup.recordings[index]));
+        durations.push(phoneV3ReceivedRecordingDurationMs(selectedGroup.recordings[index]));
       }
       await playback.playSequence(paths, durations, targetPosition);
     } else if (this.latestRecording !== undefined) {
@@ -685,7 +628,7 @@ export class PhoneRecordingViewModel {
     }
   }
 
-  private async deleteRecordingGroupAsync(group: PhoneRecordingGroup,
+  private async deleteRecordingGroupAsync(group: PhoneV3LocalAudioGroup,
     recordingStore: ReceivedRecordingStore): Promise<number> {
     const deletingSelectedGroup = this.selectedRecordingGroupKey === group.key;
     if (deletingSelectedGroup && this.playbackService !== undefined) {
@@ -722,7 +665,7 @@ export class PhoneRecordingViewModel {
 
   private rebuildRecordingGroups(recordings: Array<ReceivedRecordingFile>,
     preferredRecordingPath: string = ''): void {
-    this.receivedRecordingGroups = groupReceivedRecordings(recordings);
+    this.receivedRecordingGroups = groupPhoneV3LocalAudio(recordings);
     if (preferredRecordingPath.length > 0) {
       for (let groupIndex = 0; groupIndex < this.receivedRecordingGroups.length; groupIndex += 1) {
         const group = this.receivedRecordingGroups[groupIndex];
@@ -759,7 +702,7 @@ export class PhoneRecordingViewModel {
     }
   }
 
-  private findSelectedRecordingGroup(): PhoneRecordingGroup | undefined {
+  private findSelectedRecordingGroup(): PhoneV3LocalAudioGroup | undefined {
     return this.recordingGroup(this.selectedRecordingGroupKey);
   }
 

@@ -37,10 +37,6 @@
       "value": "#667085"
     },
     {
-      "name": "text_tertiary",
-      "value": "#475467"
-    },
-    {
       "name": "brand_primary",
       "value": "#1570EF"
     },
@@ -55,14 +51,6 @@
     {
       "name": "brand_warning",
       "value": "#F79009"
-    },
-    {
-      "name": "button_neutral",
-      "value": "#344054"
-    },
-    {
-      "name": "button_success",
-      "value": "#12B76A"
     },
     {
       "name": "on_emphasis",

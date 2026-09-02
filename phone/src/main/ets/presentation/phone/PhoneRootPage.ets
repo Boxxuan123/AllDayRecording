@@ -12,19 +12,14 @@ import { PhoneV3SessionDetailPage } from '../../v3/presentation/PhoneV3SessionDe
 import { phoneV3ImmersiveMaterial } from '../../v3/presentation/PhoneV3NativeUi';
 import { phoneV3SessionTitle } from '../../v3/presentation/PhoneV3UiFormat';
 import { PhoneV3ViewModel } from '../../v3/presentation/PhoneV3ViewModel';
+import { PhoneV3DeviceRuntime } from '../../v3/data/PhoneV3DeviceRuntime';
+import { PhoneV3DeviceRuntimeAdapter } from '../../v3/data/PhoneV3DeviceRuntimeAdapter';
 import { PhoneComputerTransferPage } from './PhoneComputerTransferPage';
-import { PhoneLegacyReadOnlyPage } from './PhoneLegacyReadOnlyPage';
-import { PhoneRecordingV3DeviceAdapter } from './PhoneRecordingV3DeviceAdapter';
-import { PhoneRecordingViewModel } from './PhoneRecordingViewModel';
 
 const PHONE_COMPUTER_TRANSFER_ROUTE: string = 'phoneComputerTransfer';
-const PHONE_LEGACY_ROUTE: string = 'phoneLegacyReadOnly';
 const PHONE_V3_SESSION_ROUTE: string = 'phoneV3SessionDetail';
 
 class PhoneComputerTransferRouteParams {
-}
-
-class PhoneLegacyRouteParams {
 }
 
 class PhoneV3SessionRouteParams {
@@ -37,7 +32,7 @@ class PhoneV3SessionRouteParams {
 
 @Component
 export struct PhoneRootPage {
-  @State private viewModel: PhoneRecordingViewModel = new PhoneRecordingViewModel();
+  @State private deviceRuntime: PhoneV3DeviceRuntime = new PhoneV3DeviceRuntime();
   @State private v3ViewModel: PhoneV3ViewModel = new PhoneV3ViewModel();
   private navStack: NavPathStack = new NavPathStack();
 
@@ -53,26 +48,19 @@ export struct PhoneRootPage {
 
   aboutToAppear(): void {
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    this.viewModel.start(context);
-    this.v3ViewModel.start(context, new PhoneRecordingV3DeviceAdapter(this.viewModel));
+    this.deviceRuntime.start(context);
+    this.v3ViewModel.start(context, new PhoneV3DeviceRuntimeAdapter(this.deviceRuntime));
   }
 
   aboutToDisappear(): void {
     this.v3ViewModel.stop();
-    this.viewModel.stop();
+    this.deviceRuntime.stop();
   }
 
   private openComputerTransfer(): void {
     this.navStack.pushPath({
       name: PHONE_COMPUTER_TRANSFER_ROUTE,
       param: new PhoneComputerTransferRouteParams()
-    });
-  }
-
-  private openLegacy(): void {
-    this.navStack.pushPath({
-      name: PHONE_LEGACY_ROUTE,
-      param: new PhoneLegacyRouteParams()
     });
   }
 
@@ -157,17 +145,6 @@ export struct PhoneRootPage {
       })
       .titleMode(HdsNavDestinationTitleMode.MINI)
       .backgroundColor($r('app.color.page_background'))
-    } else if (name === PHONE_LEGACY_ROUTE) {
-      HdsNavDestination() {
-        PhoneLegacyReadOnlyPage({ viewModel: this.viewModel })
-      }
-      .titleBar({
-        enableComponentSafeArea: true,
-        content: { title: { mainTitle: 'Legacy V2 只读回退' } },
-        style: this.immersiveTitleBarStyle()
-      })
-      .titleMode(HdsNavDestinationTitleMode.MINI)
-      .backgroundColor($r('app.color.page_background'))
     } else if (name === PHONE_V3_SESSION_ROUTE) {
       HdsNavDestination() {
         PhoneV3SessionDetailPage({ viewModel: this.v3ViewModel })
@@ -199,8 +176,7 @@ export struct PhoneRootPage {
       PhoneV3RootPage({
         viewModel: this.v3ViewModel,
         onOpenSession: (session: PhoneV3SessionCard): void => this.openV3Session(session),
-        onOpenComputerTransfer: (): void => this.openComputerTransfer(),
-        onOpenLegacy: (): void => this.openLegacy()
+        onOpenComputerTransfer: (): void => this.openComputerTransfer()
       })
     }
     .hideTitleBar(true)

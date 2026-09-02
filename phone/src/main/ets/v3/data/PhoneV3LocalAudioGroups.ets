@@ -7,7 +7,7 @@ import {
 
 const MILLISECONDS_PER_SECOND: number = 1000;
 
-export class PhoneRecordingGroup {
+export class PhoneV3LocalAudioGroup {
   key: string;
   recordings: Array<ReceivedRecordingFile>;
   startedAt: number;
@@ -26,8 +26,8 @@ export class PhoneRecordingGroup {
   }
 }
 
-export function groupReceivedRecordings(recordings: Array<ReceivedRecordingFile>): Array<PhoneRecordingGroup> {
-  const groups: Array<PhoneRecordingGroup> = [];
+export function groupPhoneV3LocalAudio(recordings: Array<ReceivedRecordingFile>): Array<PhoneV3LocalAudioGroup> {
+  const groups: Array<PhoneV3LocalAudioGroup> = [];
   for (let index = 0; index < recordings.length; index += 1) {
     const recording = recordings[index];
     const sessionDirectory = continuousSessionDirectory(recording);
@@ -35,24 +35,24 @@ export function groupReceivedRecordings(recordings: Array<ReceivedRecordingFile>
     let group = findGroup(groups, key);
     if (group === undefined) {
       const startedAt = sessionStartedAt(sessionDirectory, recording.receivedAt);
-      group = new PhoneRecordingGroup(key, [], startedAt, recording.receivedAt, 0, 0);
+      group = new PhoneV3LocalAudioGroup(key, [], startedAt, recording.receivedAt, 0, 0);
       groups.push(group);
     }
     group.recordings.push(recording);
     group.size += recording.size;
-    group.durationMs += receivedRecordingDurationMs(recording);
+    group.durationMs += phoneV3ReceivedRecordingDurationMs(recording);
     group.receivedAt = Math.max(group.receivedAt, recording.receivedAt);
   }
 
   for (let index = 0; index < groups.length; index += 1) {
     groups[index].recordings.sort(compareRecordingOrder);
   }
-  groups.sort((left: PhoneRecordingGroup, right: PhoneRecordingGroup): number =>
+  groups.sort((left: PhoneV3LocalAudioGroup, right: PhoneV3LocalAudioGroup): number =>
     right.startedAt - left.startedAt || right.receivedAt - left.receivedAt);
   return groups;
 }
 
-export function receivedRecordingDurationMs(recording: ReceivedRecordingFile): number {
+export function phoneV3ReceivedRecordingDurationMs(recording: ReceivedRecordingFile): number {
   if (recording.durationMs > 0) {
     return recording.durationMs;
   }
@@ -63,7 +63,7 @@ export function receivedRecordingDurationMs(recording: ReceivedRecordingFile): n
   return Math.floor(pcmBytes * MILLISECONDS_PER_SECOND / PCM_SAMPLE_RATE_HZ / PCM_BYTES_PER_SAMPLE);
 }
 
-function findGroup(groups: Array<PhoneRecordingGroup>, key: string): PhoneRecordingGroup | undefined {
+function findGroup(groups: Array<PhoneV3LocalAudioGroup>, key: string): PhoneV3LocalAudioGroup | undefined {
   for (let index = 0; index < groups.length; index += 1) {
     if (groups[index].key === key) {
       return groups[index];
