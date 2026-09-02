@@ -11,23 +11,14 @@ export struct PhoneV3CacheConflictsPage {
   build() {
     Scroll() {
       Column({ space: 16 }) {
-        Column({ space: 4 }) {
-          Text('更多')
-            .width('100%')
-            .fontSize(30)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_primary'))
-          Text('离线数据、异常记录与兼容工具')
-            .width('100%')
-            .fontSize(14)
-            .fontColor($r('app.color.text_secondary'))
-        }
-        .width('100%')
-        .alignItems(HorizontalAlign.Start)
+        Text('显示手机修改与电脑数据不一致的记录。')
+          .width('100%')
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
 
         Column({ space: 10 }) {
           Row() {
-            Text('本地数据安全')
+            Text('本地数据')
               .fontSize(17)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
@@ -40,15 +31,15 @@ export struct PhoneV3CacheConflictsPage {
             .fontSize(14)
             .fontColor($r('app.color.text_secondary'))
           Row({ space: 8 }) {
-            Text(`会话 ${this.viewModel.state.snapshot.sessions.length}`)
+            Text(`录音 ${this.viewModel.snapshot.sessions.length}`)
               .fontSize(12)
               .fontColor($r('app.color.text_secondary'))
-            Text(`待备份 ${this.viewModel.state.snapshot.sync.pendingOperations}`)
+            Text(`待备份 ${this.viewModel.snapshot.sync.pendingOperations}`)
               .fontSize(12)
               .fontColor($r('app.color.text_secondary'))
-            Text(`异常 ${this.viewModel.state.snapshot.conflicts.length}`)
+            Text(`问题 ${this.viewModel.snapshot.conflicts.length}`)
               .fontSize(12)
-              .fontColor(this.viewModel.state.snapshot.conflicts.length > 0 ?
+              .fontColor(this.viewModel.snapshot.conflicts.length > 0 ?
                 $r('app.color.brand_warning') : $r('app.color.text_secondary'))
           }
             .width('100%')
@@ -59,14 +50,14 @@ export struct PhoneV3CacheConflictsPage {
         .backgroundColor($r('app.color.surface_primary'))
         .borderRadius(16)
 
-        Text('同步异常')
+        Text('同步问题')
           .width('100%')
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
 
-        if (this.viewModel.state.snapshot.conflicts.length === 0) {
-          Text('当前没有需要处理的同步异常')
+        if (this.viewModel.snapshot.conflicts.length === 0) {
+          Text('当前没有需要处理的同步问题')
             .width('100%')
             .fontSize(14)
             .fontColor($r('app.color.text_secondary'))
@@ -74,7 +65,7 @@ export struct PhoneV3CacheConflictsPage {
             .backgroundColor($r('app.color.surface_primary'))
             .borderRadius(12)
         } else {
-          ForEach(this.viewModel.state.snapshot.conflicts, (conflict: PhoneV3Conflict) => {
+          ForEach(this.viewModel.snapshot.conflicts, (conflict: PhoneV3Conflict) => {
             Column({ space: 6 }) {
               Text(`${conflict.status} · ${conflict.kind}`)
                 .fontSize(15)

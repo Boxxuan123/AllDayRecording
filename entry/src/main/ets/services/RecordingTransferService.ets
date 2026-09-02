@@ -83,8 +83,13 @@ export interface WatchRecordingControlResult {
 export type WatchRecordingControlHandler =
   (desiredState: string, requestId: string) => Promise<WatchRecordingControlResult>;
 
+export interface WatchWifiTransferResult {
+  actualState: string;
+  message: string;
+}
+
 export type WatchWifiTransferHandler =
-  (requestId: string, credentials: WifiTransferSessionCredentials) => Promise<string>;
+  (requestId: string, credentials: WifiTransferSessionCredentials) => Promise<WatchWifiTransferResult>;
 
 interface SyncSourceFile extends RecordingFile {
   relativePath: string;
@@ -501,9 +506,10 @@ export class WearEngineRecordingSender {
     try {
       await this.beginWifiTransferExclusive();
       const result = await this.wifiTransferHandler(command.requestId, credentials);
-      const ack = await this.sendWifiTransferAck(transport, command.requestId, true, result);
+      const ack = await this.sendWifiTransferAck(transport, command.requestId, true,
+        result.message, result.actualState);
       this.wifiTransferCoordinator.complete(command.requestId, ack);
-      this.updateStatus(result);
+      this.updateStatus(result.message);
     } catch (error) {
       const message = wearEngineErrorMessage(error);
       const ack = await this.sendWifiTransferAck(transport, command.requestId, false, message);
@@ -516,12 +522,13 @@ export class WearEngineRecordingSender {
   }
 
   private async sendWifiTransferAck(transport: P2pTransport, requestId: string,
-    success: boolean, message: string): Promise<WatchSyncProtocolMessage> {
+    success: boolean, message: string,
+    actualState: string = success ? 'completed' : 'failed'): Promise<WatchSyncProtocolMessage> {
     const ack: WatchSyncProtocolMessage = {
       version: WATCH_SYNC_PROTOCOL_VERSION,
       type: WATCH_WIFI_TRANSFER_ACK,
       requestId: requestId,
-      actualState: success ? 'completed' : 'failed',
+      actualState: actualState,
       success: success,
       message: message
     };

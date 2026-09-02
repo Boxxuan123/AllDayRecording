@@ -75,6 +75,23 @@ export default function watchSyncProtocolTest() {
       expect(decodedAck.actualState).assertEqual('completed');
     });
 
+    it('roundTripsWifiTransferUpToDateAsSuccess', 0, () => {
+      const ack: WatchSyncProtocolMessage = {
+        version: WATCH_SYNC_PROTOCOL_VERSION,
+        type: WATCH_WIFI_TRANSFER_ACK,
+        requestId: 'wifi_empty',
+        actualState: 'up_to_date',
+        success: true,
+        message: '已是最新：手表没有新的完整录音'
+      };
+
+      const decoded = decodeWatchSyncMessage(encodeWatchSyncMessage(ack));
+
+      expect(decoded.success).assertTrue();
+      expect(decoded.actualState).assertEqual('up_to_date');
+      expect(decoded.message).assertEqual('已是最新：手表没有新的完整录音');
+    });
+
     it('keepsExactIdentitySemantics', 0, () => {
       const firstPath = 'pcm_gap_test_100/segment_000001.wav';
       const secondPath = 'pcm_gap_test_200/segment_000001.wav';

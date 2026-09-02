@@ -1,4 +1,5 @@
 import { common } from '@kit.AbilityKit';
+import { DeviceV3ReviewActionRequest } from '../../computer/ComputerTransferProtocol';
 import { PhoneV3UseCases, mergePhoneV3Sessions } from '../application/PhoneV3UseCases';
 import { PhoneV3DeviceBridgePort } from '../application/PhoneV3Ports';
 import { PhoneProjectionRepository } from '../data/PhoneProjectionRepository';
@@ -6,7 +7,9 @@ import { PhoneV3ComputerBackup } from '../data/PhoneV3ComputerBackup';
 import { PhoneV3DeviceRemote } from '../data/PhoneV3DeviceRemote';
 import { PhoneV3LocalAudioRepository } from '../data/PhoneV3LocalAudioRepository';
 import { PhoneV3ReminderScheduler } from '../data/PhoneV3ReminderScheduler';
+import { PhoneV3ReviewAudioPlayer } from '../data/PhoneV3ReviewAudioPlayer';
 import {
+  PhoneV3DeviceState,
   PhoneV3LocalAudioFact,
   PhoneV3SessionCard,
   PhoneV3Snapshot,
@@ -16,6 +19,7 @@ import {
   PhoneV3UiAction,
   PhoneV3UiActionType,
   PhoneV3UiState,
+  PHONE_V3_UI_STATE_STORAGE_KEY,
   reducePhoneV3Ui,
   selectedPhoneV3Session
 } from './PhoneV3UiState';
@@ -33,8 +37,17 @@ enum PhoneV3RetryAction {
 
 @Observed
 export class PhoneV3ViewModel {
-  state: PhoneV3UiState = new PhoneV3UiState();
+  snapshot: PhoneV3Snapshot = new PhoneV3Snapshot();
+  device: PhoneV3DeviceState = new PhoneV3DeviceState();
+  selectedSessionId: string = '';
+  localReady: boolean = false;
+  cacheReady: boolean = false;
+  busy: boolean = false;
+  message: string = '正在读取手机录音…';
+  error: string = '';
   private useCases: PhoneV3UseCases | undefined = undefined;
+  private reviewAudioPlayer: PhoneV3ReviewAudioPlayer | undefined = undefined;
+  private playedReviewSampleKeys: Array<string> = [];
   private bridge: PhoneV3DeviceBridgePort | undefined = undefined;
   private localFacts: Array<PhoneV3LocalAudioFact> = [];
   private timerId: number = -1;
@@ -44,6 +57,11 @@ export class PhoneV3ViewModel {
   private lastRetryAction: PhoneV3RetryAction = PhoneV3RetryAction.NONE;
   private lastDesiredRecordingState: string = 'recording';
   private localAudioListener: () => void = (): void => this.onLocalAudioChanged();
+  private stateChangeListener: () => void = (): void => {};
+
+  setStateChangeListener(listener: () => void): void {
+    this.stateChangeListener = listener;
+  }
 
   start(context: common.UIAbilityContext, deviceBridge: PhoneV3DeviceBridgePort): void {
     if (this.started) {
@@ -64,10 +82,25 @@ export class PhoneV3ViewModel {
     }
     this.bridge?.removeLocalAudioChangeListener(this.localAudioListener);
     this.bridge?.stopPlayback();
+    this.reviewAudioPlayer?.release().then((): void => {}, (): void => {});
+    this.stateChangeListener = (): void => {};
   }
 
   selectedSession(): PhoneV3SessionCard | undefined {
-    return selectedPhoneV3Session(this.state);
+    return selectedPhoneV3Session(this.currentUiState());
+  }
+
+  resolveCurrentSession(candidate: PhoneV3SessionCard): PhoneV3SessionCard {
+    for (let index = 0; index < this.snapshot.sessions.length; index += 1) {
+      const current = this.snapshot.sessions[index];
+      if (current.id === candidate.id ||
+        (candidate.sessionId.length > 0 && current.sessionId === candidate.sessionId) ||
+        (candidate.sessionKey.length > 0 && current.sessionKey === candidate.sessionKey) ||
+        (candidate.localGroupKey.length > 0 && current.localGroupKey === candidate.localGroupKey)) {
+        return current;
+      }
+    }
+    return candidate;
   }
 
   selectSession(session: PhoneV3SessionCard): void {
@@ -99,7 +132,7 @@ export class PhoneV3ViewModel {
 
   synchronize(): void {
     const useCases = this.useCases;
-    if (useCases === undefined || this.state.busy) {
+    if (useCases === undefined || this.busy) {
       return;
     }
     this.lastRetryAction = PhoneV3RetryAction.COMPUTER_SYNC;
@@ -117,7 +150,7 @@ export class PhoneV3ViewModel {
     speakerTrackId: string | null, identity: string,
     onQueued: () => void = (): void => {}): void {
     const useCases = this.useCases;
-    if (useCases === undefined || this.state.busy) {
+    if (useCases === undefined || this.busy) {
       return;
     }
     this.lastRetryAction = PhoneV3RetryAction.COMPUTER_SYNC;
@@ -131,9 +164,64 @@ export class PhoneV3ViewModel {
     }).catch((error: Object): void => this.fail(error));
   }
 
+  resolveReview(reviewId: string, action: string, prototypeId: string = '',
+    displayName: string = '', onResolved: () => void = (): void => {}): void {
+    const useCases = this.useCases;
+    if (useCases === undefined || this.busy) {
+      return;
+    }
+    const request: DeviceV3ReviewActionRequest = { review_id: reviewId, action: action };
+    if (prototypeId.length > 0) {
+      request.prototype_id = prototypeId;
+    }
+    if (displayName.trim().length > 0) {
+      request.display_name = displayName.trim();
+    }
+    if (action === 'ignore' || action === 'reject') {
+      request.reason = '手机审核未采纳';
+    }
+    this.lastRetryAction = PhoneV3RetryAction.NONE;
+    this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.BUSY,
+      undefined, undefined, '正在提交审核判断…'));
+    useCases.resolveReview(request).then((reviewItems): void => {
+      const current = this.snapshot;
+      const snapshot = new PhoneV3Snapshot(
+        current.sessions, current.conflicts, current.sync, current.paired,
+        current.reminders, reviewItems);
+      this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SNAPSHOT_READY,
+        snapshot, undefined, '审核结果已保存到电脑'));
+      onResolved();
+    }).catch((error: Object): void => this.fail(error));
+  }
+
+  reviewSampleWasPlayed(reviewId: string, prototypeId: string): boolean {
+    return this.playedReviewSampleKeys.indexOf(`${reviewId}:${prototypeId}`) >= 0;
+  }
+
+  playReviewSample(reviewId: string, prototypeId: string,
+    onStarted: () => void = (): void => {}): void {
+    const useCases = this.useCases;
+    const player = this.reviewAudioPlayer;
+    if (useCases === undefined || player === undefined || this.busy) {
+      return;
+    }
+    this.lastRetryAction = PhoneV3RetryAction.NONE;
+    this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.BUSY,
+      undefined, undefined, '正在从电脑读取声音样本…'));
+    useCases.loadReviewAudio(reviewId, prototypeId).then((response): Promise<void> =>
+      player.play(response, (): void => {
+        if (!this.reviewSampleWasPlayed(reviewId, prototypeId)) {
+          this.playedReviewSampleKeys = this.playedReviewSampleKeys.concat([`${reviewId}:${prototypeId}`]);
+        }
+        onStarted();
+        this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SUCCESS,
+          undefined, undefined, '样本已开始播放，可以确认或拒绝'));
+      })).catch((error: Object): void => this.fail(error));
+  }
+
   rebuild(): void {
     const useCases = this.useCases;
-    if (useCases === undefined || this.state.busy) {
+    if (useCases === undefined || this.busy) {
       return;
     }
     this.lastRetryAction = PhoneV3RetryAction.REBUILD;
@@ -163,7 +251,7 @@ export class PhoneV3ViewModel {
 
   toggleWifiReceiver(): void {
     this.lastRetryAction = PhoneV3RetryAction.WIFI_TRANSFER;
-    this.clearError(this.state.device.wifi.ready ? '正在停止 Wi-Fi 快传…' : '正在准备 Wi-Fi 快传…');
+    this.clearError(this.device.wifi.ready ? '正在停止 Wi-Fi 快传…' : '正在准备 Wi-Fi 快传…');
     this.bridge?.toggleWifiReceiver();
     this.refreshDeviceState();
   }
@@ -209,7 +297,7 @@ export class PhoneV3ViewModel {
   deleteLocalAudio(session: PhoneV3SessionCard, onDeleted: () => void = (): void => {}): void {
     const bridge = this.bridge;
     const useCases = this.useCases;
-    if (bridge === undefined || useCases === undefined || this.state.busy) {
+    if (bridge === undefined || useCases === undefined || this.busy) {
       return;
     }
     if (!this.canDeleteLocalAudio(session)) {
@@ -235,6 +323,11 @@ export class PhoneV3ViewModel {
 
   canRetry(): boolean {
     return this.lastRetryAction !== PhoneV3RetryAction.NONE;
+  }
+
+  reportUiError(message: string): void {
+    this.lastRetryAction = PhoneV3RetryAction.NONE;
+    this.fail(new Error(message));
   }
 
   retryLastAction(): void {
@@ -269,6 +362,7 @@ export class PhoneV3ViewModel {
 
   private async initialize(context: common.UIAbilityContext): Promise<void> {
     try {
+      this.reviewAudioPlayer = new PhoneV3ReviewAudioPlayer(context);
       const local = new PhoneV3LocalAudioRepository(context.filesDir);
       this.localFacts = await local.list();
       this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.LOCAL_READY,
@@ -328,7 +422,25 @@ export class PhoneV3ViewModel {
   }
 
   private dispatch(action: PhoneV3UiAction): void {
-    this.state = reducePhoneV3Ui(this.state, action);
+    const next = reducePhoneV3Ui(this.currentUiState(), action);
+    // Keep the values that drive ArkUI directly on this @Observed object. A nested
+    // `state.snapshot` replacement was not invalidating an already-rendered tab,
+    // which left Home on its local-only bootstrap data after cache loading finished.
+    this.snapshot = next.snapshot;
+    this.device = next.device;
+    this.selectedSessionId = next.selectedSessionId;
+    this.localReady = next.localReady;
+    this.cacheReady = next.cacheReady;
+    this.busy = next.busy;
+    this.message = next.message;
+    this.error = next.error;
+    AppStorage.setOrCreate<PhoneV3UiState>(PHONE_V3_UI_STATE_STORAGE_KEY, next);
+    this.stateChangeListener();
+  }
+
+  private currentUiState(): PhoneV3UiState {
+    return new PhoneV3UiState(this.snapshot, this.device, this.selectedSessionId,
+      this.localReady, this.cacheReady, this.busy, this.message, this.error);
   }
 
   private fail(error: Object): void {

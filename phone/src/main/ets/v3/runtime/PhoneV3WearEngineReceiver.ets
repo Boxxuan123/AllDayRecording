@@ -67,7 +67,11 @@ export type RecordingReceivedHandler = (recording: ReceivedRecordingFile) => voi
 export type TransferStatusHandler = (status: string) => void;
 export type WatchSyncProgressHandler = (progress: WatchSyncProgress) => void;
 export type WatchRecordingControlStatusHandler = (status: WatchRecordingControlStatus) => void;
-type WatchWifiTransferResolve = () => void;
+export interface WatchWifiTransferResult {
+  actualState: string;
+  message: string;
+}
+type WatchWifiTransferResolve = (result: WatchWifiTransferResult) => void;
 type WatchWifiTransferReject = (error: Error) => void;
 
 type P2pTransport = WearEngineConnection;
@@ -375,7 +379,7 @@ export class PhoneV3WearEngineReceiver {
     }
   }
 
-  async requestWatchWifiTransfer(credentials: WifiTransferSessionCredentials): Promise<void> {
+  async requestWatchWifiTransfer(credentials: WifiTransferSessionCredentials): Promise<WatchWifiTransferResult> {
     const client = this.p2pClient;
     const peer = this.peer;
     const appParam = this.appParam;
@@ -395,7 +399,8 @@ export class PhoneV3WearEngineReceiver {
     };
     const requestId = `wifi_${Date.now()}`;
     this.wifiTransferCredentials = credentials;
-    await new Promise<void>((resolve: WatchWifiTransferResolve, reject: WatchWifiTransferReject): void => {
+    return new Promise<WatchWifiTransferResult>((resolve: WatchWifiTransferResolve,
+      reject: WatchWifiTransferReject): void => {
       this.wifiTransferResolveHandler = resolve;
       this.wifiTransferRejectHandler = reject;
       this.wifiTransferControl.begin(requestId, 'wifi_transfer', (_expired: PhoneRecordingControlState): void => {
@@ -835,20 +840,23 @@ export class PhoneV3WearEngineReceiver {
     const succeeded = message.success === true;
     const detail = message.message || (succeeded ? 'Wi-Fi 快传已完成' : '手表 Wi-Fi 快传失败');
     if (succeeded) {
-      this.resolveWifiTransferRequest();
+      this.resolveWifiTransferRequest({
+        actualState: message.actualState || 'completed',
+        message: detail
+      });
       return;
     }
     this.rejectWifiTransferRequest(detail);
   }
 
-  private resolveWifiTransferRequest(): void {
+  private resolveWifiTransferRequest(result: WatchWifiTransferResult): void {
     this.wifiTransferControl.finish();
     const resolve = this.wifiTransferResolveHandler;
     this.wifiTransferResolveHandler = undefined;
     this.wifiTransferRejectHandler = undefined;
     this.wifiTransferCredentials = undefined;
     if (resolve !== undefined) {
-      resolve();
+      resolve(result);
     }
   }
 

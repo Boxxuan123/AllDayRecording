@@ -16,13 +16,15 @@ import { PhoneV3SessionCard, PhoneV3Utterance } from '../domain/PhoneV3Models';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 import {
   phoneV3AbsoluteTime,
-  phoneV3ComputerStage,
-  phoneV3ProcessingStage,
   phoneV3SessionMeta,
-  phoneV3TimelineTime,
-  phoneV3WatchStage
+  phoneV3TimelineTime
 } from './PhoneV3UiFormat';
 import { phoneV3ImmersiveMaterial, phoneV3StatusChip } from './PhoneV3NativeUi';
+import {
+  PhoneV3SessionEvidenceTab,
+  PhoneV3SessionOverviewTab,
+  PhoneV3SessionSpeakersTab
+} from './PhoneV3SessionInfoTabs';
 
 class PhoneV3SpeakerChoice {
   id: string | null;
@@ -37,13 +39,26 @@ class PhoneV3SpeakerChoice {
 @Component
 export struct PhoneV3SessionDetailPage {
   @ObjectLink viewModel: PhoneV3ViewModel;
+  @Prop stateRevision: number = 0;
+  routeSession: PhoneV3SessionCard | undefined = undefined;
   @State private isSeeking: boolean = false;
   @State private seeking: number = 0;
   @State private correctionVisible: boolean = false;
   @State private correctionText: string = '';
   @State private correctionSpeakerTrackId: string = '';
   @State private correctionIdentity: string = 'unknown';
+  @State private selectedContentTab: number = 0;
   private correctionTarget: PhoneV3Utterance | undefined = undefined;
+
+  private currentSession(): PhoneV3SessionCard | undefined {
+    if (this.stateRevision < 0) {
+      return undefined;
+    }
+    if (this.routeSession === undefined) {
+      return this.viewModel.selectedSession() ?? this.viewModel.snapshot.sessions[0];
+    }
+    return this.viewModel.resolveCurrentSession(this.routeSession);
+  }
 
   aboutToDisappear(): void {
     this.viewModel.stopPlayback();
@@ -58,8 +73,8 @@ export struct PhoneV3SessionDetailPage {
   }
 
   private skipPlayback(session: PhoneV3SessionCard, deltaMs: number): void {
-    const duration = Math.max(session.durationMs, this.viewModel.state.device.playbackDurationMs);
-    const next = Math.max(0, Math.min(duration, this.viewModel.state.device.playbackPositionMs + deltaMs));
+    const duration = Math.max(session.durationMs, this.viewModel.device.playbackDurationMs);
+    const next = Math.max(0, Math.min(duration, this.viewModel.device.playbackPositionMs + deltaMs));
     this.viewModel.seekPlayback(next);
   }
 
@@ -93,7 +108,7 @@ export struct PhoneV3SessionDetailPage {
   private speakerChoices(): Array<PhoneV3SpeakerChoice> {
     const choices: Array<PhoneV3SpeakerChoice> = [new PhoneV3SpeakerChoice(null, '未指定说话人')];
     const seen: Set<string> = new Set<string>();
-    const session = this.viewModel.selectedSession();
+    const session = this.currentSession();
     if (session === undefined) {
       return choices;
     }
@@ -148,6 +163,22 @@ export struct PhoneV3SessionDetailPage {
         this.correctionVisible = false;
         this.correctionTarget = undefined;
       });
+  }
+
+  @Builder
+  private contentTabButton(index: number, label: string) {
+    Button(label, { type: ButtonType.Normal })
+      .layoutWeight(1)
+      .height(38)
+      .fontSize(13)
+      .fontWeight(this.selectedContentTab === index ? FontWeight.Medium : FontWeight.Regular)
+      .fontColor(this.selectedContentTab === index ? Color.White : $r('app.color.text_secondary'))
+      .backgroundColor(this.selectedContentTab === index ?
+        $r('app.color.brand_primary') : Color.Transparent)
+      .borderRadius(19)
+      .onClick((): void => {
+        this.selectedContentTab = index;
+      })
   }
 
   @Builder
@@ -206,29 +237,13 @@ export struct PhoneV3SessionDetailPage {
       Button('保存修改', { type: ButtonType.Capsule })
         .width('100%')
         .height(46)
-        .enabled(!this.viewModel.state.busy && this.correctionText.trim().length > 0)
+        .enabled(!this.viewModel.busy && this.correctionText.trim().length > 0)
         .buttonStyle(ButtonStyleMode.EMPHASIZED)
         .onClick((): void => this.submitCorrection())
     }
     .width('100%')
     .padding({ left: 20, right: 20, top: 24, bottom: 24 })
     .alignItems(HorizontalAlign.Start)
-  }
-
-  @Builder
-  private stage(label: string, value: string) {
-    Row({ space: 12 }) {
-      Text(label)
-        .width(128)
-        .fontSize(13)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
-      Text(value)
-        .layoutWeight(1)
-        .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
-    }
-    .width('100%')
   }
 
   @Builder
@@ -275,25 +290,36 @@ export struct PhoneV3SessionDetailPage {
         }
         .width('100%')
 
+        Row({ space: 2 }) {
+          this.contentTabButton(0, '时间线')
+          this.contentTabButton(1, '概览')
+          this.contentTabButton(2, '说话人')
+          this.contentTabButton(3, '证据')
+        }
+        .width('100%')
+        .padding(3)
+        .borderRadius(22)
+        .backgroundColor($r('app.color.surface_secondary'))
+
         if (session.localPaths.length > 0) {
           Column({ space: 14 }) {
             Row() {
-              Text(this.viewModel.state.device.isPlaying ? '正在播放' :
-                this.viewModel.state.device.playbackPositionMs > 0 ? '已暂停' : '本地播放')
+              Text(this.viewModel.device.isPlaying ? '正在播放' :
+                this.viewModel.device.playbackPositionMs > 0 ? '已暂停' : '本地播放')
                 .fontSize(16)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.text_primary'))
               Blank()
-              Text(this.viewModel.state.device.isPlaying ? '播放中' : '就绪')
+              Text(this.viewModel.device.isPlaying ? '播放中' : '就绪')
                 .fontSize(12)
-                .fontColor(this.viewModel.state.device.isPlaying ?
+                .fontColor(this.viewModel.device.isPlaying ?
                   $r('app.color.brand_success') : $r('app.color.text_secondary'))
             }
             .width('100%')
             Slider({
-              value: this.isSeeking ? this.seeking : this.viewModel.state.device.playbackPositionMs,
+              value: this.isSeeking ? this.seeking : this.viewModel.device.playbackPositionMs,
               min: 0,
-              max: Math.max(1, session.durationMs, this.viewModel.state.device.playbackDurationMs),
+              max: Math.max(1, session.durationMs, this.viewModel.device.playbackDurationMs),
               step: 1,
               style: SliderStyle.OutSet
             })
@@ -302,7 +328,7 @@ export struct PhoneV3SessionDetailPage {
               .blockColor($r('app.color.brand_primary'))
               .selectedColor($r('app.color.brand_primary'))
               .trackColor($r('app.color.surface_secondary'))
-              .enabled(!this.viewModel.state.device.playbackBusy)
+              .enabled(!this.viewModel.device.playbackBusy)
               .onChange((value: number, mode: SliderChangeMode): void => {
                 this.seeking = value;
                 if (mode === SliderChangeMode.Begin || mode === SliderChangeMode.Moving) {
@@ -316,11 +342,11 @@ export struct PhoneV3SessionDetailPage {
               })
             Row() {
               Text(formatRecordingDuration(this.isSeeking ? this.seeking :
-                this.viewModel.state.device.playbackPositionMs))
+                this.viewModel.device.playbackPositionMs))
                 .fontSize(12)
                 .fontColor($r('app.color.text_secondary'))
               Text(formatRecordingDuration(Math.max(session.durationMs,
-                this.viewModel.state.device.playbackDurationMs)))
+                this.viewModel.device.playbackDurationMs)))
                 .fontSize(12)
                 .fontColor($r('app.color.text_secondary'))
             }
@@ -341,17 +367,17 @@ export struct PhoneV3SessionDetailPage {
               .width(78)
               .height(64)
               .buttonStyle(ButtonStyleMode.TEXTUAL)
-              .enabled(!this.viewModel.state.device.playbackBusy)
+              .enabled(!this.viewModel.device.playbackBusy)
               .onClick((): void => this.skipPlayback(session, -15000))
 
               Button({ type: ButtonType.Circle }) {
-                if (this.viewModel.state.device.playbackBusy) {
+                if (this.viewModel.device.playbackBusy) {
                   LoadingProgress()
                     .width(28)
                     .height(28)
                     .color(Color.White)
                 } else {
-                  SymbolGlyph(this.viewModel.state.device.isPlaying ?
+                  SymbolGlyph(this.viewModel.device.isPlaying ?
                     $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
                     .fontSize(30)
                     .fontColor([Color.White])
@@ -360,7 +386,7 @@ export struct PhoneV3SessionDetailPage {
               .width(64)
               .height(64)
               .buttonStyle(ButtonStyleMode.EMPHASIZED)
-              .enabled(!this.viewModel.state.device.playbackBusy)
+              .enabled(!this.viewModel.device.playbackBusy)
               .onClick((): void => this.viewModel.togglePlayback())
 
               Button({ type: ButtonType.Normal }) {
@@ -376,7 +402,7 @@ export struct PhoneV3SessionDetailPage {
               .width(78)
               .height(64)
               .buttonStyle(ButtonStyleMode.TEXTUAL)
-              .enabled(!this.viewModel.state.device.playbackBusy)
+              .enabled(!this.viewModel.device.playbackBusy)
               .onClick((): void => this.skipPlayback(session, 15000))
             }
               .width('100%')
@@ -401,14 +427,14 @@ export struct PhoneV3SessionDetailPage {
           .borderRadius(14)
         }
 
-        if (this.viewModel.state.error.length > 0 || this.viewModel.state.device.operationError.length > 0) {
+        if (this.viewModel.error.length > 0 || this.viewModel.device.operationError.length > 0) {
           ExceptionPromptV2({
             options: new PromptOptionsV2({
               marginType: MarginTypeV2.DEFAULT_MARGIN,
               marginTop: 0,
               symbolStyle: new SymbolGlyphModifier($r('sys.symbol.exclamationmark_circle_fill')),
-              tip: this.viewModel.state.error.length > 0 ? this.viewModel.state.error :
-                this.viewModel.state.device.operationError,
+              tip: this.viewModel.error.length > 0 ? this.viewModel.error :
+                this.viewModel.device.operationError,
               actionText: this.viewModel.canRetry() ? '重试' : undefined,
               isShown: true
             }),
@@ -417,33 +443,31 @@ export struct PhoneV3SessionDetailPage {
             .width('100%')
         }
 
-        Column({ space: 10 }) {
-          this.stage('手表录音', phoneV3WatchStage(session))
-          this.stage('电脑备份', phoneV3ComputerStage(session))
-          this.stage('转写处理', phoneV3ProcessingStage(session))
-        }
-        .width('100%')
-        .padding(14)
-        .backgroundColor($r('app.color.surface_primary'))
-        .borderRadius(14)
-
-        Text('转写时间线')
-          .width('100%')
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-        if (session.utterances.length === 0) {
-          Text('电脑尚未生成转写，已有本地音频仍可播放。')
+        if (this.selectedContentTab === 0) {
+          Text('转写时间线')
             .width('100%')
-            .fontSize(14)
-            .fontColor($r('app.color.text_secondary'))
-            .padding(16)
-            .backgroundColor($r('app.color.surface_primary'))
-            .borderRadius(12)
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_primary'))
+          if (session.utterances.length === 0) {
+            Text('电脑尚未生成转写，已有本地音频仍可播放。')
+              .width('100%')
+              .fontSize(14)
+              .fontColor($r('app.color.text_secondary'))
+              .padding(16)
+              .backgroundColor($r('app.color.surface_primary'))
+              .borderRadius(12)
+          } else {
+            ForEach(session.utterances, (utterance: PhoneV3Utterance) => {
+              this.timeline(utterance)
+            }, (utterance: PhoneV3Utterance): string => utterance.utteranceId)
+          }
+        } else if (this.selectedContentTab === 1) {
+          PhoneV3SessionOverviewTab({ session: session })
+        } else if (this.selectedContentTab === 2) {
+          PhoneV3SessionSpeakersTab({ session: session })
         } else {
-          ForEach(session.utterances, (utterance: PhoneV3Utterance) => {
-            this.timeline(utterance)
-          }, (utterance: PhoneV3Utterance): string => utterance.utteranceId)
+          PhoneV3SessionEvidenceTab({ session: session })
         }
       }
       .width('100%')
@@ -456,14 +480,16 @@ export struct PhoneV3SessionDetailPage {
 
   build() {
     Column() {
-      if (this.viewModel.selectedSession() !== undefined) {
-        this.content(this.viewModel.selectedSession() as PhoneV3SessionCard)
+      if (this.currentSession() !== undefined) {
+        this.content(this.currentSession() as PhoneV3SessionCard)
       } else {
         Text('会话已不存在').fontColor($r('app.color.text_secondary'))
       }
     }
     .width('100%')
     .height('100%')
+    .justifyContent(FlexAlign.Start)
+    .alignItems(HorizontalAlign.Start)
     .backgroundColor($r('app.color.page_background'))
     .bindSheet(this.correctionVisible, this.correctionSheet(), {
       height: 680,

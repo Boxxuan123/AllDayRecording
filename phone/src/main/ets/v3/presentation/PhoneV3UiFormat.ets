@@ -33,6 +33,19 @@ export function phoneV3ProcessingStage(session: PhoneV3SessionCard): string {
   return `${stage} · ${Math.round(session.processingProgress * 100)}%`;
 }
 
+export function phoneV3TranscriptSummary(session: PhoneV3SessionCard): string {
+  if (session.utterances.length > 0) {
+    return `已生成 ${session.utterances.length} 条转写`;
+  }
+  if (session.processingStatus === 'running' || session.processingStatus === 'queued') {
+    return phoneV3ProcessingStage(session);
+  }
+  if (session.sessionId.length === 0) {
+    return session.uploadStatus === 'uploaded' ? '已上传，等待电脑生成转写' : '仅在手机，尚未同步生成转写';
+  }
+  return '电脑尚未生成转写';
+}
+
 export function phoneV3UpdatedLabel(updatedAt: number): string {
   return updatedAt > 0 ? `更新 ${formatRecordingReceivedAt(updatedAt)}` : '尚无电脑更新时间';
 }

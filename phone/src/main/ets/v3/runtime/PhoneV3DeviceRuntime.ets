@@ -15,6 +15,7 @@ import {
 } from 'common';
 import {
   PhoneV3WearEngineReceiver,
+  WatchWifiTransferResult,
   wearEngineErrorMessage
 } from './PhoneV3WearEngineReceiver';
 import { PhoneV3RecordingStore } from './PhoneV3RecordingStore';
@@ -574,7 +575,13 @@ export class PhoneV3DeviceRuntime {
     const credentials = await service.prepareReceiver();
     this.wifiReceiverReady = true;
     this.wifiStatus = '手机接收已就绪，正在自动唤醒手表并同步全部完整录音…';
-    await receiver.requestWatchWifiTransfer(credentials);
+    const result: WatchWifiTransferResult = await receiver.requestWatchWifiTransfer(credentials);
+    if (result.actualState === 'up_to_date') {
+      await service.stopReceiver();
+      this.wifiReceiverReady = false;
+      this.wifiProgress = 0;
+      this.wifiStatus = result.message;
+    }
   }
 
   private async retryWifiReceiverAsync(service: WifiRecordingTransferService,

@@ -303,20 +303,59 @@ export class PhoneV3Reminder {
   }
 }
 
+export class PhoneV3ReviewItem {
+  reviewId: string;
+  kind: string;
+  priority: string;
+  sourceId: string;
+  sourceRevision: number | null;
+  sessionId: string | null;
+  personId: string | null;
+  title: string;
+  summary: string;
+  reason: string;
+  evidenceCount: number;
+  createdAt: string;
+  updatedAt: string;
+  contextJson: string;
+
+  constructor(reviewId: string, kind: string, priority: string, sourceId: string,
+    sourceRevision: number | null, sessionId: string | null, personId: string | null,
+    title: string, summary: string, reason: string, evidenceCount: number,
+    createdAt: string, updatedAt: string, contextJson: string) {
+    this.reviewId = reviewId;
+    this.kind = kind;
+    this.priority = priority;
+    this.sourceId = sourceId;
+    this.sourceRevision = sourceRevision;
+    this.sessionId = sessionId;
+    this.personId = personId;
+    this.title = title;
+    this.summary = summary;
+    this.reason = reason;
+    this.evidenceCount = evidenceCount;
+    this.createdAt = createdAt;
+    this.updatedAt = updatedAt;
+    this.contextJson = contextJson;
+  }
+}
+
 export class PhoneV3Snapshot {
   sessions: Array<PhoneV3SessionCard>;
   conflicts: Array<PhoneV3Conflict>;
   sync: PhoneV3SyncStatus;
   paired: boolean;
   reminders: Array<PhoneV3Reminder>;
+  reviewItems: Array<PhoneV3ReviewItem>;
 
   constructor(sessions: Array<PhoneV3SessionCard> = [], conflicts: Array<PhoneV3Conflict> = [],
     sync: PhoneV3SyncStatus = new PhoneV3SyncStatus(), paired: boolean = false,
-    reminders: Array<PhoneV3Reminder> = []) {
+    reminders: Array<PhoneV3Reminder> = [], reviewItems: Array<PhoneV3ReviewItem> = []) {
     this.sessions = sessions;
     this.conflicts = conflicts;
     this.sync = sync;
     this.paired = paired;
     this.reminders = reminders;
+    this.reviewItems = reviewItems;
   }
 }

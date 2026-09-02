@@ -8,6 +8,9 @@ export const PASSKEY_AUTHENTICATE_OPTIONS_PATH: string = '/api/v1/passkeys/authe
 export const DEVICE_AUTH_CHALLENGE_PATH: string = '/api/v1/devices/authenticate/challenge';
 export const DEVICE_V3_STATUS_PATH: string = '/device/v3/status';
 export const DEVICE_V3_SYNC_PATH: string = '/device/v3/sync';
+export const DEVICE_V3_REVIEWS_PATH: string = '/device/v3/reviews';
+export const DEVICE_V3_REVIEW_ACTION_PATH: string = '/device/v3/reviews/action';
+export const DEVICE_V3_REVIEW_AUDIO_PATH: string = '/device/v3/reviews/audio';
 export const DEVICE_KEY_ALGORITHM: string = 'ECDSA_P256_SHA256';
 export const COMPUTER_RECEIVER_SERVICE_TYPE: string = '_allday-pc._tcp';
 export const COMPUTER_RECEIVER_PROTOCOL: string = 'ALL_DAY_RECORDING_TRANSFER';
@@ -158,6 +161,37 @@ export interface DeviceV3StatusResponse {
   contract_version: string;
   projection_version: number;
   server_time: string;
+}
+
+export interface DeviceV3ReviewSnapshot {
+  items: Array<Object>;
+}
+
+export interface DeviceV3ReviewActionRequest {
+  review_id: string;
+  action: string;
+  prototype_id?: string;
+  display_name?: string;
+  reason?: string;
+}
+
+export interface DeviceV3ReviewActionResponse {
+  result: Object;
+  reviews: DeviceV3ReviewSnapshot;
+}
+
+export interface DeviceV3ReviewAudioRequest {
+  review_id: string;
+  prototype_id: string;
+}
+
+export interface DeviceV3ReviewAudioResponse {
+  review_id: string;
+  prototype_id: string;
+  format: string;
+  data_base64url: string;
+  start_ms: number;
+  end_ms: number;
 }
 
 export interface DeviceV3ClientOperation {

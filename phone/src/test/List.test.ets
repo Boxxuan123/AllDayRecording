@@ -6,6 +6,8 @@ import phoneSyncProjectionTest from './PhoneSyncProjection.test';
 import phoneV3UseCasesTest from './PhoneV3UseCases.test';
 import computerSessionManifestTest from './ComputerSessionManifest.test';
 import computerRecordingBackupServiceTest from './ComputerRecordingBackupService.test';
+import phoneV3ComputerBackupTest from './PhoneV3ComputerBackup.test';
+import phoneV3ReviewModelsTest from './PhoneV3ReviewModels.test';
 
 export default function testsuite() {
   phoneV3RecordingStoreTest();
@@ -16,4 +18,6 @@ export default function testsuite() {
   phoneV3UseCasesTest();
   computerSessionManifestTest();
   computerRecordingBackupServiceTest();
+  phoneV3ComputerBackupTest();
+  phoneV3ReviewModelsTest();
 }

@@ -8,23 +8,24 @@ import { phoneV3StatusChip } from './PhoneV3NativeUi';
 export struct PhoneV3SyncCenterPage {
   @ObjectLink viewModel: PhoneV3ViewModel;
   onOpenComputerConnection: () => void = (): void => {};
+  onOpenConflicts: () => void = (): void => {};
 
   private syncErrorText(): string {
-    if (this.viewModel.state.error.length > 0) {
-      return this.viewModel.state.error;
+    if (this.viewModel.error.length > 0) {
+      return this.viewModel.error;
     }
-    if (this.viewModel.state.device.watchTransfer.error.length > 0) {
-      return this.viewModel.state.device.watchTransfer.error;
+    if (this.viewModel.device.watchTransfer.error.length > 0) {
+      return this.viewModel.device.watchTransfer.error;
     }
-    if (this.viewModel.state.device.wifi.error.length > 0) {
-      return this.viewModel.state.device.wifi.error;
+    if (this.viewModel.device.wifi.error.length > 0) {
+      return this.viewModel.device.wifi.error;
     }
-    return this.viewModel.state.snapshot.sync.lastError;
+    return this.viewModel.snapshot.sync.lastError;
   }
 
   @Builder
   private watchProgress(transfer: PhoneV3FileTransferState) {
-    if (this.viewModel.state.device.watchSyncing || transfer.active) {
+    if (this.viewModel.device.watchSyncing || transfer.active) {
       Column({ space: 8 }) {
         Row() {
           Text(transfer.stage.length > 0 ? transfer.stage : transfer.message)
@@ -63,18 +64,6 @@ export struct PhoneV3SyncCenterPage {
   build() {
     Scroll() {
       Column({ space: 18 }) {
-        Column({ space: 4 }) {
-          Text('同步')
-            .fontSize(30)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_primary'))
-          Text('从手表接收录音，并安全备份到电脑')
-            .fontSize(14)
-            .fontColor($r('app.color.text_secondary'))
-        }
-        .width('100%')
-        .alignItems(HorizontalAlign.Start)
-
         Column({ space: 14 }) {
           Row({ space: 12 }) {
             Stack() {
@@ -91,9 +80,9 @@ export struct PhoneV3SyncCenterPage {
                 .fontSize(18)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.text_primary'))
-              Text(this.viewModel.state.device.watchSyncing ?
-                `正在接收 ${this.viewModel.state.device.watchReceived}/${this.viewModel.state.device.watchTotal}` :
-                '手机会保留完整本地音频')
+              Text(this.viewModel.device.watchSyncing ?
+                `正在接收 ${this.viewModel.device.watchReceived}/${this.viewModel.device.watchTotal}` :
+                '接收后保存在手机')
                 .fontSize(13)
                 .fontColor($r('app.color.text_secondary'))
             }
@@ -102,44 +91,44 @@ export struct PhoneV3SyncCenterPage {
           }
           .width('100%')
 
-          Text(this.viewModel.state.device.watchSyncing ?
-            `正在接收 ${this.viewModel.state.device.watchReceived}/${this.viewModel.state.device.watchTotal}` :
-            '普通接收更稳定；同一 Wi-Fi 下可用快传')
+          Text(this.viewModel.device.watchSyncing ?
+            `正在接收 ${this.viewModel.device.watchReceived}/${this.viewModel.device.watchTotal}` :
+            '稳定接收适合日常使用；同一 Wi-Fi 下可使用快传')
             .width('100%')
             .fontSize(13)
             .fontColor($r('app.color.text_secondary'))
           Row({ space: 8 }) {
-            Button(this.viewModel.state.device.watchSyncing ? '正在接收…' : '普通接收',
+            Button(this.viewModel.device.watchSyncing ? '正在接收…' : '稳定接收',
             { type: ButtonType.Capsule })
               .layoutWeight(1)
               .height(44)
-              .enabled(!this.viewModel.state.device.watchSyncing &&
-                !this.viewModel.state.device.wifi.busy && !this.viewModel.state.device.wifi.ready)
+              .enabled(!this.viewModel.device.watchSyncing &&
+                !this.viewModel.device.wifi.busy && !this.viewModel.device.wifi.ready)
               .buttonStyle(ButtonStyleMode.EMPHASIZED)
               .onClick((): void => this.viewModel.requestWatchSync())
-            Button(this.viewModel.state.device.wifi.busy ?
-              this.viewModel.state.device.wifi.stopping ? '正在停止…' : '正在准备…' :
-              this.viewModel.state.device.wifi.ready ? '停止快传' : 'Wi-Fi 快传',
+            Button(this.viewModel.device.wifi.busy ?
+              this.viewModel.device.wifi.stopping ? '正在停止…' : '正在准备…' :
+              this.viewModel.device.wifi.ready ? '停止快传' : 'Wi-Fi 快传',
             { type: ButtonType.Capsule })
               .layoutWeight(1)
               .height(44)
-              .enabled(!this.viewModel.state.device.wifi.busy && !this.viewModel.state.device.watchSyncing)
+              .enabled(!this.viewModel.device.wifi.busy && !this.viewModel.device.watchSyncing)
               .buttonStyle(ButtonStyleMode.NORMAL)
               .onClick((): void => this.viewModel.toggleWifiReceiver())
           }
-          this.watchProgress(this.viewModel.state.device.watchTransfer)
+          this.watchProgress(this.viewModel.device.watchTransfer)
 
-          if (this.viewModel.state.device.wifi.ready || this.viewModel.state.device.wifi.percent > 0 ||
-            this.viewModel.state.device.wifi.error.length > 0) {
+          if (this.viewModel.device.wifi.ready || this.viewModel.device.wifi.percent > 0 ||
+            this.viewModel.device.wifi.error.length > 0) {
             Column({ space: 8 }) {
-              Text(this.viewModel.state.device.wifi.status)
+              Text(this.viewModel.device.wifi.status)
                 .width('100%')
                 .fontSize(13)
-                .fontColor(this.viewModel.state.device.wifi.error.length > 0 ?
+                .fontColor(this.viewModel.device.wifi.error.length > 0 ?
                   $r('app.color.brand_danger') : $r('app.color.text_secondary'))
                 .maxLines(2)
-              if (this.viewModel.state.device.wifi.percent > 0) {
-                Progress({ value: this.viewModel.state.device.wifi.percent, total: 100,
+              if (this.viewModel.device.wifi.percent > 0) {
+                Progress({ value: this.viewModel.device.wifi.percent, total: 100,
                   type: ProgressType.Linear })
                   .width('100%')
                   .height(6)
@@ -190,8 +179,8 @@ export struct PhoneV3SyncCenterPage {
                 .fontSize(18)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.text_primary'))
-              Text(this.viewModel.state.snapshot.paired ?
-                `${this.viewModel.state.snapshot.sync.pendingOperations} 项更新等待备份` :
+              Text(this.viewModel.snapshot.paired ?
+                `${this.viewModel.snapshot.sync.pendingOperations} 项修改等待备份` :
                 '连接电脑后可安全备份和同步转写')
                 .fontSize(13)
                 .fontColor($r('app.color.text_secondary'))
@@ -199,31 +188,30 @@ export struct PhoneV3SyncCenterPage {
             .alignItems(HorizontalAlign.Start)
             .layoutWeight(1)
             ChipV2({
-              chipV2Options: phoneV3StatusChip(this.viewModel.state.snapshot.paired ? '已连接' : '未连接')
+              chipV2Options: phoneV3StatusChip(this.viewModel.snapshot.paired ? '已连接' : '未连接')
             })
           }
           .width('100%')
 
-          Button(this.viewModel.state.busy ? '正在备份…' : '立即备份更新', { type: ButtonType.Capsule })
+          Button(this.viewModel.busy ? '正在备份…' : '立即备份更新', { type: ButtonType.Capsule })
             .width('100%')
             .height(50)
-            .enabled(!this.viewModel.state.busy && this.viewModel.state.snapshot.paired)
+            .enabled(!this.viewModel.busy && this.viewModel.snapshot.paired)
             .buttonStyle(ButtonStyleMode.EMPHASIZED)
             .onClick((): void => this.viewModel.synchronize())
 
-          Button(this.viewModel.state.snapshot.paired ? '管理电脑连接' : '连接电脑',
+          Button(this.viewModel.snapshot.paired ? '管理电脑连接' : '连接电脑',
           { type: ButtonType.Capsule })
             .width('100%')
             .height(46)
             .buttonStyle(ButtonStyleMode.NORMAL)
             .onClick((): void => this.onOpenComputerConnection())
 
-          if (this.viewModel.state.message.length > 0) {
-            Text(this.viewModel.state.message)
+          if (this.viewModel.message.length > 0) {
+            Text(this.viewModel.message)
               .width('100%')
               .fontSize(12)
               .fontColor($r('app.color.text_secondary'))
-              .textAlign(TextAlign.Center)
           }
         }
         .width('100%')
@@ -233,17 +221,17 @@ export struct PhoneV3SyncCenterPage {
         .borderRadius(20)
 
         Column({ space: 12 }) {
-          Text('同步详情')
+          Text('同步状态')
             .width('100%')
             .fontSize(17)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.text_primary'))
           Row() {
-            Text('待备份更新')
+            Text('待备份修改')
               .fontSize(13)
               .fontColor($r('app.color.text_secondary'))
             Blank()
-            Text(this.viewModel.state.snapshot.sync.pendingOperations.toString())
+            Text(this.viewModel.snapshot.sync.pendingOperations.toString())
               .fontSize(13)
               .fontColor($r('app.color.text_primary'))
               .maxLines(2)
@@ -254,54 +242,39 @@ export struct PhoneV3SyncCenterPage {
               .fontSize(13)
               .fontColor($r('app.color.text_secondary'))
             Blank()
-            Text(this.viewModel.state.snapshot.sync.retryCount.toString())
+            Text(this.viewModel.snapshot.sync.retryCount.toString())
               .fontSize(13)
               .fontColor($r('app.color.text_primary'))
               .maxLines(2)
           }
           .width('100%')
           Row() {
-            Text('上次成功同步')
+            Text('上次备份')
               .fontSize(13)
               .fontColor($r('app.color.text_secondary'))
             Blank()
-            Text(this.viewModel.state.snapshot.sync.lastServerTime.length > 0 ?
-              this.viewModel.state.snapshot.sync.lastServerTime : '暂无')
+            Text(this.viewModel.snapshot.sync.lastServerTime.length > 0 ?
+              this.viewModel.snapshot.sync.lastServerTime : '暂无')
               .fontSize(13)
               .fontColor($r('app.color.text_primary'))
               .maxLines(2)
           }
           .width('100%')
-          Row() {
-            Text('Wi-Fi 快传能力')
-              .fontSize(13)
-              .fontColor($r('app.color.text_secondary'))
-            Blank()
-            Text(this.viewModel.state.device.wifi.capability.length > 0 ?
-              this.viewModel.state.device.wifi.capability : '等待检测')
-              .fontSize(13)
-              .fontColor($r('app.color.text_primary'))
-              .maxLines(2)
-          }
-          .width('100%')
-          Row() {
-            Text('同步游标')
-              .fontSize(13)
-              .fontColor($r('app.color.text_secondary'))
-            Blank()
-            Text(this.viewModel.state.snapshot.sync.cursor)
-              .fontSize(13)
-              .fontColor($r('app.color.text_primary'))
-              .maxLines(2)
-          }
-          .width('100%')
-          Button('修复同步缓存', { type: ButtonType.Capsule })
+          Button('重新获取电脑数据', { type: ButtonType.Capsule })
             .width('100%')
             .height(44)
-            .enabled(!this.viewModel.state.busy && this.viewModel.state.snapshot.paired)
+            .enabled(!this.viewModel.busy && this.viewModel.snapshot.paired)
             .buttonStyle(ButtonStyleMode.TEXTUAL)
             .onClick((): void => this.viewModel.rebuild())
-          Text('仅重建可从电脑恢复的缓存，不会删除手机本地音频。')
+          if (this.viewModel.snapshot.conflicts.length > 0) {
+            Button(`查看 ${this.viewModel.snapshot.conflicts.length} 项同步问题`,
+            { type: ButtonType.Capsule })
+              .width('100%')
+              .height(44)
+              .buttonStyle(ButtonStyleMode.NORMAL)
+              .onClick((): void => this.onOpenConflicts())
+          }
+          Text('只会重新获取电脑端数据，不会删除手机原始录音。')
             .width('100%')
             .fontSize(12)
             .fontColor($r('app.color.text_secondary'))

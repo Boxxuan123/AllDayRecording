@@ -1,71 +1,93 @@
-import { formatRecordingSize } from 'common';
-import { ChipV2, ExceptionPromptV2, MarginTypeV2, PromptOptionsV2, SymbolGlyphModifier } from '@kit.ArkUI';
-import { PhoneV3FileTransferState, PhoneV3Reminder, PhoneV3SessionCard } from '../domain/PhoneV3Models';
+import { ExceptionPromptV2, MarginTypeV2, PromptOptionsV2, SymbolGlyphModifier } from '@kit.ArkUI';
+import { PhoneV3SessionCard } from '../domain/PhoneV3Models';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
+import { PHONE_V3_UI_STATE_STORAGE_KEY, PhoneV3UiState } from './PhoneV3UiState';
 import {
-  phoneV3ComputerStage,
-  phoneV3ProcessingStage,
-  phoneV3ReminderState,
-  phoneV3ReminderTime,
   phoneV3SessionTitle,
-  phoneV3UpdatedLabel,
-  phoneV3WatchStage
+  phoneV3TranscriptSummary,
+  phoneV3UpdatedLabel
 } from './PhoneV3UiFormat';
-import { phoneV3StatusChip } from './PhoneV3NativeUi';
+import { PHONE_V3_FLOATING_TAB_BAR_CONTENT_END_OFFSET } from './PhoneV3NativeUi';
 
 @Component
 export struct PhoneV3HomePage {
-  @ObjectLink viewModel: PhoneV3ViewModel;
+  viewModel: PhoneV3ViewModel = new PhoneV3ViewModel();
+  @Prop stateRevision: number = 0;
   onOpenSession: (session: PhoneV3SessionCard) => void = (_session: PhoneV3SessionCard): void => {};
+  onOpenReviews: () => void = (): void => {};
 
-  private operationErrorText(): string {
-    if (this.viewModel.state.error.length > 0) {
-      return this.viewModel.state.error;
-    }
-    if (this.viewModel.state.device.watchTransfer.error.length > 0) {
-      return this.viewModel.state.device.watchTransfer.error;
-    }
-    return this.viewModel.state.device.operationError;
+  private currentUiState(): PhoneV3UiState {
+    const state = AppStorage.get<PhoneV3UiState>(PHONE_V3_UI_STATE_STORAGE_KEY);
+    return this.stateRevision >= 0 && state !== undefined ? state : new PhoneV3UiState();
   }
 
-  @Builder
-  private watchProgress(transfer: PhoneV3FileTransferState) {
-    if (this.viewModel.state.device.watchSyncing || transfer.active) {
-      Column({ space: 8 }) {
-        Row({ space: 8 }) {
-          Text(transfer.stage.length > 0 ? transfer.stage : transfer.message)
-            .fontSize(13)
-            .fontColor($r('app.color.text_secondary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .layoutWeight(1)
-          Text(`${transfer.percent}%`)
-            .fontSize(13)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.brand_primary'))
-        }
-        .width('100%')
-        Progress({ value: transfer.percent, total: 100, type: ProgressType.Linear })
-          .width('100%')
-          .height(6)
-          .color($r('app.color.brand_primary'))
-          .backgroundColor($r('app.color.surface_secondary'))
-        if (transfer.fileName.length > 0) {
-          Text(`${transfer.fileName}${transfer.totalBytes > 0 ?
-            ` · ${formatRecordingSize(transfer.transferredBytes)} / ${formatRecordingSize(transfer.totalBytes)}` : ''}`)
-            .width('100%')
-            .fontSize(12)
-            .fontColor($r('app.color.text_secondary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-      }
-      .width('100%')
-      .padding(12)
-      .alignItems(HorizontalAlign.Start)
-      .backgroundColor($r('app.color.surface_progress'))
-      .borderRadius(12)
+  private operationErrorText(): string {
+    if (this.currentUiState().error.length > 0) {
+      return this.currentUiState().error;
     }
+    if (this.currentUiState().device.watchTransfer.error.length > 0) {
+      return this.currentUiState().device.watchTransfer.error;
+    }
+    if (this.currentUiState().device.wifi.error.length > 0) {
+      return this.currentUiState().device.wifi.error;
+    }
+    return this.currentUiState().device.operationError;
+  }
+
+  private activeProcessingCount(): number {
+    return this.currentUiState().snapshot.sessions.filter((session: PhoneV3SessionCard): boolean =>
+      session.processingStatus === 'running' || session.processingStatus === 'queued').length;
+  }
+
+  private recordingActionLabel(): string {
+    if (this.currentUiState().device.watchControlBusy) {
+      return '正在等待手表确认…';
+    }
+    return this.currentUiState().device.remoteRecordingState === 'recording' ?
+      '停止录音并保存' : '开始录音';
+  }
+
+  private ordinarySyncLabel(): string {
+    if (!this.currentUiState().device.watchSyncing) {
+      return '普通同步';
+    }
+    if (this.currentUiState().device.watchTotal > 0) {
+      return `${this.currentUiState().device.watchReceived}/${this.currentUiState().device.watchTotal}`;
+    }
+    return '正在同步…';
+  }
+
+  private wifiTransferLabel(): string {
+    if (this.currentUiState().device.wifi.busy) {
+      return this.currentUiState().device.wifi.stopping ? '正在停止…' : '正在准备…';
+    }
+    return this.currentUiState().device.wifi.ready ? '停止快传' : 'Wi-Fi 快传';
+  }
+
+  private transferStatusText(): string {
+    if (this.currentUiState().device.watchSyncing || this.currentUiState().device.watchTransfer.active) {
+      const transfer = this.currentUiState().device.watchTransfer;
+      if (transfer.stage.length > 0) {
+        return transfer.stage;
+      }
+      if (transfer.message.length > 0) {
+        return transfer.message;
+      }
+      return '正在从手表接收录音';
+    }
+    if (this.currentUiState().device.wifi.busy || this.currentUiState().device.wifi.ready ||
+      this.currentUiState().device.wifi.percent > 0) {
+      return this.currentUiState().device.wifi.status.length > 0 ?
+        this.currentUiState().device.wifi.status : 'Wi-Fi 快传已就绪';
+    }
+    return '普通同步更稳定；同一 Wi-Fi 下可使用快传';
+  }
+
+  private transferPercent(): number {
+    if (this.currentUiState().device.watchSyncing || this.currentUiState().device.watchTransfer.active) {
+      return this.currentUiState().device.watchTransfer.percent;
+    }
+    return this.currentUiState().device.wifi.percent;
   }
 
   @Builder
@@ -87,245 +109,310 @@ export struct PhoneV3HomePage {
   }
 
   @Builder
-  private summary(value: string, label: string) {
-    Column({ space: 4 }) {
+  private summary(value: string, label: string, warning: boolean = false) {
+    Column({ space: 2 }) {
       Text(value)
-        .fontSize(25)
+        .fontSize(21)
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(warning ? $r('app.color.brand_warning') : $r('app.color.text_primary'))
       Text(label)
-        .fontSize(12)
+        .fontSize(11)
         .fontColor($r('app.color.text_secondary'))
+        .maxLines(1)
     }
     .layoutWeight(1)
-    .padding({ top: 14, bottom: 14 })
-    .backgroundColor($r('app.color.surface_primary'))
-    .borderRadius(14)
+    .padding({ top: 4, bottom: 4 })
+    .alignItems(HorizontalAlign.Center)
   }
 
   @Builder
-  private latestSession(session: PhoneV3SessionCard) {
-    Column({ space: 10 }) {
-      Row({ space: 10 }) {
-        Column({ space: 4 }) {
-          Text(phoneV3SessionTitle(session))
-            .fontSize(18)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_primary'))
-          Text(phoneV3UpdatedLabel(session.updatedAt))
-            .fontSize(12)
-            .fontColor($r('app.color.text_secondary'))
-        }
-        .alignItems(HorizontalAlign.Start)
-        .layoutWeight(1)
-
-        ChipV2({ chipV2Options: phoneV3StatusChip(session.sessionId.length > 0 ? '已备份' : '本地') })
-        SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(17)
-          .fontColor([$r('app.color.text_secondary')])
-      }
-      .width('100%')
-
-      Column({ space: 7 }) {
-        Text(`手表录音  ${phoneV3WatchStage(session)}`)
-          .fontSize(13)
-          .fontColor($r('app.color.text_secondary'))
-        Text(`电脑备份  ${phoneV3ComputerStage(session)}`)
-          .fontSize(13)
-          .fontColor($r('app.color.text_secondary'))
-        Text(`转写处理  ${phoneV3ProcessingStage(session)}`)
-          .fontSize(13)
-          .fontColor($r('app.color.text_secondary'))
-      }
-      .width('100%')
-      .alignItems(HorizontalAlign.Start)
-    }
-    .width('100%')
-    .padding(16)
-    .alignItems(HorizontalAlign.Start)
-    .backgroundColor($r('app.color.surface_primary'))
-    .borderRadius(16)
-    .onClick((): void => this.onOpenSession(session))
-  }
-
-  @Builder
-  private reminderNotification(reminder: PhoneV3Reminder) {
+  private latestSession() {
     Column({ space: 7 }) {
       Row({ space: 8 }) {
-        Text(reminder.title)
+        Text(phoneV3SessionTitle(this.currentUiState().snapshot.sessions[0]))
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
-          .maxLines(2)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
-        Text(phoneV3ReminderState(reminder))
-          .fontSize(12)
-          .fontColor(Date.parse(reminder.scheduledAt) <= Date.now() ?
-            $r('app.color.brand_warning') : $r('app.color.brand_primary'))
+        Text(this.currentUiState().snapshot.sessions[0].sessionId.length > 0 ? '已备份' : '仅手机')
+          .fontSize(11)
+          .fontColor(this.currentUiState().snapshot.sessions[0].sessionId.length > 0 ?
+            $r('app.color.brand_success') : $r('app.color.text_secondary'))
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(15)
+          .fontColor([$r('app.color.text_secondary')])
       }
       .width('100%')
-      Text(phoneV3ReminderTime(reminder))
-        .width('100%')
-        .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
-      if (reminder.location !== null && reminder.location.length > 0) {
-        Text(`地点：${reminder.location}`)
-          .width('100%')
+      Row({ space: 6 }) {
+        Text(phoneV3UpdatedLabel(this.currentUiState().snapshot.sessions[0].updatedAt))
           .fontSize(12)
           .fontColor($r('app.color.text_secondary'))
+        Text('·')
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+        Text(phoneV3TranscriptSummary(this.currentUiState().snapshot.sessions[0]))
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
       }
+      .width('100%')
     }
     .width('100%')
     .padding(14)
     .alignItems(HorizontalAlign.Start)
     .backgroundColor($r('app.color.surface_primary'))
     .borderRadius(14)
+    .onClick((): void => this.onOpenSession(this.currentUiState().snapshot.sessions[0]))
   }
 
   build() {
     Scroll() {
-      Column({ space: 18 }) {
-        Row({ space: 12 }) {
-          Column({ space: 4 }) {
-            Text('全天录音')
-              .fontSize(30)
-              .fontWeight(FontWeight.Bold)
-              .fontColor($r('app.color.text_primary'))
-            Text('手表录音会自动安全回到手机')
-              .fontSize(14)
-              .fontColor($r('app.color.text_secondary'))
-          }
-          .alignItems(HorizontalAlign.Start)
-          .layoutWeight(1)
-          ChipV2({
-            chipV2Options: phoneV3StatusChip(this.viewModel.state.snapshot.paired ? '电脑已连接' : '离线可用')
-          })
-        }
-        .width('100%')
-
-        Column({ space: 14 }) {
+      Column({ space: 12 }) {
+        Column({ space: 10 }) {
           Row({ space: 10 }) {
             Column()
-              .width(12)
-              .height(12)
-              .borderRadius(6)
-              .backgroundColor(this.viewModel.state.device.remoteRecordingState === 'recording' ?
+              .width(10)
+              .height(10)
+              .borderRadius(5)
+              .backgroundColor(this.currentUiState().device.remoteRecordingState === 'recording' ?
                 $r('app.color.brand_danger') : $r('app.color.brand_success'))
-            Column({ space: 3 }) {
-              Text('手表')
-                .fontSize(12)
-                .fontColor($r('app.color.text_secondary'))
-              Text(this.viewModel.state.device.watchStatus)
-                .fontSize(18)
+            Column({ space: 2 }) {
+              Text('手表录音')
+                .fontSize(13)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.text_primary'))
+              Text(this.currentUiState().device.watchStatus)
+                .fontSize(11)
+                .fontColor($r('app.color.text_secondary'))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
             }
             .alignItems(HorizontalAlign.Start)
             .layoutWeight(1)
-            if (this.viewModel.state.device.receiverReconnecting) {
-              LoadingProgress().width(24).height(24).color($r('app.color.brand_primary'))
+            if (this.currentUiState().device.receiverReconnecting) {
+              LoadingProgress().width(22).height(22).color($r('app.color.brand_primary'))
             }
           }
           .width('100%')
 
-          Button(this.viewModel.state.device.watchControlBusy ? '正在等待手表…' :
-            this.viewModel.state.device.remoteRecordingState === 'recording' ? '停止并保存' : '开始录音',
-          { type: ButtonType.Capsule })
-            .width('100%')
-            .height(54)
-            .fontSize(17)
-            .fontWeight(FontWeight.Medium)
-            .enabled(!this.viewModel.state.device.watchControlBusy &&
-              !this.viewModel.state.device.receiverReconnecting)
-            .buttonStyle(ButtonStyleMode.EMPHASIZED)
-            .role(this.viewModel.state.device.remoteRecordingState === 'recording' ?
-              ButtonRole.ERROR : ButtonRole.NORMAL)
-            .onClick((): void => this.viewModel.requestWatchRecordingState(
-              this.viewModel.state.device.remoteRecordingState === 'recording' ? 'stopped' : 'recording'))
-
-          Row({ space: 10 }) {
-            Button(this.viewModel.state.device.watchSyncing ? '正在同步…' : '接收手表录音',
-            { type: ButtonType.Capsule })
-              .layoutWeight(1)
-              .height(44)
-              .buttonStyle(ButtonStyleMode.NORMAL)
-              .enabled(!this.viewModel.state.device.watchSyncing)
-              .onClick((): void => this.viewModel.requestWatchSync())
-            Button(this.viewModel.state.device.receiverReconnecting ? '正在重连…' : '重新连接',
-            { type: ButtonType.Capsule })
-              .layoutWeight(1)
-              .height(44)
-              .buttonStyle(ButtonStyleMode.NORMAL)
-              .enabled(!this.viewModel.state.device.receiverReconnecting &&
-                !this.viewModel.state.device.watchSyncing)
-              .onClick((): void => this.viewModel.reconnectReceiver())
+          Button({ type: ButtonType.Capsule }) {
+            Row({ space: 8 }) {
+              SymbolGlyph($r('sys.symbol.waveform'))
+                .fontSize(20)
+                .fontColor([$r('app.color.on_emphasis')])
+              Text(this.recordingActionLabel())
+                .fontSize(16)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.on_emphasis'))
+            }
           }
+          .width('100%')
+          .height(52)
+          .enabled(!this.currentUiState().device.watchControlBusy &&
+            !this.currentUiState().device.receiverReconnecting)
+          .buttonStyle(ButtonStyleMode.EMPHASIZED)
+          .role(this.currentUiState().device.remoteRecordingState === 'recording' ?
+            ButtonRole.ERROR : ButtonRole.NORMAL)
+          .accessibilityText(this.recordingActionLabel())
+          .onClick((): void => this.viewModel.requestWatchRecordingState(
+            this.currentUiState().device.remoteRecordingState === 'recording' ? 'stopped' : 'recording'))
 
-          Text(this.viewModel.state.device.operationMessage.length > 0 ?
-            this.viewModel.state.device.operationMessage : this.viewModel.state.message.length > 0 ?
-              this.viewModel.state.message : '保持手机与手表连接，完成后会自动刷新录音')
+          Text(this.currentUiState().device.operationMessage.length > 0 ?
+            this.currentUiState().device.operationMessage : '录音保存在手表，停止后可同步到手机')
             .width('100%')
             .fontSize(12)
             .fontColor($r('app.color.text_secondary'))
-            .textAlign(TextAlign.Center)
-            .maxLines(2)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
         .width('100%')
-        .padding(18)
+        .padding(14)
         .alignItems(HorizontalAlign.Start)
         .backgroundColor($r('app.color.surface_primary'))
-        .borderRadius(20)
+        .borderRadius(18)
 
-        this.watchProgress(this.viewModel.state.device.watchTransfer)
-        this.operationError()
+        Column({ space: 10 }) {
+          Row() {
+            Text('同步录音')
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_primary'))
+              .layoutWeight(1)
+            Text(this.currentUiState().device.wifi.ready ? '快传已就绪' : '选择接收方式')
+              .fontSize(11)
+              .fontColor(this.currentUiState().device.wifi.ready ?
+                $r('app.color.brand_success') : $r('app.color.text_secondary'))
+          }
+          .width('100%')
 
-        Row({ space: 10 }) {
-          this.summary(this.viewModel.state.snapshot.sessions.length.toString(), '录音会话')
-          this.summary(this.viewModel.state.snapshot.sync.pendingOperations.toString(), '待备份更新')
+          Row({ space: 8 }) {
+            Button({ type: ButtonType.Capsule }) {
+              Row({ space: 6 }) {
+                SymbolGlyph($r('sys.symbol.arrow_2_circlepath'))
+                  .fontSize(18)
+                  .fontColor([$r('app.color.text_primary')])
+                Text(this.ordinarySyncLabel())
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor($r('app.color.text_primary'))
+                  .maxLines(1)
+              }
+            }
+            .layoutWeight(1)
+            .height(46)
+            .enabled(!this.currentUiState().device.watchSyncing &&
+              !this.currentUiState().device.wifi.busy && !this.currentUiState().device.wifi.ready)
+            .opacity(!this.currentUiState().device.watchSyncing &&
+              !this.currentUiState().device.wifi.busy && !this.currentUiState().device.wifi.ready ? 1 : 0.5)
+            .buttonStyle(ButtonStyleMode.NORMAL)
+            .backgroundColor($r('app.color.surface_secondary'))
+            .accessibilityText(this.ordinarySyncLabel())
+            .onClick((): void => this.viewModel.requestWatchSync())
+
+            Button({ type: ButtonType.Capsule }) {
+              Row({ space: 6 }) {
+                SymbolGlyph($r('sys.symbol.wifi'))
+                  .fontSize(18)
+                  .fontColor([this.currentUiState().device.wifi.ready ?
+                    $r('app.color.brand_success') : $r('app.color.brand_primary')])
+                Text(this.wifiTransferLabel())
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(this.currentUiState().device.wifi.ready ?
+                    $r('app.color.brand_success') : $r('app.color.brand_primary'))
+                  .maxLines(1)
+              }
+            }
+            .layoutWeight(1)
+            .height(46)
+            .enabled(!this.currentUiState().device.wifi.busy &&
+              !this.currentUiState().device.watchSyncing)
+            .opacity(!this.currentUiState().device.wifi.busy &&
+              !this.currentUiState().device.watchSyncing ? 1 : 0.5)
+            .buttonStyle(ButtonStyleMode.NORMAL)
+            .backgroundColor($r('app.color.surface_accent'))
+            .accessibilityText(this.wifiTransferLabel())
+            .onClick((): void => this.viewModel.toggleWifiReceiver())
+          }
+          .width('100%')
+
+          Text(this.transferStatusText())
+            .width('100%')
+            .fontSize(11)
+            .fontColor($r('app.color.text_secondary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          if (this.transferPercent() > 0) {
+            Progress({ value: this.transferPercent(), total: 100, type: ProgressType.Linear })
+              .width('100%')
+              .height(5)
+              .color(this.currentUiState().device.watchSyncing ?
+                $r('app.color.brand_primary') : $r('app.color.brand_success'))
+              .backgroundColor($r('app.color.surface_secondary'))
+          }
         }
         .width('100%')
+        .padding(14)
+        .alignItems(HorizontalAlign.Start)
+        .backgroundColor($r('app.color.surface_primary'))
+        .borderRadius(18)
 
-        Text('最近录音')
+        Column({ space: 8 }) {
+          Row() {
+            this.summary(this.currentUiState().snapshot.reviewItems.length.toString(), '待审核',
+              this.currentUiState().snapshot.reviewItems.length > 0)
+            Column()
+              .width(1)
+              .height(32)
+              .backgroundColor($r('app.color.surface_secondary'))
+            this.summary(this.activeProcessingCount().toString(), '处理中')
+            Column()
+              .width(1)
+              .height(32)
+              .backgroundColor($r('app.color.surface_secondary'))
+            this.summary(this.currentUiState().snapshot.sync.pendingOperations.toString(), '待同步')
+          }
           .width('100%')
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
+        }
+        .width('100%')
+        .padding({ top: 9, bottom: 9 })
+        .backgroundColor($r('app.color.surface_primary'))
+        .borderRadius(14)
 
-        if (this.viewModel.state.snapshot.sessions.length > 0) {
-          this.latestSession(this.viewModel.state.snapshot.sessions[0])
-        } else if (this.viewModel.state.localReady) {
+        this.operationError()
+
+        if (this.currentUiState().snapshot.reviewItems.length > 0) {
+          Row({ space: 10 }) {
+            Stack() {
+              SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
+                .fontSize(20)
+                .fontColor([$r('app.color.brand_primary')])
+            }
+            .width(36)
+            .height(36)
+            .borderRadius(11)
+            .backgroundColor($r('app.color.surface_accent'))
+            Column({ space: 2 }) {
+              Text(`${this.currentUiState().snapshot.reviewItems.length} 项内容待审核`)
+                .fontSize(14)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.text_primary'))
+              Text('声音、提醒和人物记忆集中处理')
+                .fontSize(11)
+                .fontColor($r('app.color.text_secondary'))
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
+            SymbolGlyph($r('sys.symbol.chevron_right'))
+              .fontSize(16)
+              .fontColor([$r('app.color.text_secondary')])
+          }
+          .width('100%')
+          .padding(12)
+          .backgroundColor($r('app.color.surface_progress'))
+          .borderRadius(14)
+          .accessibilityText('打开待审核内容')
+          .onClick((): void => this.onOpenReviews())
+        }
+
+        Row() {
+          Text('最近录音')
+            .fontSize(17)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_primary'))
+            .layoutWeight(1)
+          Text(`${this.currentUiState().snapshot.sessions.length} 条`)
+            .fontSize(12)
+            .fontColor($r('app.color.text_secondary'))
+        }
+        .width('100%')
+        .margin({ top: 2 })
+
+        if (this.currentUiState().snapshot.sessions.length > 0) {
+          this.latestSession()
+        } else if (this.currentUiState().localReady) {
           Text('手机上还没有录音；电脑离线不会影响这里的本地列表。')
             .width('100%')
-            .fontSize(14)
+            .fontSize(13)
             .fontColor($r('app.color.text_secondary'))
-            .padding(18)
+            .padding(14)
             .backgroundColor($r('app.color.surface_primary'))
-            .borderRadius(16)
+            .borderRadius(14)
         } else {
           LoadingProgress().width(32).height(32)
         }
 
-        if (this.viewModel.state.snapshot.reminders.length > 0) {
-          Row() {
-            Text('接下来')
-              .fontSize(18)
-              .fontWeight(FontWeight.Bold)
-              .fontColor($r('app.color.text_primary'))
-              .layoutWeight(1)
-            Text(`${this.viewModel.state.snapshot.reminders.length} 条提醒`)
-              .fontSize(12)
-              .fontColor($r('app.color.text_secondary'))
-          }
-          .width('100%')
-          ForEach(this.viewModel.state.snapshot.reminders.slice(0, 3), (reminder: PhoneV3Reminder) => {
-            this.reminderNotification(reminder)
-          }, (reminder: PhoneV3Reminder): string => reminder.eventId)
-        }
       }
       .width('100%')
-      .padding({ left: 20, right: 20, top: 8, bottom: 106 })
+      .padding({ left: 16, right: 16, top: 6 })
       .alignItems(HorizontalAlign.Start)
     }
+    .contentEndOffset(PHONE_V3_FLOATING_TAB_BAR_CONTENT_END_OFFSET)
     .align(Alignment.TopStart)
     .width('100%')
     .height('100%')

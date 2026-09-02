@@ -3,13 +3,18 @@ import {
   ComputerUploadResult
 } from '../../computer/ComputerRecordingUploadService';
 import { createComputerRecordingBackupService } from '../../computer/ComputerRecordingBackupService';
-import { prepareComputerSessions } from '../../computer/ComputerSessionManifest';
+import {
+  PreparedComputerSession,
+  prepareComputerSessions
+} from '../../computer/ComputerSessionManifest';
+import { ReceivedRecordingFile } from 'common';
 import { PhoneV3RecordingStore } from '../runtime/PhoneV3RecordingStore';
 import {
   PhoneV3AudioBackupPort,
   PhoneV3AudioBackupResult,
   PhoneV3ProjectionRepositoryPort
 } from '../application/PhoneV3Ports';
+import { PhoneV3LocalAudioLink } from '../domain/PhoneV3Models';
 
 export class PhoneV3ComputerBackup implements PhoneV3AudioBackupPort {
   private context: common.UIAbilityContext;
@@ -21,7 +26,9 @@ export class PhoneV3ComputerBackup implements PhoneV3AudioBackupPort {
   }
 
   async backup(): Promise<PhoneV3AudioBackupResult> {
-    const recordings = new PhoneV3RecordingStore(this.context.filesDir).list();
+    const localRecordings = new PhoneV3RecordingStore(this.context.filesDir).list();
+    const links = await this.repository.localAudioLinks();
+    const recordings = recordingsNeedingComputerBackup(localRecordings, links);
     const sessions = prepareComputerSessions(recordings);
     if (sessions.length === 0) {
       return new PhoneV3AudioBackupResult();
@@ -30,6 +37,39 @@ export class PhoneV3ComputerBackup implements PhoneV3AudioBackupPort {
       .backup(recordings, (): void => {});
     return backupResult(outcome.upload);
   }
+}
+
+export function recordingsNeedingComputerBackup(recordings: Array<ReceivedRecordingFile>,
+  links: Array<PhoneV3LocalAudioLink>): Array<ReceivedRecordingFile> {
+  const sessions = prepareComputerSessions(recordings);
+  const pending: Array<ReceivedRecordingFile> = [];
+  for (let sessionIndex = 0; sessionIndex < sessions.length; sessionIndex += 1) {
+    const session = sessions[sessionIndex];
+    if (sessionIsUploaded(session, links)) {
+      continue;
+    }
+    pending.push(...session.recordings);
+  }
+  return pending;
+}
+
+function sessionIsUploaded(session: PreparedComputerSession, links: Array<PhoneV3LocalAudioLink>): boolean {
+  for (let recordingIndex = 0; recordingIndex < session.recordings.length; recordingIndex += 1) {
+    const recording = session.recordings[recordingIndex];
+    let uploaded = false;
+    for (let linkIndex = 0; linkIndex < links.length; linkIndex += 1) {
+      const link = links[linkIndex];
+      if (link.sessionKey === session.manifest.sessionKey && link.localPath === recording.path &&
+        link.uploadStatus === 'uploaded') {
+        uploaded = true;
+        break;
+      }
+    }
+    if (!uploaded) {
+      return false;
+    }
+  }
+  return session.recordings.length > 0;
 }
 
 function backupResult(result: ComputerUploadResult): PhoneV3AudioBackupResult {

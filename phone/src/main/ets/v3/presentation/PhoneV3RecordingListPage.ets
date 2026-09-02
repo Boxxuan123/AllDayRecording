@@ -6,16 +6,77 @@ import {
 } from '@kit.ArkUI';
 import { PhoneV3SessionCard } from '../domain/PhoneV3Models';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
+import { PHONE_V3_UI_STATE_STORAGE_KEY, PhoneV3UiState } from './PhoneV3UiState';
 import {
   phoneV3SessionMeta,
-  phoneV3SessionTitle
+  phoneV3SessionTitle,
+  phoneV3TranscriptSummary
 } from './PhoneV3UiFormat';
-import { phoneV3ImmersiveMaterial } from './PhoneV3NativeUi';
+import {
+  PHONE_V3_BACKUP_ACTION_CONTENT_END_OFFSET,
+  phoneV3ImmersiveMaterial
+} from './PhoneV3NativeUi';
 
 @Component
 export struct PhoneV3RecordingListPage {
-  @ObjectLink viewModel: PhoneV3ViewModel;
+  viewModel: PhoneV3ViewModel = new PhoneV3ViewModel();
+  @Prop stateRevision: number = 0;
+  @State private searchText: string = '';
+  @State private filterIndex: number = 0;
   onOpenSession: (session: PhoneV3SessionCard) => void = (_session: PhoneV3SessionCard): void => {};
+
+  private currentUiState(): PhoneV3UiState {
+    const state = AppStorage.get<PhoneV3UiState>(PHONE_V3_UI_STATE_STORAGE_KEY);
+    return this.stateRevision >= 0 && state !== undefined ? state : new PhoneV3UiState();
+  }
+
+  private reviewCount(session: PhoneV3SessionCard): number {
+    return this.currentUiState().snapshot.reviewItems.filter((item): boolean =>
+      item.sessionId !== null && item.sessionId === session.sessionId).length;
+  }
+
+  private visibleSessions(): Array<PhoneV3SessionCard> {
+    const search = this.searchText.trim().toLocaleLowerCase();
+    return this.currentUiState().snapshot.sessions.filter((session: PhoneV3SessionCard): boolean => {
+      if (this.filterIndex === 1 && this.reviewCount(session) === 0) {
+        return false;
+      }
+      if (this.filterIndex === 2 &&
+        session.processingStatus !== 'running' && session.processingStatus !== 'queued') {
+        return false;
+      }
+      if (this.filterIndex === 3 && session.sessionId.length > 0) {
+        return false;
+      }
+      if (search.length === 0) {
+        return true;
+      }
+      if (phoneV3SessionTitle(session).toLocaleLowerCase().includes(search) ||
+        session.sessionId.toLocaleLowerCase().includes(search) ||
+        session.capturedStart.toLocaleLowerCase().includes(search)) {
+        return true;
+      }
+      return session.utterances.some((utterance): boolean =>
+        utterance.text.toLocaleLowerCase().includes(search) ||
+        (utterance.speakerLabel ?? '').toLocaleLowerCase().includes(search));
+    });
+  }
+
+  @Builder
+  private filterButton(index: number, label: string) {
+    Button(label, { type: ButtonType.Normal })
+      .layoutWeight(1)
+      .height(38)
+      .fontSize(13)
+      .fontWeight(this.filterIndex === index ? FontWeight.Medium : FontWeight.Regular)
+      .fontColor(this.filterIndex === index ? Color.White : $r('app.color.text_secondary'))
+      .backgroundColor(this.filterIndex === index ?
+        $r('app.color.brand_primary') : Color.Transparent)
+      .borderRadius(19)
+      .onClick((): void => {
+        this.filterIndex = index;
+      })
+  }
 
   private storageLabel(session: PhoneV3SessionCard): string {
     if (session.sessionId.length > 0) {
@@ -52,7 +113,7 @@ export struct PhoneV3RecordingListPage {
         }
       }, (): void => {});
     } catch (_error) {
-      this.viewModel.state.error = '无法显示删除确认框，请重试';
+      this.viewModel.reportUiError('无法显示删除确认框，请重试');
     }
   }
 
@@ -60,7 +121,7 @@ export struct PhoneV3RecordingListPage {
   private sessionMenu(session: PhoneV3SessionCard) {
     Menu() {
       MenuItem({ content: this.deleteMenuLabel(session) })
-        .enabled(this.viewModel.canDeleteLocalAudio(session) && !this.viewModel.state.busy)
+        .enabled(this.viewModel.canDeleteLocalAudio(session) && !this.currentUiState().busy)
         .onClick((): void => this.confirmDelete(session))
     }
     .backgroundColor($r('app.color.surface_primary'))
@@ -70,7 +131,7 @@ export struct PhoneV3RecordingListPage {
   @Builder
   private moreButton(session: PhoneV3SessionCard) {
     Button({ type: ButtonType.Circle, stateEffect: true }) {
-      if (this.viewModel.state.busy) {
+      if (this.currentUiState().busy) {
         LoadingProgress()
           .width(18)
           .height(18)
@@ -86,7 +147,7 @@ export struct PhoneV3RecordingListPage {
     .height(36)
     .buttonStyle(ButtonStyleMode.TEXTUAL)
     .accessibilityText('更多录音操作')
-    .enabled(!this.viewModel.state.busy)
+    .enabled(!this.currentUiState().busy)
     .bindMenu(this.sessionMenu(session), {
       systemMaterial: phoneV3ImmersiveMaterial()
     })
@@ -109,10 +170,22 @@ export struct PhoneV3RecordingListPage {
           .fontColor($r('app.color.text_secondary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(phoneV3TranscriptSummary(session))
+          .width('100%')
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
       .onClick((): void => this.onOpenSession(session))
+
+      if (this.reviewCount(session) > 0) {
+        Text(`${this.reviewCount(session)} 待审核`)
+          .fontSize(11)
+          .fontColor($r('app.color.brand_warning'))
+      }
 
       this.moreButton(session)
     }
@@ -125,25 +198,34 @@ export struct PhoneV3RecordingListPage {
 
   build() {
     Column({ space: 12 }) {
-      Row() {
-        Text('录音')
-          .fontSize(28)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-        Blank()
-        Text(`${this.viewModel.state.snapshot.sessions.length} 条`)
-          .fontSize(13)
-          .fontColor($r('app.color.text_secondary'))
+      TextInput({ text: this.searchText, placeholder: '搜索日期、转写、人物或 Session ID' })
+        .width('100%')
+        .height(46)
+        .fontSize(16)
+        .backgroundColor($r('app.color.surface_primary'))
+        .borderRadius(14)
+        .onChange((value: string): void => {
+          this.searchText = value;
+        })
+
+      Row({ space: 2 }) {
+        this.filterButton(0, '全部')
+        this.filterButton(1, '待审核')
+        this.filterButton(2, '处理中')
+        this.filterButton(3, '仅手机')
       }
       .width('100%')
+      .padding(3)
+      .borderRadius(22)
+      .backgroundColor($r('app.color.surface_secondary'))
 
-      if (this.viewModel.state.error.length > 0) {
+      if (this.currentUiState().error.length > 0) {
         ExceptionPromptV2({
           options: new PromptOptionsV2({
             marginType: MarginTypeV2.DEFAULT_MARGIN,
             marginTop: 0,
             symbolStyle: new SymbolGlyphModifier($r('sys.symbol.exclamationmark_circle_fill')),
-            tip: this.viewModel.state.error,
+            tip: this.currentUiState().error,
             actionText: this.viewModel.canRetry() ? '重试' : undefined,
             isShown: true
           }),
@@ -152,43 +234,61 @@ export struct PhoneV3RecordingListPage {
           .width('100%')
       }
 
-      if (this.viewModel.state.snapshot.sessions.length === 0) {
-        Column({ space: 14 }) {
+      if (this.visibleSessions().length === 0) {
+        Column({ space: 12 }) {
           Stack() {
-            SymbolGlyph($r('sys.symbol.waveform'))
-              .fontSize(38)
+            SymbolGlyph(this.currentUiState().snapshot.sessions.length === 0 ?
+              $r('sys.symbol.waveform') : $r('sys.symbol.magnifyingglass'))
+              .fontSize(32)
               .fontColor([$r('app.color.brand_primary')])
           }
-          .width(84)
-          .height(84)
-          .borderRadius(42)
+          .width(68)
+          .height(68)
+          .borderRadius(34)
           .backgroundColor($r('app.color.surface_accent'))
-          Text('还没有录音')
+          Text(this.currentUiState().snapshot.sessions.length === 0 ? '还没有录音' : '没有匹配的录音')
             .fontSize(18)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.text_primary'))
-          Text('手表录音接收完成后，会自动出现在这里')
+          Text(this.currentUiState().snapshot.sessions.length === 0 ?
+            '手表录音接收完成后，会自动出现在这里' : '可以换一个关键词或筛选条件')
             .width('100%')
             .fontSize(14)
             .fontColor($r('app.color.text_secondary'))
             .textAlign(TextAlign.Center)
+          if (this.currentUiState().snapshot.sessions.length > 0) {
+            Button('清除搜索和筛选', { type: ButtonType.Capsule })
+              .height(40)
+              .margin({ top: 4 })
+              .buttonStyle(ButtonStyleMode.TEXTUAL)
+              .onClick((): void => {
+                this.searchText = '';
+                this.filterIndex = 0;
+              })
+          }
         }
-          .width('100%')
-          .padding({ top: 24 })
+        .width('100%')
+        .padding({ left: 20, right: 20, top: 28, bottom: 28 })
+        .alignItems(HorizontalAlign.Center)
+        .backgroundColor($r('app.color.surface_primary'))
+        .borderRadius(20)
       } else {
         List({ space: 8 }) {
-          ForEach(this.viewModel.state.snapshot.sessions, (session: PhoneV3SessionCard) => {
+          ForEach(this.visibleSessions(), (session: PhoneV3SessionCard) => {
             ListItem() { this.row(session) }
           }, (session: PhoneV3SessionCard): string => session.id)
         }
         .width('100%')
         .layoutWeight(1)
+        .contentEndOffset(PHONE_V3_BACKUP_ACTION_CONTENT_END_OFFSET)
       }
     }
     .width('100%')
     .height('100%')
-    .padding({ left: 20, right: 20, top: 8, bottom: 100 })
+    .padding({ left: 20, right: 20, top: 8 })
+    .justifyContent(FlexAlign.Start)
     .alignItems(HorizontalAlign.Start)
+    .align(Alignment.TopStart)
     .backgroundColor($r('app.color.page_background'))
   }
 }

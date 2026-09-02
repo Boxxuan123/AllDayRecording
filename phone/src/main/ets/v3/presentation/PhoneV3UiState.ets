@@ -1,5 +1,7 @@
 import { PhoneV3DeviceState, PhoneV3SessionCard, PhoneV3Snapshot } from '../domain/PhoneV3Models';
 
+export const PHONE_V3_UI_STATE_STORAGE_KEY: string = 'phoneV3UiState';
+
 export enum PhoneV3UiActionType {
   LOCAL_READY,
   SNAPSHOT_READY,

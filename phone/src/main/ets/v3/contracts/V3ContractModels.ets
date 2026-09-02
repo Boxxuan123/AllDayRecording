@@ -64,6 +64,23 @@ export interface V3ReminderDto {
   updated_at: string;
 }
 
+export interface V3ReviewItemDto {
+  review_id: string;
+  kind: string;
+  priority: string;
+  source_id: string;
+  source_revision: number | null;
+  session_id: string | null;
+  person_id: string | null;
+  title: string;
+  summary: string;
+  reason: string;
+  evidence_count: number;
+  created_at: string;
+  updated_at: string;
+  context: Object;
+}
+
 export interface V3RecordingSessionFixture {
   state: string;
   status_code: string;
@@ -181,4 +198,26 @@ export function validateV3ReminderDto(value: Object): V3ReminderDto {
     throw new Error('电脑返回的 V3 Reminder DTO 无效');
   }
   return reminder;
+}
+
+export function validateV3ReviewItemDto(value: Object): V3ReviewItemDto {
+  const item = value as V3ReviewItemDto;
+  if (typeof item.review_id !== 'string' || item.review_id.length === 0 ||
+    ['processing_gate', 'reminder', 'person_memory', 'voice_identity', 'knowledge_proposal']
+      .indexOf(item.kind) < 0 ||
+    ['high', 'normal'].indexOf(item.priority) < 0 ||
+    typeof item.source_id !== 'string' || item.source_id.length === 0 ||
+    (item.source_revision !== null &&
+      (!Number.isSafeInteger(item.source_revision) || item.source_revision < 1)) ||
+    (item.session_id !== null && typeof item.session_id !== 'string') ||
+    (item.person_id !== null && typeof item.person_id !== 'string') ||
+    typeof item.title !== 'string' || typeof item.summary !== 'string' ||
+    typeof item.reason !== 'string' || !Number.isSafeInteger(item.evidence_count) ||
+    item.evidence_count < 0 || typeof item.created_at !== 'string' ||
+    Number.isNaN(Date.parse(item.created_at)) || typeof item.updated_at !== 'string' ||
+    Number.isNaN(Date.parse(item.updated_at)) || typeof item.context !== 'object' ||
+    item.context === null) {
+    throw new Error('电脑返回的 V3 ReviewItem DTO 无效');
+  }
+  return item;
 }

@@ -18,6 +18,9 @@
       },
       {
         "name": "ohos.permission.PUBLISH_AGENT_REMINDER"
+      },
+      {
+        "name": "ohos.permission.DETECT_GESTURE"
       }
     ],
     "pages": "$profile:main_pages",

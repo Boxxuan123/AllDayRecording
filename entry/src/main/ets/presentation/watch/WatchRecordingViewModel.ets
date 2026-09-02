@@ -12,6 +12,7 @@ import {
 import {
   WearEngineRecordingSender,
   WatchRecordingControlResult,
+  WatchWifiTransferResult,
   wearEngineErrorMessage
 } from '../../services/RecordingTransferService';
 import {
@@ -145,7 +146,7 @@ export class WatchRecordingViewModel {
       }
     }, (desiredState: string, requestId: string): Promise<WatchRecordingControlResult> =>
       this.applyPhoneRecordingControl(desiredState, requestId),
-    (_requestId: string, credentials: WifiTransferSessionCredentials): Promise<string> =>
+    (_requestId: string, credentials: WifiTransferSessionCredentials): Promise<WatchWifiTransferResult> =>
       this.performAllWifiTransfer(credentials));
     this.recordingStartFallback = new WatchRecordingStartFallback(context);
     WatchRecordingUiState.setForegroundListener((): void => {
@@ -430,7 +431,7 @@ export class WatchRecordingViewModel {
     throw new Error('不支持的录音目标状态');
   }
 
-  private async performAllWifiTransfer(credentials: WifiTransferSessionCredentials): Promise<string> {
+  private async performAllWifiTransfer(credentials: WifiTransferSessionCredentials): Promise<WatchWifiTransferResult> {
     const service = this.wifiTransferService;
     if (service === undefined) {
       throw new Error('手表 Wi-Fi 快传服务尚未就绪');
@@ -441,8 +442,12 @@ export class WatchRecordingViewModel {
     this.refreshWifiRecording();
     const recordings = service.findAllRecordings();
     if (recordings.length === 0) {
-      this.wifiStatus = '没有找到可同步的完整录音';
-      throw new Error(this.wifiStatus);
+      this.wifiStatus = '已是最新：手表没有新的完整录音';
+      this.wifiProgress = 0;
+      return {
+        actualState: 'up_to_date',
+        message: this.wifiStatus
+      };
     }
     this.wifiSending = true;
     this.wifiStatus = `已收到配对手机的一次性安全凭据，正在加密同步全部 ${recordings.length} 个录音…`;
@@ -464,7 +469,10 @@ export class WatchRecordingViewModel {
         this.wifiStatus = message;
         this.wifiProgress = 100;
       }
-      return message;
+      return {
+        actualState: 'completed',
+        message: message
+      };
     } catch (error) {
       const message = wifiRecordingTransferErrorMessage(error as Object);
       if (this.lifecycle.isActive(token)) {

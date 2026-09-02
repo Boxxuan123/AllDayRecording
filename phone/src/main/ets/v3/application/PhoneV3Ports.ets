@@ -1,5 +1,10 @@
 import {
   DeviceV3ClientOperation,
+  DeviceV3ReviewActionRequest,
+  DeviceV3ReviewActionResponse,
+  DeviceV3ReviewAudioRequest,
+  DeviceV3ReviewAudioResponse,
+  DeviceV3ReviewSnapshot,
   DeviceV3StatusResponse,
   DeviceV3SyncRequest,
   DeviceV3SyncResponse
@@ -29,6 +34,7 @@ export interface PhoneV3ProjectionRepositoryPort extends PhoneProjectionStorage,
   rebuildFromComputer(): Promise<void>;
   linkLocalAudio(sessionKey: string, localPath: string, sha256: string,
     uploadStatus: string): Promise<void>;
+  replaceReviewItems(items: Array<Object>): Promise<void>;
 }
 
 export interface PhoneV3LocalAudioRepositoryPort {
@@ -58,6 +64,9 @@ export interface PhoneV3ReminderSchedulerPort {
 export interface PhoneV3RemoteSession {
   status(): Promise<DeviceV3StatusResponse>;
   sync(request: DeviceV3SyncRequest): Promise<DeviceV3SyncResponse>;
+  reviews(): Promise<DeviceV3ReviewSnapshot>;
+  resolveReview(request: DeviceV3ReviewActionRequest): Promise<DeviceV3ReviewActionResponse>;
+  reviewAudio(request: DeviceV3ReviewAudioRequest): Promise<DeviceV3ReviewAudioResponse>;
 }
 
 export interface PhoneV3RemotePort {

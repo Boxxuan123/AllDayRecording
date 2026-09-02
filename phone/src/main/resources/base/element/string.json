@@ -21,8 +21,12 @@
       "value": "录音"
     },
     {
-      "name": "tab_sync",
-      "value": "同步"
+      "name": "tab_reviews",
+      "value": "审核"
+    },
+    {
+      "name": "tab_people",
+      "value": "人物"
     },
     {
       "name": "tab_more",

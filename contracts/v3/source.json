@@ -3,7 +3,7 @@
   "projection_version": 4,
   "canonical_repository": "AllDayRecording-ASR",
   "canonical_manifest_path": "contracts/v3/manifest.json",
-  "canonical_manifest_sha256": "a6a267542aa44b23c76566e850504e91154d634fd7591c6ee99fcfa3d0086e07",
+  "canonical_manifest_sha256": "9d7dd685052a2a09ac7bbcaa68a8e00c2a0661c011d9363390e27d9a3940c351",
   "release_lock": {
     "release_version": "3.7.0",
     "core_schema_version": 11,

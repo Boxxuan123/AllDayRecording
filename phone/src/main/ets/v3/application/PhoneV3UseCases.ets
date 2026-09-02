@@ -1,5 +1,7 @@
 import {
   DeviceV3ClientOperation,
+  DeviceV3ReviewActionRequest,
+  DeviceV3ReviewAudioResponse,
   DeviceV3SyncRequest
 } from '../../computer/ComputerTransferProtocol';
 import {
@@ -9,11 +11,13 @@ import {
   validateV3UtteranceDto
 } from '../contracts/V3ContractModels';
 import { applySyncResponse } from '../data/PhoneSyncProjection';
+import { phoneV3ReviewItems, phoneV3ReviewSnapshotItems } from '../data/PhoneV3ReviewProjection';
 import {
   PhoneV3LocalAudioFact,
   PhoneV3LocalAudioLink,
   PhoneV3ProjectionRow,
   PhoneV3Reminder,
+  PhoneV3ReviewItem,
   PhoneV3SessionCard,
   PhoneV3Snapshot,
   PhoneV3Utterance
@@ -93,6 +97,7 @@ export class PhoneV3UseCases {
     const recordings = await this.repository.projectionRows('recording_session');
     const processing = await this.repository.projectionRows('processing_run');
     const utterances = await this.repository.projectionRows('utterance');
+    const reviews = await this.repository.projectionRows('review_item');
     const reminders = await this.repository.projectionRows('reminder');
     const links = await this.repository.localAudioLinks();
     const conflicts = await this.repository.conflictRows();
@@ -102,7 +107,7 @@ export class PhoneV3UseCases {
     await this.reconcileReminders(reminderValues);
     return new PhoneV3Snapshot(
       mergePhoneV3Sessions(localFacts, links, recordings, processing, utterances),
-      conflicts, status, paired, reminderValues);
+      conflicts, status, paired, reminderValues, phoneV3ReviewItems(reviews));
   }
 
   async localAudioIsProtected(sessionKey: string): Promise<boolean> {
@@ -190,6 +195,8 @@ export class PhoneV3UseCases {
         hasMore = response.has_more;
         batches += 1;
       }
+      const reviews = await session.reviews();
+      await this.repository.replaceReviewItems(reviews.items);
       return new PhoneV3SyncResult(batches, operations.length, cursor, backup);
     } catch (error) {
       const message = error instanceof Error ? error.message : JSON.stringify(error);
@@ -201,6 +208,18 @@ export class PhoneV3UseCases {
   async rebuild(): Promise<PhoneV3SyncResult> {
     await this.repository.rebuildFromComputer();
     return this.synchronize();
+  }
+
+  async resolveReview(request: DeviceV3ReviewActionRequest): Promise<Array<PhoneV3ReviewItem>> {
+    const session = await this.remote.connect();
+    const response = await session.resolveReview(request);
+    await this.repository.replaceReviewItems(response.reviews.items);
+    return phoneV3ReviewSnapshotItems(response.reviews.items);
+  }
+
+  async loadReviewAudio(reviewId: string, prototypeId: string): Promise<DeviceV3ReviewAudioResponse> {
+    const session = await this.remote.connect();
+    return session.reviewAudio({ review_id: reviewId, prototype_id: prototypeId });
   }
 
   private async reconcileReminders(reminders: Array<PhoneV3Reminder>): Promise<void> {
@@ -224,12 +243,22 @@ export function mergePhoneV3Sessions(localFacts: Array<PhoneV3LocalAudioFact>,
     const row = recordingRows[rowIndex];
     const payload = parseRecording(row);
     const sessionId = text(payload.session_id, row.resourceId);
-    const sessionKey = text(payload.session_key, linkedSessionKey(links, sessionId));
-    const local = findLocal(localFacts, links, sessionId, sessionKey);
+    const payloadSessionKey = text(payload.session_key, '');
+    const boundSessionKey = linkedSessionKey(links, sessionId);
+    // The persisted phone/computer link is the authoritative identity mapping.
+    // A computer projection can temporarily retain an older session_key after a
+    // rebound; preferring that stale value creates a second, transcript-less card.
+    const projectedSessionKey = boundSessionKey.length > 0 ? boundSessionKey : payloadSessionKey;
+    const local = findLocal(localFacts, links, sessionId, projectedSessionKey);
+    const sessionKey = local === undefined ? projectedSessionKey : local.sessionKey;
     const processing = latestProcessing(processingRows, sessionId);
     const capturedStart = text(payload.captured_start, '');
     const startedAt = capturedStart.length > 0 ? Date.parse(capturedStart) :
       local === undefined ? row.updatedAt : local.startedAt;
+    if (hasSessionIdentity(cards, sessionId, sessionKey,
+      local === undefined ? '' : local.localGroupKey)) {
+      continue;
+    }
     cards.push(new PhoneV3SessionCard(
       sessionId, sessionId, sessionKey, local === undefined ? '' : local.localGroupKey, capturedStart,
       Number.isFinite(startedAt) ? startedAt : row.updatedAt,
@@ -245,10 +274,10 @@ export function mergePhoneV3Sessions(localFacts: Array<PhoneV3LocalAudioFact>,
   }
   for (let localIndex = 0; localIndex < localFacts.length; localIndex += 1) {
     const local = localFacts[localIndex];
-    if (hasLocal(cards, local.sessionKey)) {
+    const linkedId = linkedSessionId(links, local.sessionKey);
+    if (hasSessionIdentity(cards, linkedId, local.sessionKey, local.localGroupKey)) {
       continue;
     }
-    const linkedId = linkedSessionId(links, local.sessionKey);
     cards.push(new PhoneV3SessionCard(
       linkedId.length > 0 ? linkedId : local.sessionKey,
       linkedId, local.sessionKey, local.localGroupKey, '', local.startedAt, 'Watch', 'local',
@@ -377,18 +406,30 @@ function projectionRowError(row: PhoneV3ProjectionRow, resourceType: string, err
 
 function findLocal(facts: Array<PhoneV3LocalAudioFact>, links: Array<PhoneV3LocalAudioLink>,
   sessionId: string, sessionKey: string): PhoneV3LocalAudioFact | undefined {
-  const linkedKey = sessionKey.length > 0 ? sessionKey : linkedSessionKey(links, sessionId);
   for (let index = 0; index < facts.length; index += 1) {
-    if (facts[index].sessionKey === linkedKey) {
+    if (sessionKey.length > 0 && facts[index].sessionKey === sessionKey) {
       return facts[index];
+    }
+  }
+  for (let linkIndex = 0; linkIndex < links.length; linkIndex += 1) {
+    if (sessionId.length === 0 || links[linkIndex].sessionId !== sessionId) {
+      continue;
+    }
+    for (let factIndex = 0; factIndex < facts.length; factIndex += 1) {
+      if (facts[factIndex].sessionKey === links[linkIndex].sessionKey) {
+        return facts[factIndex];
+      }
     }
   }
   return undefined;
 }
 
-function hasLocal(cards: Array<PhoneV3SessionCard>, sessionKey: string): boolean {
+function hasSessionIdentity(cards: Array<PhoneV3SessionCard>, sessionId: string,
+  sessionKey: string, localGroupKey: string): boolean {
   for (let index = 0; index < cards.length; index += 1) {
-    if (cards[index].sessionKey === sessionKey && cards[index].localPaths.length > 0) {
+    if ((sessionId.length > 0 && cards[index].sessionId === sessionId) ||
+      (sessionKey.length > 0 && cards[index].sessionKey === sessionKey) ||
+      (localGroupKey.length > 0 && cards[index].localGroupKey === localGroupKey)) {
       return true;
     }
   }

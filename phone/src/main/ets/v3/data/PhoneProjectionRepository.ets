@@ -292,6 +292,31 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
       [sessionKey, localPath, sha256, uploadStatus, Date.now()]);
   }
 
+  async replaceReviewItems(items: Array<Object>): Promise<void> {
+    this.store.beginTransaction();
+    try {
+      await this.store.executeSql('DELETE FROM projection_review_items');
+      for (let index = 0; index < items.length; index += 1) {
+        const item = items[index] as ReviewSnapshotPayload;
+        if (typeof item.review_id !== 'string' || item.review_id.length === 0) {
+          throw new Error('电脑返回的审核快照包含无效 ID');
+        }
+        const revision = typeof item.source_revision === 'number' && item.source_revision > 0 ?
+          item.source_revision : 1;
+        const parsedTime = typeof item.updated_at === 'string' ? Date.parse(item.updated_at) : Date.now();
+        await this.store.executeSql(
+          `INSERT INTO projection_review_items (resource_id, revision, payload_json, updated_at)
+           VALUES (?, ?, ?, ?)`,
+          [item.review_id, revision, JSON.stringify(item),
+            Number.isFinite(parsedTime) ? parsedTime : Date.now()]);
+      }
+      this.store.commit();
+    } catch (error) {
+      this.store.rollBack();
+      throw repositoryError(error as Object);
+    }
+  }
+
   async markSyncFailure(message: string): Promise<void> {
     const text = message.substring(0, 1000);
     this.store.beginTransaction();
@@ -475,6 +500,12 @@ async function migrate(store: relationalStore.RdbStore): Promise<void> {
 
 interface RecordingSessionLinkPayload {
   session_key?: string;
+}
+
+interface ReviewSnapshotPayload {
+  review_id?: string;
+  source_revision?: number | null;
+  updated_at?: string;
 }
 
 interface RecordingSessionTombstonePayload {

@@ -25,6 +25,10 @@ AllDayRecording 是一个同时交付到手机与 HUAWEI WATCH 5 的 HarmonyOS �
 当前依赖与数据流详见 [当前架构](doc/CURRENT_ARCHITECTURE.md)。历史阶段报告会明确标记为 `superseded` 或 `experiment`，不作为当前产品行为的唯一依据。
 手机到电脑的首次配对、换 Wi-Fi 和上传流程详见 [手机到电脑安全传输](doc/PHONE_TO_COMPUTER_TRANSFER.md)。
 
+工程级 `default` product 仅构建 Watch：使用 API 26 编译 SDK，但 `targetSdkVersion` 与
+`compatibleSdkVersion` 均为 `6.1.0(23)`。`phone` product 仅构建 Phone，编译、目标和最低兼容
+版本均为 API 26。不要把 Phone target 重新映射到 `default` product。
+
 ## 关键不变量
 
 - Watch 最低兼容 HarmonyOS API 23；API 26 或设备能力必须有运行时保护或兼容降级。
@@ -79,6 +83,19 @@ DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \
 /Applications/DevEco-Studio.app/Contents/tools/hvigor/bin/hvigorw \
   clean assembleApp -p product=default -p buildMode=debug --no-daemon
 ```
+
+Phone 使用独立的 API 26 product 构建：
+
+```sh
+PATH=/Applications/DevEco-Studio.app/Contents/tools/node/bin:/usr/bin:/bin:/usr/sbin:/sbin \
+DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \
+/Applications/DevEco-Studio.app/Contents/tools/hvigor/bin/hvigorw \
+  clean assembleApp -p product=phone -p buildMode=debug --no-daemon
+```
+
+Windows 上如果签名阶段出现 `Invalid CEN header (invalid zip64 extra data field size)`，按打包工具
+文档在当前构建进程设置 `JAVA_TOOL_OPTIONS=-Djdk.util.zip.disableZip64ExtraFieldValidation=true` 后重试。
+该开关只影响 JDK 的 ZIP64 字段校验，不改变 HAP 的 API 版本。
 
 把最后一项改为 `-p buildMode=release` 并再次执行，得到独立 Release 产物。构建成功不等于测试通过，也不等于真机录音、恢复或传输通过。
 

@@ -3,6 +3,11 @@ import {
   DeviceV3ClientOperation,
   DeviceV3Change,
   DeviceV3OperationReceipt,
+  DeviceV3ReviewActionRequest,
+  DeviceV3ReviewActionResponse,
+  DeviceV3ReviewAudioRequest,
+  DeviceV3ReviewAudioResponse,
+  DeviceV3ReviewSnapshot,
   DeviceV3StatusResponse,
   DeviceV3SyncRequest,
   DeviceV3SyncResponse
@@ -24,8 +29,10 @@ import {
   PhoneV3LocalAudioLink,
   PhoneV3ProjectionRow,
   PhoneV3Reminder,
+  PhoneV3Snapshot,
   PhoneV3SyncStatus
 } from '../main/ets/v3/domain/PhoneV3Models';
+import { PhoneV3ViewModel } from '../main/ets/v3/presentation/PhoneV3ViewModel';
 
 const SESSION_ID: string = '01ARZ3NDEKTSV4RRFFQ69G5FAW';
 const SESSION_KEY: string = 'watch-session:1767225600000';
@@ -44,10 +51,29 @@ interface IdentityEvidenceFixture {
   decision: string;
 }
 
+interface ReviewContextFixture {
+  scheduled_at: string;
+}
+
+interface LegacyReviewFixture {
+  review_item_id: string;
+  revision: number;
+}
+
+interface ReviewSnapshotItemFixture {
+  review_id: string;
+  updated_at: string;
+}
+
+interface ReviewActionResultFixture {
+  resolved: boolean;
+}
+
 class FakePhoneV3Repository implements PhoneV3ProjectionRepositoryPort {
   recordingRows: Array<PhoneV3ProjectionRow> = [];
   processingRows: Array<PhoneV3ProjectionRow> = [];
   utteranceRows: Array<PhoneV3ProjectionRow> = [];
+  reviewRows: Array<PhoneV3ProjectionRow> = [];
   reminderRows: Array<PhoneV3ProjectionRow> = [];
   links: Array<PhoneV3LocalAudioLink> = [];
   conflicts: Array<PhoneV3Conflict> = [];
@@ -73,11 +99,20 @@ class FakePhoneV3Repository implements PhoneV3ProjectionRepositoryPort {
     this.recordingRows = [];
     this.processingRows = [];
     this.utteranceRows = [];
+    this.reviewRows = [];
     this.reminderRows = [];
     this.cursor = 'cursor-0';
   }
   async linkLocalAudio(_sessionKey: string, _localPath: string, _sha256: string,
     _uploadStatus: string): Promise<void> {}
+  async replaceReviewItems(items: Array<Object>): Promise<void> {
+    this.reviewRows = [];
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index] as ReviewSnapshotItemFixture;
+      this.reviewRows.push(new PhoneV3ProjectionRow(item.review_id, 1,
+        JSON.stringify(item), Date.parse(item.updated_at)));
+    }
+  }
 
   async projectionRows(resourceType: string): Promise<Array<PhoneV3ProjectionRow>> {
     if (resourceType === 'recording_session') {
@@ -88,6 +123,9 @@ class FakePhoneV3Repository implements PhoneV3ProjectionRepositoryPort {
     }
     if (resourceType === 'reminder') {
       return this.reminderRows;
+    }
+    if (resourceType === 'review_item') {
+      return this.reviewRows;
     }
     return this.utteranceRows;
   }
@@ -116,6 +154,27 @@ class FakePhoneV3RemoteSession implements PhoneV3RemoteSession {
       next_cursor: 'cursor-1',
       has_more: false,
       server_time: '2026-08-31T00:00:00Z'
+    };
+  }
+
+  async reviews(): Promise<DeviceV3ReviewSnapshot> {
+    return { items: [] };
+  }
+
+  async resolveReview(_request: DeviceV3ReviewActionRequest): Promise<DeviceV3ReviewActionResponse> {
+    const result: ReviewActionResultFixture = { resolved: true };
+    const reviews: DeviceV3ReviewSnapshot = { items: [] };
+    return { result: result, reviews: reviews };
+  }
+
+  async reviewAudio(request: DeviceV3ReviewAudioRequest): Promise<DeviceV3ReviewAudioResponse> {
+    return {
+      review_id: request.review_id,
+      prototype_id: request.prototype_id,
+      format: 'wav',
+      data_base64url: 'UklGRg',
+      start_ms: 0,
+      end_ms: 1000
     };
   }
 }
@@ -280,6 +339,47 @@ export default function phoneV3UseCasesTest() {
       expect(remote.connectCount).assertEqual(0);
     });
 
+    it('loadsReviewInboxProjectionIntoOfflineSnapshot', 0, async () => {
+      const repository = new FakePhoneV3Repository();
+      const reviewContext: ReviewContextFixture = {
+        scheduled_at: '2026-09-02T07:00:00Z'
+      };
+      const legacyReview: LegacyReviewFixture = {
+        review_item_id: 'legacy-review',
+        revision: 1
+      };
+      repository.reviewRows = [
+        new PhoneV3ProjectionRow('01ARZ3NDEKTSV4RRFFQ69G5OLD', 1,
+          JSON.stringify(legacyReview), 2000),
+        new PhoneV3ProjectionRow(
+        '01ARZ3NDEKTSV4RRFFQ69G5FRV', 1, JSON.stringify({
+          review_id: `reminder:01ARZ3NDEKTSV4RRFFQ69G5FB1`,
+          kind: 'reminder',
+          priority: 'high',
+          source_id: '01ARZ3NDEKTSV4RRFFQ69G5FB1',
+          source_revision: 2,
+          session_id: SESSION_ID,
+          person_id: 'self',
+          title: '确认下午三点给医院打电话',
+          summary: '候选提醒需要人工确认',
+          reason: 'reminder_requires_confirmation',
+          evidence_count: 1,
+          created_at: '2026-09-02T01:00:00Z',
+          updated_at: '2026-09-02T01:00:00Z',
+          context: reviewContext
+        }), 3000)
+      ];
+      const useCases = new PhoneV3UseCases(repository,
+        new FakePhoneV3LocalAudio([]), new FakePhoneV3Remote());
+
+      const snapshot = await useCases.loadCached([]);
+
+      expect(snapshot.reviewItems.length).assertEqual(1);
+      expect(snapshot.reviewItems[0].kind).assertEqual('reminder');
+      expect(snapshot.reviewItems[0].sessionId).assertEqual(SESSION_ID);
+      expect(snapshot.reviewItems[0].evidenceCount).assertEqual(1);
+    });
+
     it('surfacesMalformedProjectionWithItsResourceIdentity', 0, async () => {
       const repository = new FakePhoneV3Repository();
       repository.reminderRows = [new PhoneV3ProjectionRow(
@@ -351,6 +451,105 @@ export default function phoneV3UseCasesTest() {
       expect(cards[0].sessionKey).assertEqual(SESSION_KEY);
       expect(cards[0].localPaths.length).assertEqual(1);
       expect(cards[0].sessionId).assertEqual(SESSION_ID);
+    });
+
+    it('usesPhoneComputerBindingWhenProjectionContainsAStaleSessionKey', 0, () => {
+      const cards = mergePhoneV3Sessions([localFact()], [
+        new PhoneV3LocalAudioLink(SESSION_KEY, SESSION_ID, '/phone/segment_0.wav', 'uploaded', 1500)
+      ], [new PhoneV3ProjectionRow(SESSION_ID, 5, JSON.stringify({
+        session_id: SESSION_ID,
+        session_key: 'watch-session:stale-key',
+        captured_start: '2026-01-01T00:00:00Z',
+        revision: 5
+      }), 3000)], [], []);
+
+      expect(cards.length).assertEqual(1);
+      expect(cards[0].sessionKey).assertEqual(SESSION_KEY);
+      expect(cards[0].localPaths.length).assertEqual(1);
+      expect(cards[0].sessionId).assertEqual(SESSION_ID);
+    });
+
+    it('usesTheLocalSessionBehindAnyBindingWhenTheNewestBindingIsStale', 0, () => {
+      const cards = mergePhoneV3Sessions([localFact()], [
+        new PhoneV3LocalAudioLink('watch-session:stale-key', SESSION_ID,
+          '/phone/old-segment.wav', 'uploaded', 2000),
+        new PhoneV3LocalAudioLink(SESSION_KEY, SESSION_ID,
+          '/phone/segment_0.wav', 'uploaded', 1500)
+      ], [new PhoneV3ProjectionRow(SESSION_ID, 5, JSON.stringify({
+        session_id: SESSION_ID,
+        session_key: 'watch-session:stale-key',
+        captured_start: '2026-01-01T00:00:00Z',
+        revision: 5
+      }), 3000)], [], []);
+
+      expect(cards.length).assertEqual(1);
+      expect(cards[0].sessionKey).assertEqual(SESSION_KEY);
+      expect(cards[0].localPaths.length).assertEqual(1);
+    });
+
+    it('deduplicatesComputerRowsThatRepresentTheSameStableSession', 0, () => {
+      const cards = mergePhoneV3Sessions([], [], [
+        new PhoneV3ProjectionRow(SESSION_ID, 5, JSON.stringify({
+          session_id: SESSION_ID, session_key: SESSION_KEY,
+          captured_start: '2026-01-01T00:00:00Z', revision: 5
+        }), 3000),
+        new PhoneV3ProjectionRow('01ARZ3NDEKTSV4RRFFQ69G5DUP', 3, JSON.stringify({
+          session_id: '01ARZ3NDEKTSV4RRFFQ69G5DUP', session_key: SESSION_KEY,
+          captured_start: '2026-01-01T00:00:00Z', revision: 3
+        }), 2000)
+      ], [], []);
+
+      expect(cards.length).assertEqual(1);
+      expect(cards[0].sessionId).assertEqual(SESSION_ID);
+    });
+
+    it('keepsDistinctSessionsEvenWhenTheirDisplayTimeMatches', 0, () => {
+      const cards = mergePhoneV3Sessions([], [], [
+        new PhoneV3ProjectionRow(SESSION_ID, 1, JSON.stringify({
+          session_id: SESSION_ID, session_key: 'watch-session:first',
+          captured_start: '2026-01-01T00:00:00Z'
+        }), 3000),
+        new PhoneV3ProjectionRow('01ARZ3NDEKTSV4RRFFQ69G5TWO', 1, JSON.stringify({
+          session_id: '01ARZ3NDEKTSV4RRFFQ69G5TWO', session_key: 'watch-session:second',
+          captured_start: '2026-01-01T00:00:00Z'
+        }), 2000)
+      ], [], []);
+
+      expect(cards.length).assertEqual(2);
+    });
+
+    it('returnsTheAuthoritativeReviewSnapshotImmediatelyAfterAResolution', 0, async () => {
+      const repository = new FakePhoneV3Repository();
+      repository.reviewRows = [new PhoneV3ProjectionRow('review-before', 1, '{}', 1000)];
+      const useCases = new PhoneV3UseCases(repository,
+        new FakePhoneV3LocalAudio([]), new FakePhoneV3Remote());
+
+      const items = await useCases.resolveReview({
+        review_id: 'review-before', action: 'confirm', prototype_id: 'prototype-1'
+      });
+
+      expect(items.length).assertEqual(0);
+      expect(repository.reviewRows.length).assertEqual(0);
+    });
+
+    it('resolvesAHomeBootstrapCardToTheCurrentComputerSession', 0, () => {
+      const bootstrap = mergePhoneV3Sessions([localFact()], [], [], [], [])[0];
+      const current = mergePhoneV3Sessions([localFact()], [
+        new PhoneV3LocalAudioLink(SESSION_KEY, SESSION_ID, '/phone/segment_0.wav', 'uploaded', 1500)
+      ], [new PhoneV3ProjectionRow(SESSION_ID, 5, JSON.stringify({
+        session_id: SESSION_ID,
+        session_key: SESSION_KEY,
+        captured_start: '2026-01-01T00:00:00Z',
+        revision: 5
+      }), 3000)], [], [])[0];
+      const viewModel = new PhoneV3ViewModel();
+      viewModel.snapshot = new PhoneV3Snapshot([current]);
+
+      const resolved = viewModel.resolveCurrentSession(bootstrap);
+
+      expect(resolved.sessionId).assertEqual(SESSION_ID);
+      expect(resolved.id).assertEqual(SESSION_ID);
+      expect(resolved.localPaths.length).assertEqual(1);
     });
 
     it('backsUpAudioBeforePullingComputerProjection', 0, async () => {

@@ -55,6 +55,7 @@ Phone HAP -> Phone Root -> V3 ViewModel -> v3/runtime -> native receiver / recor
 8. Phone 到电脑的传输是独立出口：`computer` 目录隔离二维码配对、mDNS 发现、配对配置、FIDO2/HUKS 封装、HTTPS 请求、会话清单和断点上传；单独的 `PhoneComputerTransferViewModel` 承担页面状态，没有扩大 `PhoneV3ViewModel` 或 `PhoneV3DeviceRuntime`。
 9. 手机扫码验证并固定电脑 CA 的 DER SHA-256 指纹，以首次配对码和系统 Passkey 授权登记 HUKS P-256 设备公钥。后续每个受保护请求都用一次性 challenge 生成静默设备签名，绑定 method、path、正文 SHA-256 和分片 offset，不保存访问令牌；换 Wi-Fi 通过稳定 `receiver_id` 自动重新发现电脑地址。
 10. 上传以 `ReceivedRecordingFile.sourcePath` 恢复原 Watch 会话路径，先传全部音频，再生成并上传 `AllDayRecording session manifest v1` 清单。电脑确认最终 SHA-256 后才计为完成，手机原文件始终保留。
+11. 审核收件箱以电脑当前待审集合为唯一事实来源：Phone 完成普通 V3 增量同步后，通过同一套 CA 固定、HUKS 设备签名和一次性 challenge 拉取审核快照，并用整批替换方式缓存为 `review_item` 投影。离线时只展示该快照；提醒、人物记忆、事件提案、未知人物和已知人物声音样本的决定都必须在线提交，电脑会再次确认条目仍待审后才执行并返回最新快照。已知人物声音只允许逐样本决定，播放确实开始后才开放确认或拒绝，不提供整组确认；页面展开状态不写入审核数据，单个样本处理后只要组内仍有待审项就保持展开。声音样本按需由电脑截成最长 15 秒的临时单声道 WAV，并以约 −20 LUFS、−3 dB 峰值上限做试听响度归一化；原始录音和手机系统媒体音量均不改变。
 
 Wear Engine wire JSON、requestId、同步目录相对结构和重试/超时参数继续兼容 Phase 2；源文件删除仅发生在独立的 Wi-Fi 加密传输路径，不改变普通同步协议。原 Phone `entry` 沙箱内容不会自动迁入新 `phone` 沙箱；设备外备份不参与应用运行时，这是已由用户接受的数据可见性变化，不是 wire 协议变化。
 
@@ -83,13 +84,14 @@ Phase 5 已逐项捕获并传播 CoreFileKit、Preferences、AudioKit、后台�
 - Watch `entry/.../RecordingTransferService.ets` 只保留 Sender facade；Phone Receiver 已迁入 `phone/.../v3/runtime/PhoneV3WearEngineReceiver.ets`。两者与协议、Transport、Queue、协调器和接收 Store 物理隔离；后续新增功能不得把协议或存储实现塞回 facade。
 - `presentation/watch/WatchRecordingViewModel.ets` 约 591 行且可变字段超过 25 个。它是 Watch 页面生命周期与录音/播放/同步展示的编排层，不直接实现 Transport 或 Storage；下一次修改其状态集合时应优先拆分权限/通知或计时子状态。
 - `PhoneV3DeviceRuntime` 的原生生命周期状态仍超过 25 个字段，但传输与状态转换已经委托给协调器，并经 `PhoneV3DeviceRuntimeAdapter` 映射为不可变应用状态。若增加第三类同步状态，应先拆分运行时子状态。
+- `PhoneProjectionRepository.ets` 约 535 行；本次只增加审核快照的事务性整批替换，继续复用统一投影表，没有把网络或审核决策逻辑放入存储层。审核能力横跨 UI/Transport/Storage 是为了保持电脑权威判定、手机离线只读快照和在线安全提交三项边界；后续若再增加投影专用写入，应先拆出投影快照存储子组件。
 
 阈值例外不是永久豁免；每次触碰相关文件都要重新核对。
 
 ## 7. 证据边界
 
 - `hvigorw codeLinter` 是实际 Code Linter 报告，不是任务占位符；任何 defect 或不完整检查均失败。
-- `hvigorw hostTest` 会依次运行 Watch 与 Phone 宿主机测试，校验报告新鲜度、源码测试数和失败数，并对 runner 设置有界超时；当前报告为 Watch 66/66、Phone 33/33，合计 99/99 通过。`ohosTest` HAP 构建仍只证明设备测试代码可打包。
+- `hvigorw hostTest` 会依次运行 Watch 与 Phone 宿主机测试，校验报告新鲜度、源码测试数和失败数，并对 runner 设置有界超时；当前报告为 Watch 67/67、Phone 43/43，合计 110/110 通过。`ohosTest` HAP 构建仍只证明设备测试代码可打包。
 - clean Debug/Release `assembleApp` 成功只证明两个 HAP 能编译、打包和签名；Release `.app` 解包确认恰有 Watch `entry` 和 Phone `phone` 两个 HAP。
 - `common/BuildProfile.ets` 是 HAR 的 `CreateHarBuildProfile` 任务写入源码目录的派生文件；代码与构建脚本不导入它。该文件不再由 Git 跟踪，并只通过 `/common/BuildProfile.ets` 精确规则忽略；从文件不存在的状态可以重建，Debug/Release 切换不会再污染工作区。
 - Release source map 检查中，Watch 包的 Phone Root/V3 runtime/Receiver/Store 标识均为 0，Phone 包的 Watch Root/ViewModel/录音/Sender 标识均为 0；这证明当前构建图边界，不替代运行时验收。

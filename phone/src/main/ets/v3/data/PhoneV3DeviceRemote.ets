@@ -1,5 +1,10 @@
 import { common } from '@kit.AbilityKit';
 import {
+  DeviceV3ReviewActionRequest,
+  DeviceV3ReviewActionResponse,
+  DeviceV3ReviewAudioRequest,
+  DeviceV3ReviewAudioResponse,
+  DeviceV3ReviewSnapshot,
   DeviceV3StatusResponse,
   DeviceV3SyncRequest,
   DeviceV3SyncResponse
@@ -22,6 +27,18 @@ class PhoneV3HttpRemoteSession implements PhoneV3RemoteSession {
 
   async sync(request: DeviceV3SyncRequest): Promise<DeviceV3SyncResponse> {
     return this.client.sync(request);
+  }
+
+  async reviews(): Promise<DeviceV3ReviewSnapshot> {
+    return this.client.v3Reviews();
+  }
+
+  async resolveReview(request: DeviceV3ReviewActionRequest): Promise<DeviceV3ReviewActionResponse> {
+    return this.client.v3ReviewAction(request);
+  }
+
+  async reviewAudio(request: DeviceV3ReviewAudioRequest): Promise<DeviceV3ReviewAudioResponse> {
+    return this.client.v3ReviewAudio(request);
   }
 }
 

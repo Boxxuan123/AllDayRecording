@@ -17,9 +17,17 @@ import {
   DEVICE_AUTH_CHALLENGE_PATH,
   DEVICE_V3_STATUS_PATH,
   DEVICE_V3_SYNC_PATH,
+  DEVICE_V3_REVIEWS_PATH,
+  DEVICE_V3_REVIEW_ACTION_PATH,
+  DEVICE_V3_REVIEW_AUDIO_PATH,
   DeviceV3StatusResponse,
   DeviceV3SyncRequest,
   DeviceV3SyncResponse,
+  DeviceV3ReviewSnapshot,
+  DeviceV3ReviewActionRequest,
+  DeviceV3ReviewActionResponse,
+  DeviceV3ReviewAudioRequest,
+  DeviceV3ReviewAudioResponse,
   DEVICE_KEY_ALGORITHM,
   PASSKEY_REGISTER_OPTIONS_PATH,
   PASSKEY_REGISTER_VERIFY_PATH,
@@ -177,6 +185,23 @@ export class ComputerTransferHttpClient {
   async sync(request: DeviceV3SyncRequest): Promise<DeviceV3SyncResponse> {
     const body = util.TextEncoder.create('utf-8').encodeInto(JSON.stringify(request));
     return this.authenticatedJson<DeviceV3SyncResponse>('POST', DEVICE_V3_SYNC_PATH,
+      body, 'application/json; charset=utf-8', undefined);
+  }
+
+  async v3Reviews(): Promise<DeviceV3ReviewSnapshot> {
+    return this.authenticatedJson<DeviceV3ReviewSnapshot>('GET', DEVICE_V3_REVIEWS_PATH,
+      new Uint8Array(0), undefined, undefined);
+  }
+
+  async v3ReviewAction(request: DeviceV3ReviewActionRequest): Promise<DeviceV3ReviewActionResponse> {
+    const body = util.TextEncoder.create('utf-8').encodeInto(JSON.stringify(request));
+    return this.authenticatedJson<DeviceV3ReviewActionResponse>('POST', DEVICE_V3_REVIEW_ACTION_PATH,
+      body, 'application/json; charset=utf-8', undefined);
+  }
+
+  async v3ReviewAudio(request: DeviceV3ReviewAudioRequest): Promise<DeviceV3ReviewAudioResponse> {
+    const body = util.TextEncoder.create('utf-8').encodeInto(JSON.stringify(request));
+    return this.authenticatedJson<DeviceV3ReviewAudioResponse>('POST', DEVICE_V3_REVIEW_AUDIO_PATH,
       body, 'application/json; charset=utf-8', undefined);
   }
 
