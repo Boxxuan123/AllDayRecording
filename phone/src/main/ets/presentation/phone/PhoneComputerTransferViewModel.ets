@@ -21,7 +21,7 @@ import {
   parseComputerPairingBootstrap
 } from '../../computer/ComputerTransferProtocol';
 import { prepareComputerSessions } from '../../computer/ComputerSessionManifest';
-import { ReceivedRecordingStore } from '../../services/ReceivedRecordingStore';
+import { PhoneV3RecordingStore } from '../../v3/runtime/PhoneV3RecordingStore';
 import { PhonePasskeyClient } from '../../computer/PhonePasskeyClient';
 import {
   PhoneProjectionRepository,
@@ -107,7 +107,7 @@ export class PhoneComputerTransferViewModel {
 
   refreshRecordings(): void {
     const context = this.requireContext();
-    this.updateRecordings(new ReceivedRecordingStore(context.filesDir).list());
+    this.updateRecordings(new PhoneV3RecordingStore(context.filesDir).list());
   }
 
   private updateRecordings(recordings: Array<ReceivedRecordingFile>): void {

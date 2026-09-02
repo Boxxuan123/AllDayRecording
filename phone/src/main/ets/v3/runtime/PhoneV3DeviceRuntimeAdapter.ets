@@ -6,6 +6,7 @@ import {
 } from '../domain/PhoneV3Models';
 import { PhoneV3DeviceRuntime } from './PhoneV3DeviceRuntime';
 
+// Keeps ArkUI-facing state mapping outside the native device runtime.
 export class PhoneV3DeviceRuntimeAdapter implements PhoneV3DeviceBridgePort {
   private runtime: PhoneV3DeviceRuntime;
 

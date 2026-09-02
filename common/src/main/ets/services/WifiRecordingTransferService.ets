@@ -24,7 +24,7 @@ import {
   isWifiTransferCryptoAvailable,
   wifiSecurityProtocolName
 } from '../security/WifiTransferSecurity';
-import { exactWatchFileKey, legacyWatchFileKey } from '../sync/protocol/WatchFileSyncProtocol';
+import { exactWatchFileKey } from '../sync/protocol/WatchFileSyncProtocol';
 import {
   WIFI_SOURCE_ALREADY_ABSENT,
   WIFI_SOURCE_DELETED,
@@ -1324,8 +1324,7 @@ export class WifiRecordingTransferService {
         requestId: receiving.requestId,
         sourcePath: receiving.sourcePath,
         receivedAt: Date.now(),
-        syncKey: exactWatchFileKey(receiving.sourcePath, receiving.receivedSize),
-        legacySyncKey: legacyWatchFileKey(receiving.fileName, receiving.receivedSize)
+        syncKey: exactWatchFileKey(receiving.sourcePath, receiving.receivedSize)
       };
       this.receivedHandler(recording, receivedHash);
       const ack: TransferAck = {

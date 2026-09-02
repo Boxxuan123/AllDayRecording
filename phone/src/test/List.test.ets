@@ -1,4 +1,4 @@
-import receivedRecordingStoreTest from './ReceivedRecordingStore.test';
+import phoneV3RecordingStoreTest from './PhoneV3RecordingStore.test';
 import computerTransferProtocolTest from './ComputerTransferProtocol.test';
 import phoneV3LocalAudioGroupsTest from './PhoneV3LocalAudioGroups.test';
 import v3ContractFixtureTest from './V3ContractFixture.test';
@@ -8,7 +8,7 @@ import computerSessionManifestTest from './ComputerSessionManifest.test';
 import computerRecordingBackupServiceTest from './ComputerRecordingBackupService.test';
 
 export default function testsuite() {
-  receivedRecordingStoreTest();
+  phoneV3RecordingStoreTest();
   computerTransferProtocolTest();
   phoneV3LocalAudioGroupsTest();
   v3ContractFixtureTest();

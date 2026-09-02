@@ -5,9 +5,9 @@ import {
   exactWatchFileKey
 } from 'common';
 import {
-  ReceivedRecordingStore,
+  PhoneV3RecordingStore,
   SYNC_RECEIVE_DIRECTORY
-} from '../main/ets/services/ReceivedRecordingStore';
+} from '../main/ets/v3/runtime/PhoneV3RecordingStore';
 import {
   createTestDirectory,
   ensureTestDirectory,
@@ -38,8 +38,8 @@ function listFixture(entriesByDirectory: Map<string, Array<string>>): (path: str
   return (path: string): Array<string> => entriesByDirectory.get(path) ?? [];
 }
 
-export default function receivedRecordingStoreTest() {
-  describe('ReceivedRecordingStore', () => {
+export default function phoneV3RecordingStoreTest() {
+  describe('PhoneV3RecordingStore', () => {
     it('loadsValidManifestAndIgnoresMissingEntry', 0, () => {
       const root = createTestDirectory('received_manifest');
       const syncRoot = `${root}/${SYNC_RECEIVE_DIRECTORY}`;
@@ -54,6 +54,7 @@ export default function receivedRecordingStoreTest() {
         ensureTestDirectory(requestRoot);
         const audioPath = `${requestRoot}/001_segment.wav`;
         writeTestBytes(audioPath, new Uint8Array([1, 2, 3, 4]));
+        writeTestBytes(`${root}/orphan.wav`, new Uint8Array([5, 6, 7, 8]));
         const syncKey = exactWatchFileKey('session_a/segment.wav', 4);
         const recordings: Array<ReceivedManifestEntryFixture> = [
           {
@@ -65,6 +66,15 @@ export default function receivedRecordingStoreTest() {
             sourcePath: 'session_a/segment.wav',
             receivedAt: 100,
             syncKey: syncKey
+          },
+          {
+            fileName: 'orphan.wav',
+            localPath: 'orphan.wav',
+            size: 4,
+            durationMs: 1,
+            requestId: 'old_root',
+            sourcePath: 'old/orphan.wav',
+            receivedAt: 95
           },
           {
             fileName: 'missing.wav',
@@ -83,7 +93,7 @@ export default function receivedRecordingStoreTest() {
         };
         writeTestText(`${syncRoot}/received_index_v1.json`, JSON.stringify(fixture));
 
-        const store = new ReceivedRecordingStore(root, listDirectory, readTestText, writeTestText);
+        const store = new PhoneV3RecordingStore(root, listDirectory, readTestText, writeTestText);
 
         expect(store.list().length).assertEqual(1);
         expect(store.list()[0].sourcePath).assertEqual('session_a/segment.wav');
@@ -109,7 +119,7 @@ export default function receivedRecordingStoreTest() {
         writeTestBytes(`${requestRoot}/001_scanned.wav`, new Uint8Array([5, 6, 7, 8]));
         writeTestText(`${syncRoot}/received_index_v1.json`, '{damaged');
 
-        const store = new ReceivedRecordingStore(root, listDirectory, readTestText, writeTestText);
+        const store = new PhoneV3RecordingStore(root, listDirectory, readTestText, writeTestText);
 
         expect(store.list().length).assertEqual(1);
         expect(store.list()[0].fileName).assertEqual('scanned.wav');
@@ -121,24 +131,25 @@ export default function receivedRecordingStoreTest() {
       }
     });
 
-    it('returnsExistingRecordForDuplicatePath', 0, () => {
-      const root = createTestDirectory('received_duplicate');
+    it('ignoresRootAudioUntilV3RecordsItAndDeduplicatesItsPath', 0, () => {
+      const root = createTestDirectory('v3_recorded_path');
       const syncRoot = `${root}/${SYNC_RECEIVE_DIRECTORY}`;
       const listDirectory = listFixture(new Map<string, Array<string>>([
-        [root, ['received_100.wav', SYNC_RECEIVE_DIRECTORY]],
+        [root, ['orphan.wav', SYNC_RECEIVE_DIRECTORY]],
         [syncRoot, ['received_index_v1.json']]
       ]));
       try {
-        const path = `${root}/received_100.wav`;
+        const path = `${root}/orphan.wav`;
         writeTestBytes(path, new Uint8Array([9, 10]));
-        const store = new ReceivedRecordingStore(root, listDirectory, readTestText, writeTestText);
+        const store = new PhoneV3RecordingStore(root, listDirectory, readTestText, writeTestText);
+        expect(store.list().length).assertEqual(0);
         const recording: ReceivedRecordingFile = {
-          fileName: 'received_100.wav',
+          fileName: 'orphan.wav',
           path: path,
           size: 2,
           durationMs: 0,
-          requestId: 'manual',
-          sourcePath: '手表手动发送',
+          requestId: 'v3_test',
+          sourcePath: 'session/orphan.wav',
           receivedAt: 100
         };
 
@@ -164,7 +175,7 @@ export default function receivedRecordingStoreTest() {
         const newPath = `${root}/new.wav`;
         writeTestBytes(oldPath, new Uint8Array([1, 2]));
         writeTestBytes(newPath, new Uint8Array([3, 4]));
-        const store = new ReceivedRecordingStore(root, listDirectory, readTestText, writeTestText);
+        const store = new PhoneV3RecordingStore(root, listDirectory, readTestText, writeTestText);
         const syncKey = exactWatchFileKey('session_a/segment.wav', 2);
         const oldRecording: ReceivedRecordingFile = {
           fileName: 'segment.wav',
@@ -239,7 +250,7 @@ export default function receivedRecordingStoreTest() {
           ]
         };
         writeTestText(`${syncRoot}/received_index_v1.json`, JSON.stringify(fixture));
-        const store = new ReceivedRecordingStore(root, listDirectory, readTestText, writeTestText);
+        const store = new PhoneV3RecordingStore(root, listDirectory, readTestText, writeTestText);
 
         const deletedCount = store.deleteRecordings(store.list());
 

@@ -6,7 +6,6 @@ import {
   ReceivedRecordingFile,
   WatchSyncFileDescriptor,
   exactWatchFileKey,
-  legacyWatchFileKey,
   loadVersionedJson,
   writeVersionedJson
 } from 'common';
@@ -24,7 +23,6 @@ interface ReceivedRecordingManifestEntry {
   sourcePath: string;
   receivedAt: number;
   syncKey?: string;
-  legacySyncKey?: string;
 }
 
 interface ReceivedRecordingManifest {
@@ -41,7 +39,7 @@ function isReceivedRecordingManifest(manifest: ReceivedRecordingManifest): boole
   return Array.isArray(manifest.recordings);
 }
 
-export class ReceivedRecordingStore {
+export class PhoneV3RecordingStore {
   private filesDirectory: string;
   private syncRoot: string;
   private manifestPath: string;
@@ -93,7 +91,7 @@ export class ReceivedRecordingStore {
   findExisting(descriptor: WatchSyncFileDescriptor): ReceivedRecordingFile | undefined {
     // One-minute segments intentionally reuse the same file name and size in each
     // recording session. Only the watch source path plus size can safely identify
-    // a retry; a legacy name-size match could discard a different session's audio.
+    // a retry; a name-size-only match could discard a different session's audio.
     return this.findExact(descriptor);
   }
 
@@ -178,7 +176,6 @@ export class ReceivedRecordingStore {
     const loaded: Array<ReceivedRecordingFile> = [];
     this.loadManifest(loaded);
     this.scanExistingSyncFiles(loaded);
-    this.scanLegacyManualFiles(loaded);
     this.recordings = loaded;
     this.sortNewestFirst();
     if (loaded.length > 0) {
@@ -201,7 +198,8 @@ export class ReceivedRecordingStore {
       const manifest = loaded.value;
       for (let index = 0; index < manifest.recordings.length; index += 1) {
         const entry = manifest.recordings[index];
-        if (entry.localPath.length === 0 || entry.localPath.startsWith('/') || entry.localPath.includes('..')) {
+        if (!entry.localPath.startsWith(`${SYNC_RECEIVE_DIRECTORY}/`) ||
+          entry.localPath.startsWith('/') || entry.localPath.includes('..')) {
           continue;
         }
         const path = `${this.filesDirectory}/${entry.localPath}`;
@@ -220,8 +218,7 @@ export class ReceivedRecordingStore {
           requestId: entry.requestId,
           sourcePath: entry.sourcePath,
           receivedAt: entry.receivedAt,
-          syncKey: entry.syncKey,
-          legacySyncKey: entry.legacySyncKey
+          syncKey: entry.syncKey
         });
       }
     } catch (error) {
@@ -269,40 +266,7 @@ export class ReceivedRecordingStore {
           durationMs: 0,
           requestId: requestId,
           sourcePath: '历史同步记录（来源目录未保存）',
-          receivedAt: Math.round(stat.mtime * 1000),
-          legacySyncKey: legacyWatchFileKey(fileName, stat.size)
-        });
-      }
-    } catch (error) {
-      throw receivedStoreError(error);
-    }
-  }
-
-  private scanLegacyManualFiles(target: Array<ReceivedRecordingFile>): void {
-    try {
-      const entries = this.listDirectory(this.filesDirectory);
-      for (let index = 0; index < entries.length; index += 1) {
-        const name = entries[index];
-        if (!name.startsWith('received_') || !this.isAudioFile(name)) {
-          continue;
-        }
-        const path = `${this.filesDirectory}/${name}`;
-        if (this.containsPath(target, path)) {
-          continue;
-        }
-        const stat = fileIo.statSync(path);
-        if (!stat.isFile() || stat.size <= 0) {
-          continue;
-        }
-        target.push({
-          fileName: name,
-          path: path,
-          size: stat.size,
-          durationMs: 0,
-          requestId: 'manual',
-          sourcePath: '手表手动发送',
-          receivedAt: Math.round(stat.mtime * 1000),
-          legacySyncKey: legacyWatchFileKey(name, stat.size)
+          receivedAt: Math.round(stat.mtime * 1000)
         });
       }
     } catch (error) {
@@ -330,8 +294,7 @@ export class ReceivedRecordingStore {
           requestId: recording.requestId,
           sourcePath: recording.sourcePath,
           receivedAt: recording.receivedAt,
-          syncKey: recording.syncKey,
-          legacySyncKey: recording.legacySyncKey
+          syncKey: recording.syncKey
         });
       }
       const manifest: ReceivedRecordingManifest = {
@@ -391,8 +354,4 @@ export class ReceivedRecordingStore {
 
 function receivedStoreError(error: Object): Error {
   return error instanceof Error ? error : new Error(JSON.stringify(error));
-}
-
-export function loadReceivedRecordings(filesDirectory: string): Array<ReceivedRecordingFile> {
-  return new ReceivedRecordingStore(filesDirectory).list();
 }

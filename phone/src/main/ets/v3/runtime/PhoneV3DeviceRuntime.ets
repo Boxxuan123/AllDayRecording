@@ -14,15 +14,15 @@ import {
   wifiRecordingTransferErrorMessage
 } from 'common';
 import {
-  WearEngineRecordingReceiver,
+  PhoneV3WearEngineReceiver,
   wearEngineErrorMessage
-} from '../../services/RecordingTransferService';
-import { ReceivedRecordingStore } from '../../services/ReceivedRecordingStore';
+} from './PhoneV3WearEngineReceiver';
+import { PhoneV3RecordingStore } from './PhoneV3RecordingStore';
 import {
   PhoneV3LocalAudioGroup,
   groupPhoneV3LocalAudio,
   phoneV3ReceivedRecordingDurationMs
-} from './PhoneV3LocalAudioGroups';
+} from '../data/PhoneV3LocalAudioGroups';
 
 @Observed
 export class PhoneV3DeviceRuntime {
@@ -50,9 +50,9 @@ export class PhoneV3DeviceRuntime {
 
   private context: common.UIAbilityContext | undefined = undefined;
   private playbackService: AudioPlaybackService | undefined = undefined;
-  private transferReceiver: WearEngineRecordingReceiver | undefined = undefined;
+  private transferReceiver: PhoneV3WearEngineReceiver | undefined = undefined;
   private wifiTransferService: WifiRecordingTransferService | undefined = undefined;
-  private recordingStore: ReceivedRecordingStore | undefined = undefined;
+  private recordingStore: PhoneV3RecordingStore | undefined = undefined;
   private lifecycle: PresentationLifecycleCoordinator = new PresentationLifecycleCoordinator();
   private lifecycleToken: number = -1;
   private startTask: Promise<void> | undefined = undefined;
@@ -412,8 +412,8 @@ export class PhoneV3DeviceRuntime {
   }
 
   private async startReceiver(context: common.UIAbilityContext, token: number,
-    recordingStore: ReceivedRecordingStore): Promise<void> {
-    const receiver = new WearEngineRecordingReceiver(context,
+    recordingStore: PhoneV3RecordingStore): Promise<void> {
+    const receiver = new PhoneV3WearEngineReceiver(context,
       (recording: ReceivedRecordingFile): void => {
         if (!this.lifecycle.isActive(token)) {
           return;
@@ -497,7 +497,7 @@ export class PhoneV3DeviceRuntime {
           this.playbackDurationMs = durationMs;
         }
       });
-    const recordingStore = new ReceivedRecordingStore(context.filesDir);
+    const recordingStore = new PhoneV3RecordingStore(context.filesDir);
     this.recordingStore = recordingStore;
     this.initializeWifiTransfer(context, token, recordingStore);
     this.status = '正在连接已配对手表…';
@@ -516,13 +516,13 @@ export class PhoneV3DeviceRuntime {
       throw new Error('手机页面上下文尚未就绪');
     }
     this.status = '正在释放异常的 Wear Engine 通道…';
-    await WearEngineRecordingReceiver.destroyChannel();
+    await PhoneV3WearEngineReceiver.destroyChannel();
     if (!this.lifecycle.isActive(token)) {
       return;
     }
     this.status = 'Wear Engine 通道已重建，正在重新注册接收器…';
     const recordingStore = this.recordingStore === undefined ?
-      new ReceivedRecordingStore(context.filesDir) : this.recordingStore;
+      new PhoneV3RecordingStore(context.filesDir) : this.recordingStore;
     this.recordingStore = recordingStore;
     if (this.wifiTransferService === undefined) {
       this.initializeWifiTransfer(context, token, recordingStore);
@@ -531,7 +531,7 @@ export class PhoneV3DeviceRuntime {
   }
 
   private initializeWifiTransfer(context: common.UIAbilityContext, token: number,
-    recordingStore: ReceivedRecordingStore): void {
+    recordingStore: PhoneV3RecordingStore): void {
     const service = new WifiRecordingTransferService(context,
       (status: string, progress: number): void => {
         if (!this.lifecycle.isActive(token)) {
@@ -560,7 +560,7 @@ export class PhoneV3DeviceRuntime {
   }
 
   private async toggleWifiReceiverAsync(service: WifiRecordingTransferService,
-    receiver: WearEngineRecordingReceiver | undefined): Promise<void> {
+    receiver: PhoneV3WearEngineReceiver | undefined): Promise<void> {
     if (this.wifiReceiverReady) {
       await service.stopReceiver();
       this.wifiReceiverReady = false;
@@ -578,7 +578,7 @@ export class PhoneV3DeviceRuntime {
   }
 
   private async retryWifiReceiverAsync(service: WifiRecordingTransferService,
-    receiver: WearEngineRecordingReceiver | undefined): Promise<void> {
+    receiver: PhoneV3WearEngineReceiver | undefined): Promise<void> {
     if (this.wifiReceiverReady) {
       await service.stopReceiver();
       this.wifiReceiverReady = false;
@@ -629,7 +629,7 @@ export class PhoneV3DeviceRuntime {
   }
 
   private async deleteRecordingGroupAsync(group: PhoneV3LocalAudioGroup,
-    recordingStore: ReceivedRecordingStore): Promise<number> {
+    recordingStore: PhoneV3RecordingStore): Promise<number> {
     const deletingSelectedGroup = this.selectedRecordingGroupKey === group.key;
     if (deletingSelectedGroup && this.playbackService !== undefined) {
       await this.playbackService.release();
@@ -706,7 +706,7 @@ export class PhoneV3DeviceRuntime {
     return this.recordingGroup(this.selectedRecordingGroupKey);
   }
 
-  private async releaseResources(receiver: WearEngineRecordingReceiver | undefined,
+  private async releaseResources(receiver: PhoneV3WearEngineReceiver | undefined,
     wifiTransfer: WifiRecordingTransferService | undefined,
     playback: AudioPlaybackService | undefined): Promise<void> {
     try {

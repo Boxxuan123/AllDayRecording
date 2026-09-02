@@ -1,7 +1,7 @@
 # AllDayRecording 当前架构
 
 > 文档状态：`current`
-> 核对日期：2026-08-30
+> 核对日期：2026-09-02
 > 适用源码：维护性重构 Phase 6 已验收双 HAP 结构；后续行为或边界变化必须同步更新本文。
 
 ## 1. 交付与兼容边界
@@ -12,24 +12,24 @@
 - Phone `phone` HAP：`deviceTypes = [phone]`，不声明录音权限或后台录音模式。
 - `common` HAR：两端本地依赖的模型、共享状态、文件基础设施、协议、Transport、协调器和播放实现，不单独安装。
 
-应用版本为 `1.0.1`（`versionCode = 1000001`，`buildVersion = 2`），目标 SDK 为 API 26，最低兼容 HarmonyOS `6.1.0(23)`。`bundleName`、Client ID 和签名配置保持不变；Watch 继续使用 `entry` 模块名，Phone 改用 `phone`。用户已决定不实现旧 Phone `entry` 沙箱到新 `phone` 沙箱的自动迁移，安装前双份只读备份承担回退。用户于 2026-08-30 确认双端覆盖安装完成且真机验收通过，Phase 6 物理拆分获准进入主线。
+应用版本为 `1.0.1`（`versionCode = 1000001`，`buildVersion = 2`），目标 SDK 为 API 26，最低兼容 HarmonyOS `6.1.0(23)`。`bundleName`、Client ID 和签名配置保持不变；Watch 继续使用 `entry` 模块名，Phone 使用独立 `phone` 模块。Phone 沙箱不从原 `entry` 沙箱自动迁移；安装前双份只读备份仅是设备外的数据保护证据，不是应用回退入口。用户于 2026-08-30 确认双端覆盖安装完成且真机验收通过，Phase 6 物理拆分获准进入主线。
 
 ## 2. 依赖方向
 
 ```text
 Watch HAP -> Watch Root/ViewModel -> recording / Watch Sender
-Phone HAP -> Phone Root -> V3 ViewModel / Device Runtime -> Phone Receiver / receive store
+Phone HAP -> Phone Root -> V3 ViewModel -> v3/runtime -> native receiver / recording store
                        -> computer transfer VM -> QR/mDNS/HTTPS/HUKS upload service
                          both -> common HAR -> coordinator -> transport / shared IO
 ```
 
-- `entry/.../pages/Index.ets` 只挂载 `WatchRootPage`；`phone/.../pages/Index.ets` 只挂载 `PhoneRootPage`，不再做运行时设备分支。`PhoneRootPage` 只挂载 V3 本地优先工作台；V2 页面和只读回退入口均已移除。
+- `entry/.../pages/Index.ets` 只挂载 `WatchRootPage`；`phone/.../pages/Index.ets` 只挂载 `PhoneRootPage`，不做运行时设备分支。`PhoneRootPage` 只组合 V3 本地优先工作台和 `v3/runtime`，没有备用页面或只读入口。
 - Phone `EntryAbility` 固定加载 `pages/Index`，启动错误使用稳定日志标签 `PhoneEntryAbility` 和正式的 Phone root page 文案；协议中的 `control_probe` 与默认关闭的 Watch 诊断 Probe 保持原有语义。
 - 页面组件只展示状态并转发事件，不直接操作 CoreFileKit、Wear Engine 或录音后台任务。
 - ViewModel 负责页面生命周期与用户动作编排；持久化和协议状态由领域服务承担。
 - `common/src/main/ets/sync/transport/WearEngineTransport.ets` 是原始 Wear Engine 调用边界。
 - `common/src/main/ets/shared/io` 和 `entry/.../recording/WavSegmentSlot.ets` 是耐久文件边界。
-- Watch Sender 与 Phone Receiver 分别留在对应 HAP，避免把对端专属 API 打入错误设备包。
+- Watch Sender 留在 Watch HAP；Phone Receiver、接收索引、播放与 Wi-Fi 生命周期统一位于 `phone/.../v3/runtime`，避免把对端专属 API 打入错误设备包。
 - Watch `diagnostics` 默认关闭且生产 UI 不可达。
 
 ## 3. 录音与恢复数据流
@@ -48,16 +48,15 @@ Phone HAP -> Phone Root -> V3 ViewModel / Device Runtime -> Phone Receiver / rec
 1. 已封口分片进入持久化的 `automatic_sync_queue_v1.json`；进程重启时先完整校验清单及元素类型、相对路径、大小、时长和音频后缀。结构无效清单在访问候选文件前返回 `invalid`，损坏 JSON 返回 `damaged`；合法清单仍恢复存在且大小匹配的条目，并过滤、持久化缺失项后的剩余队列。
 2. `WatchSyncCoordinator` 串行自动/手动请求；当前手动批次最多发送 1 个缺失文件，库存键按每页 24 个分页交换，后续点击继续补拉剩余文件。
 3. `WearEngineTransport` 负责发现对端、应用身份、receiver 注册、消息、文件、远端启动和通道销毁。
-4. Phone 先把收到的文件原子复制到 `phone` 模块沙箱的 `synced_from_watch/<requestId>/`，再由 `ReceivedRecordingStore` 更新 `received_index_v1.json`。
-5. 索引损坏或缺失时，Phone 扫描同步目录和旧 `received_*.wav` 重建可见列表；这些旧文件名和
-   `legacySyncKey` 读取能力继续作为数据兼容层保留，不会重新引入 V2 页面或运行入口。
+4. Phone 先把带 V3 来源描述的文件原子复制到 `phone` 模块沙箱的 `synced_from_watch/<requestId>/`，再由 `PhoneV3RecordingStore` 更新 `received_index_v1.json`；缺少来源描述的文件会被拒绝保存。
+5. 索引损坏或缺失时，Phone 只扫描 `synced_from_watch` 同步目录重建可见列表，不扫描沙箱根目录文件。库存去重只使用完整 Watch 相对路径与大小生成的 exact key，不再保留文件名加大小的兼容身份。
 6. 只有文件已落盘且索引流程完成后，Phone 才发送 `sync_file_received`；Watch 在 ACK 丢失或通信失败时保留源文件并重试。
 7. 普通 Wear Engine 同步不删除 Watch 源文件。加密 Wi-Fi 全量同步会对新文件和 Phone 已有文件逐一核对 SHA-256；只有所有文件 ACK 及批次 ACK 完成后，Watch 才重新核对路径、大小和 SHA-256 并删除本批快照中的源文件。批次失败时一个也不删，单文件清理失败时只保留该文件；进程重启后可通过 Phone 的重复文件校验继续清理。
 8. Phone 到电脑的传输是独立出口：`computer` 目录隔离二维码配对、mDNS 发现、配对配置、FIDO2/HUKS 封装、HTTPS 请求、会话清单和断点上传；单独的 `PhoneComputerTransferViewModel` 承担页面状态，没有扩大 `PhoneV3ViewModel` 或 `PhoneV3DeviceRuntime`。
 9. 手机扫码验证并固定电脑 CA 的 DER SHA-256 指纹，以首次配对码和系统 Passkey 授权登记 HUKS P-256 设备公钥。后续每个受保护请求都用一次性 challenge 生成静默设备签名，绑定 method、path、正文 SHA-256 和分片 offset，不保存访问令牌；换 Wi-Fi 通过稳定 `receiver_id` 自动重新发现电脑地址。
 10. 上传以 `ReceivedRecordingFile.sourcePath` 恢复原 Watch 会话路径，先传全部音频，再生成并上传 `AllDayRecording session manifest v1` 清单。电脑确认最终 SHA-256 后才计为完成，手机原文件始终保留。
 
-Wear Engine wire JSON、requestId、同步目录相对结构和重试/超时参数继续兼容 Phase 2；源文件删除仅发生在独立的 Wi-Fi 加密传输路径，不改变普通同步协议。旧 Phone `entry` 沙箱内容不会自动迁入新 `phone` 沙箱；这是已备份并由用户接受的数据可见性变化，不是 wire 协议变化。
+Wear Engine wire JSON、requestId、同步目录相对结构和重试/超时参数继续兼容 Phase 2；源文件删除仅发生在独立的 Wi-Fi 加密传输路径，不改变普通同步协议。原 Phone `entry` 沙箱内容不会自动迁入新 `phone` 沙箱；设备外备份不参与应用运行时，这是已由用户接受的数据可见性变化，不是 wire 协议变化。
 
 ## 5. 系统能力与编译提示
 
@@ -81,18 +80,18 @@ Phase 5 已逐项捕获并传播 CoreFileKit、Preferences、AudioKit、后台�
 
 当前已知例外：
 
-- Watch `entry/.../RecordingTransferService.ets` 为 918 行，只保留 Sender facade；Phone `phone/.../RecordingTransferService.ets` 为 906 行，只保留 Receiver facade。两者仍超过阈值，但已经物理隔离且协议、Transport、Queue、协调器和接收 Store 不在同一个巨型文件中。后续新增功能不得把协议或存储实现塞回 facade。
+- Watch `entry/.../RecordingTransferService.ets` 只保留 Sender facade；Phone Receiver 已迁入 `phone/.../v3/runtime/PhoneV3WearEngineReceiver.ets`。两者与协议、Transport、Queue、协调器和接收 Store 物理隔离；后续新增功能不得把协议或存储实现塞回 facade。
 - `presentation/watch/WatchRecordingViewModel.ets` 约 591 行且可变字段超过 25 个。它是 Watch 页面生命周期与录音/播放/同步展示的编排层，不直接实现 Transport 或 Storage；下一次修改其状态集合时应优先拆分权限/通知或计时子状态。
-- Phone `WearEngineRecordingReceiver` 的展示字段仍超过 25 个，但传输与状态转换已经委托给协调器。若增加第三类同步状态，应先聚合为不可变 UI 快照。
+- `PhoneV3DeviceRuntime` 的原生生命周期状态仍超过 25 个字段，但传输与状态转换已经委托给协调器，并经 `PhoneV3DeviceRuntimeAdapter` 映射为不可变应用状态。若增加第三类同步状态，应先拆分运行时子状态。
 
 阈值例外不是永久豁免；每次触碰相关文件都要重新核对。
 
 ## 7. 证据边界
 
 - `hvigorw codeLinter` 是实际 Code Linter 报告，不是任务占位符；任何 defect 或不完整检查均失败。
-- `hvigorw hostTest` 会依次运行 Watch 与 Phone 宿主机测试，校验报告新鲜度、源码测试数和失败数，并对 Darwin runner 设置有界超时；当前报告为 Watch 50/50、Phone 3/3，合计 53/53 通过。受限环境仍会在 `Darwin` 后因本地 socket 不可用而超时；`ohosTest` HAP 构建仍只证明设备测试代码可打包。
+- `hvigorw hostTest` 会依次运行 Watch 与 Phone 宿主机测试，校验报告新鲜度、源码测试数和失败数，并对 runner 设置有界超时；当前报告为 Watch 66/66、Phone 33/33，合计 99/99 通过。`ohosTest` HAP 构建仍只证明设备测试代码可打包。
 - clean Debug/Release `assembleApp` 成功只证明两个 HAP 能编译、打包和签名；Release `.app` 解包确认恰有 Watch `entry` 和 Phone `phone` 两个 HAP。
 - `common/BuildProfile.ets` 是 HAR 的 `CreateHarBuildProfile` 任务写入源码目录的派生文件；代码与构建脚本不导入它。该文件不再由 Git 跟踪，并只通过 `/common/BuildProfile.ets` 精确规则忽略；从文件不存在的状态可以重建，Debug/Release 切换不会再污染工作区。
-- Release source map 检查中，Watch 包的 Phone Root/ViewModel/Receiver/Store 标识均为 0，Phone 包的 Watch Root/ViewModel/录音/Sender 标识均为 0；这证明当前构建图边界，不替代运行时验收。
+- Release source map 检查中，Watch 包的 Phone Root/V3 runtime/Receiver/Store 标识均为 0，Phone 包的 Watch Root/ViewModel/录音/Sender 标识均为 0；这证明当前构建图边界，不替代运行时验收。
 - WATCH 5 的开始/停止、熄屏、中断恢复和 Phone 同步/播放必须使用最终文件、摘要、大小/哈希与用户验收作为证据。
 - 安装前双份只读导出已完成并核对一致；用户随后确认不清数据覆盖安装与真机验收通过。Codex 未代替用户安装，也未在验收后改写设备文件。

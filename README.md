@@ -2,7 +2,7 @@
 
 AllDayRecording 是一个同时交付到手机与 HUAWEI WATCH 5 的 HarmonyOS 应用。手表负责连续 PCM 录音、WAV 安全封口、中断恢复和源文件生命周期；手机负责 Wear Engine 接收、持久化索引和试听。
 
-当前工程按设备交付两个 HAP，并通过本地 `common` HAR 复用协议和纯逻辑：Watch 使用 `entry` HAP，Phone 使用 `phone` HAP。应用版本为 `1.0.1`（`versionCode = 1000001`），两个 HAP 保持同一 `bundleName`、Client ID、签名配置和 API 23/26 边界。Phone 只保留 V3 本地优先工作台；V2 页面、只读回退入口和旧表现层 ViewModel 已移除。
+当前工程按设备交付两个 HAP，并通过本地 `common` HAR 复用协议和纯逻辑：Watch 使用 `entry` HAP，Phone 使用 `phone` HAP。应用版本为 `1.0.1`（`versionCode = 1000001`），两个 HAP 保持同一 `bundleName`、Client ID、签名配置和 API 23/26 边界。Phone 只有 V3 本地优先工作台、V3 原生设备运行层和单一生产入口，不包含备用页面或只读入口。
 
 ## 主要目录
 
@@ -11,12 +11,12 @@ AllDayRecording 是一个同时交付到手机与 HUAWEI WATCH 5 的 HarmonyOS �
 - `common`：本地 HAR；包含模型、共享表现状态、WAV/原子文件、协议、Transport、同步/控制协调器和播放服务。
 - `entry/src/main/ets/presentation/watch`：手表圆屏页面、Root 和 ViewModel。
 - `phone/src/main/ets/presentation/phone`：Phone V3 的应用 Root 与电脑传输页面。
-- `phone/src/main/ets/v3`：Phone V3 领域模型、用例、RDB 投影、设备运行时、Device client、UI reducer 与页面。
+- `phone/src/main/ets/v3`：Phone V3 领域模型、用例、RDB 投影、Device client、UI reducer 与页面。
+- `phone/src/main/ets/v3/runtime`：Phone V3 原生设备运行层；集中管理 Wear Engine 接收器、接收索引、Wi-Fi/播放生命周期和应用桥接。
 - `entry/src/main/ets/recording`：AudioCapturer 生命周期、后台任务、WAV 文件槽和会话契约。
 - `common/src/main/ets/sync`：协议、Wear Engine Transport、手机/手表协调器、自动队列和控制状态机。
 - `common/src/main/ets/shared/io`：WAV 格式、原子文件和版本化 JSON 基础设施。
 - `entry/src/main/ets/services`：Watch Sender、录音、恢复和远程启动降级 facade。
-- `phone/src/main/ets/services`：Phone Receiver 与接收索引。
 - `phone/src/main/ets/computer`：Phone 到电脑的二维码配对、mDNS 自动发现、HUKS 设备认证和断点上传边界。
 - `entry/src/main/ets/diagnostics`：默认关闭、生产 UI 不可达的历史基线与探针。
 - `entry/src/test`、`phone/src/test`：按设备边界拆分的宿主机 Hypium 业务测试。
@@ -86,7 +86,7 @@ DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \
 
 安装可能触发恢复、索引读取或自动同步的 HAP 前，必须先确认目标设备确为 WATCH 5，并对所有非空会话、清单和 `.part` 做只读导出；至少生成两份独立的数量、总字节数与 SHA-256 清单并比较一致。安装后再次导出并解释所有新增、修改或消失的文件。
 
-Phase 6 已按用户决定不实现 Phone `entry -> phone` 沙箱自动迁移：新的 Phone 模块从新的 `phone` 沙箱开始，旧 Phone 数据以安装前双份只读导出作为回退；Watch 继续使用 `entry` 模块名。不得把这一产品决定误写成框架能够无损迁移模块沙箱。
+Phase 6 已按用户决定不实现 Phone `entry -> phone` 沙箱自动迁移：新的 Phone 模块从新的 `phone` 沙箱开始，Watch 继续使用 `entry` 模块名。安装前双份只读导出仅是设备外的数据保护证据，不是应用入口或运行时数据源；不得把这一产品决定误写成框架能够无损迁移模块沙箱。
 
 本地构建、lint 和宿主机测试不访问设备。Debug/Release HAP、签名材料、日志、设备备份、`local.properties` 和本机 `build-profile.json5` 都不得提交；仓库只保留无秘密的 `build-profile.example.json5`。
 

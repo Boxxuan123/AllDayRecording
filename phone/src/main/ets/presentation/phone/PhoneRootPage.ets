@@ -12,8 +12,8 @@ import { PhoneV3SessionDetailPage } from '../../v3/presentation/PhoneV3SessionDe
 import { phoneV3ImmersiveMaterial } from '../../v3/presentation/PhoneV3NativeUi';
 import { phoneV3SessionTitle } from '../../v3/presentation/PhoneV3UiFormat';
 import { PhoneV3ViewModel } from '../../v3/presentation/PhoneV3ViewModel';
-import { PhoneV3DeviceRuntime } from '../../v3/data/PhoneV3DeviceRuntime';
-import { PhoneV3DeviceRuntimeAdapter } from '../../v3/data/PhoneV3DeviceRuntimeAdapter';
+import { PhoneV3DeviceRuntime } from '../../v3/runtime/PhoneV3DeviceRuntime';
+import { PhoneV3DeviceRuntimeAdapter } from '../../v3/runtime/PhoneV3DeviceRuntimeAdapter';
 import { PhoneComputerTransferPage } from './PhoneComputerTransferPage';
 
 const PHONE_COMPUTER_TRANSFER_ROUTE: string = 'phoneComputerTransfer';

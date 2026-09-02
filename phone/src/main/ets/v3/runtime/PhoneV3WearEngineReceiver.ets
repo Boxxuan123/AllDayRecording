@@ -45,12 +45,11 @@ import {
   destroyWearEngineChannel,
   exactWatchFileKey,
   isValidWifiTransferCredentials,
-  legacyWatchFileKey,
   p2pResultMessage,
   shouldRetryReceiverConnection,
   wearEngineErrorMessage
 } from 'common';
-import { ReceivedRecordingStore, SYNC_RECEIVE_DIRECTORY } from './ReceivedRecordingStore';
+import { PhoneV3RecordingStore, SYNC_RECEIVE_DIRECTORY } from './PhoneV3RecordingStore';
 
 export { wearEngineErrorMessage } from 'common';
 
@@ -117,7 +116,7 @@ function safeFileName(fileName: string): string {
   return fileName.replace(/[^A-Za-z0-9._-]/g, '_');
 }
 
-export class WearEngineRecordingReceiver {
+export class PhoneV3WearEngineReceiver {
   private context: common.UIAbilityContext;
   private transportEngine: WearEngineTransport;
   private receivedHandler: RecordingReceivedHandler;
@@ -156,7 +155,7 @@ export class WearEngineRecordingReceiver {
   private wifiTransferCredentials: WifiTransferSessionCredentials | undefined = undefined;
   private startTask: Promise<void> | undefined = undefined;
   private receiverLifecycle: PhoneReceiverLifecycleCoordinator = new PhoneReceiverLifecycleCoordinator();
-  private recordingStore: ReceivedRecordingStore;
+  private recordingStore: PhoneV3RecordingStore;
   private fileReceiver = (incoming: wearEngine.P2pFile): void => {
     this.receiveFile(incoming);
   };
@@ -166,14 +165,14 @@ export class WearEngineRecordingReceiver {
 
   constructor(context: common.UIAbilityContext, receivedHandler: RecordingReceivedHandler,
     statusHandler: TransferStatusHandler, syncProgressHandler: WatchSyncProgressHandler,
-    controlStatusHandler: WatchRecordingControlStatusHandler, recordingStore?: ReceivedRecordingStore) {
+    controlStatusHandler: WatchRecordingControlStatusHandler, recordingStore?: PhoneV3RecordingStore) {
     this.context = context;
     this.transportEngine = new WearEngineTransport(context);
     this.receivedHandler = receivedHandler;
     this.statusHandler = statusHandler;
     this.syncProgressHandler = syncProgressHandler;
     this.controlStatusHandler = controlStatusHandler;
-    this.recordingStore = recordingStore === undefined ? new ReceivedRecordingStore(context.filesDir) : recordingStore;
+    this.recordingStore = recordingStore === undefined ? new PhoneV3RecordingStore(context.filesDir) : recordingStore;
   }
 
   getStoredRecordings(): Array<ReceivedRecordingFile> {
@@ -338,7 +337,7 @@ export class WearEngineRecordingReceiver {
   async reconnect(): Promise<void> {
     await this.stop();
     this.updateReceiverStatus('正在释放异常的 Wear Engine 通道…');
-    await WearEngineRecordingReceiver.destroyChannel();
+    await PhoneV3WearEngineReceiver.destroyChannel();
     this.updateReceiverStatus('Wear Engine 通道已重建，正在重新注册接收器…');
     await this.start();
   }
@@ -946,8 +945,7 @@ export class WearEngineRecordingReceiver {
           requestId: descriptor.requestId,
           sourcePath: descriptor.relativePath,
           receivedAt: Date.now(),
-          syncKey: exactWatchFileKey(descriptor.relativePath, descriptor.size),
-          legacySyncKey: legacyWatchFileKey(descriptor.fileName, descriptor.size)
+          syncKey: exactWatchFileKey(descriptor.relativePath, descriptor.size)
         };
         const stored = this.recordingStore.record(recording);
         this.receivedHandler(stored);
@@ -968,22 +966,7 @@ export class WearEngineRecordingReceiver {
         return;
       }
 
-      const fileName = `received_${Date.now()}.wav`;
-      const path = `${this.context.filesDir}/${fileName}`;
-      this.copyIncomingFileDurably(incoming.file.fd, path);
-      const recording: ReceivedRecordingFile = {
-        fileName: fileName,
-        path: path,
-        size: sourceStat.size,
-        durationMs: 0,
-        requestId: 'manual',
-        sourcePath: '手表手动发送',
-        receivedAt: Date.now(),
-        legacySyncKey: legacyWatchFileKey(fileName, sourceStat.size)
-      };
-      const stored = this.recordingStore.record(recording);
-      this.receivedHandler(stored);
-      this.statusHandler('录音接收完成，可以试听');
+      this.statusHandler('接收失败：V3 同步文件缺少来源描述，已拒绝保存');
     } catch (error) {
       this.statusHandler(`接收失败：${error instanceof Error ? error.message : '无法保存录音'}`);
     } finally {

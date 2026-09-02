@@ -72,10 +72,6 @@ export function exactWatchFileKey(relativePath: string, size: number): string {
   return `e${compactFileIdentity(`${relativePath}\n${size}`)}`;
 }
 
-export function legacyWatchFileKey(fileName: string, size: number): string {
-  return `l${compactFileIdentity(`${fileName}\n${size}`)}`;
-}
-
 export function encodeWatchSyncMessage(message: WatchSyncProtocolMessage): Uint8Array {
   return util.TextEncoder.create('utf-8').encodeInto(JSON.stringify(message));
 }

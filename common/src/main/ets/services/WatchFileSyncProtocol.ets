@@ -20,7 +20,6 @@ export {
   WATCH_RECORDING_ACK,
   WatchSyncProtocolMessage,
   exactWatchFileKey,
-  legacyWatchFileKey,
   encodeWatchSyncMessage,
   decodeWatchSyncMessage
 } from '../sync/protocol/WatchFileSyncProtocol';

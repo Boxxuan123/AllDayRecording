@@ -4,7 +4,7 @@ import {
 } from '../../computer/ComputerRecordingUploadService';
 import { createComputerRecordingBackupService } from '../../computer/ComputerRecordingBackupService';
 import { prepareComputerSessions } from '../../computer/ComputerSessionManifest';
-import { ReceivedRecordingStore } from '../../services/ReceivedRecordingStore';
+import { PhoneV3RecordingStore } from '../runtime/PhoneV3RecordingStore';
 import {
   PhoneV3AudioBackupPort,
   PhoneV3AudioBackupResult,
@@ -21,7 +21,7 @@ export class PhoneV3ComputerBackup implements PhoneV3AudioBackupPort {
   }
 
   async backup(): Promise<PhoneV3AudioBackupResult> {
-    const recordings = new ReceivedRecordingStore(this.context.filesDir).list();
+    const recordings = new PhoneV3RecordingStore(this.context.filesDir).list();
     const sessions = prepareComputerSessions(recordings);
     if (sessions.length === 0) {
       return new PhoneV3AudioBackupResult();

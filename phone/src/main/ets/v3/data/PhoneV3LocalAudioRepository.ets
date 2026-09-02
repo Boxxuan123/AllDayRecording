@@ -4,7 +4,7 @@ import {
   ReceivedRecordingFile,
   WAV_HEADER_BYTES
 } from 'common';
-import { ReceivedRecordingStore } from '../../services/ReceivedRecordingStore';
+import { PhoneV3RecordingStore } from '../runtime/PhoneV3RecordingStore';
 import { PhoneV3LocalAudioRepositoryPort } from '../application/PhoneV3Ports';
 import { PhoneV3LocalAudioFact } from '../domain/PhoneV3Models';
 
@@ -18,7 +18,7 @@ export class PhoneV3LocalAudioRepository implements PhoneV3LocalAudioRepositoryP
   }
 
   async list(): Promise<Array<PhoneV3LocalAudioFact>> {
-    const recordings = new ReceivedRecordingStore(this.filesDirectory).list();
+    const recordings = new PhoneV3RecordingStore(this.filesDirectory).list();
     const groups: Array<PhoneV3LocalAudioFact> = [];
     for (let index = 0; index < recordings.length; index += 1) {
       const recording = recordings[index];

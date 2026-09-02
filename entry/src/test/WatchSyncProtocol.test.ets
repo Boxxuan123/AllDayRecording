@@ -9,8 +9,7 @@ import {
   WatchSyncProtocolMessage,
   decodeWatchSyncMessage,
   encodeWatchSyncMessage,
-  exactWatchFileKey,
-  legacyWatchFileKey
+  exactWatchFileKey
 } from 'common';
 
 export default function watchSyncProtocolTest() {
@@ -76,14 +75,12 @@ export default function watchSyncProtocolTest() {
       expect(decodedAck.actualState).assertEqual('completed');
     });
 
-    it('keepsExactAndLegacyIdentitySemantics', 0, () => {
+    it('keepsExactIdentitySemantics', 0, () => {
       const firstPath = 'pcm_gap_test_100/segment_000001.wav';
       const secondPath = 'pcm_gap_test_200/segment_000001.wav';
-      const fileName = 'segment_000001.wav';
 
       expect(exactWatchFileKey(firstPath, 32044)).assertEqual(exactWatchFileKey(firstPath, 32044));
       expect(exactWatchFileKey(firstPath, 32044) === exactWatchFileKey(secondPath, 32044)).assertFalse();
-      expect(legacyWatchFileKey(fileName, 32044)).assertEqual(legacyWatchFileKey(fileName, 32044));
     });
 
     it('matchesWireJsonGoldenFixture', 0, () => {

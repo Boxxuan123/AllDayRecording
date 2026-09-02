@@ -130,7 +130,6 @@ export {
   WATCH_WIFI_TRANSFER_ACK,
   WatchSyncProtocolMessage,
   exactWatchFileKey,
-  legacyWatchFileKey,
   encodeWatchSyncMessage,
   decodeWatchSyncMessage
 } from './src/main/ets/sync/protocol/WatchFileSyncProtocol';

@@ -20,7 +20,6 @@ export interface ReceivedRecordingFile extends RecordingFile {
   sourcePath: string;
   receivedAt: number;
   syncKey?: string;
-  legacySyncKey?: string;
 }
 
 export interface WatchSyncProgress {
