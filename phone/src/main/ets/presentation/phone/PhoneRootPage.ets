@@ -53,6 +53,7 @@ export struct PhoneRootPage {
   @State private v3ViewModel: PhoneV3ViewModel = new PhoneV3ViewModel();
   @State private v3StateRevision: number = 0;
   @State private selectedMainTab: number = 0;
+  @StorageLink('phoneForeground') @Watch('foregroundChanged') private foreground: boolean = true;
   private navStack: NavPathStack = new NavPathStack();
 
   private immersiveTitleBarStyle(): TitleBarStyleOptions {
@@ -92,6 +93,10 @@ export struct PhoneRootPage {
       }];
     }
     return [];
+  }
+
+  private foregroundChanged(): void {
+    if (!this.foreground) { this.v3ViewModel.stopPlayback(); }
   }
 
   aboutToAppear(): void {

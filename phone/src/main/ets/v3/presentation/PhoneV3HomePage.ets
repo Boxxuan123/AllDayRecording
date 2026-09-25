@@ -16,6 +16,11 @@ export struct PhoneV3HomePage {
   onOpenSession: (session: PhoneV3SessionCard) => void = (_session: PhoneV3SessionCard): void => {};
   onOpenReviews: () => void = (): void => {};
 
+  private pendingReviewCount(): number {
+    const snapshot = this.currentUiState().snapshot;
+    return snapshot.reviewItems.length + snapshot.conflicts.filter((value): boolean => ['speaker.assign', 'segment.classify'].indexOf(value.kind) >= 0).length;
+  }
+
   private currentUiState(): PhoneV3UiState {
     const state = AppStorage.get<PhoneV3UiState>(PHONE_V3_UI_STATE_STORAGE_KEY);
     return this.stateRevision >= 0 && state !== undefined ? state : new PhoneV3UiState();
@@ -324,8 +329,8 @@ export struct PhoneV3HomePage {
 
         Column({ space: 8 }) {
           Row() {
-            this.summary(this.currentUiState().snapshot.reviewItems.length.toString(), '待审核',
-              this.currentUiState().snapshot.reviewItems.length > 0)
+            this.summary(this.pendingReviewCount().toString(), '待审核',
+              this.pendingReviewCount() > 0)
             Column()
               .width(1)
               .height(32)
@@ -346,7 +351,7 @@ export struct PhoneV3HomePage {
 
         this.operationError()
 
-        if (this.currentUiState().snapshot.reviewItems.length > 0) {
+        if (this.pendingReviewCount() > 0) {
           Row({ space: 10 }) {
             Stack() {
               SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
@@ -358,7 +363,7 @@ export struct PhoneV3HomePage {
             .borderRadius(11)
             .backgroundColor($r('app.color.surface_accent'))
             Column({ space: 2 }) {
-              Text(`${this.currentUiState().snapshot.reviewItems.length} 项内容待审核`)
+              Text(`${this.pendingReviewCount()} 项内容待审核`)
                 .fontSize(14)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.text_primary'))

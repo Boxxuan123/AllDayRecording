@@ -50,6 +50,7 @@ export class PhoneV3DeviceRuntime {
   wifiStopping: boolean = false;
 
   private context: common.UIAbilityContext | undefined = undefined;
+  private rangeEndMs: number = -1;
   private playbackService: AudioPlaybackService | undefined = undefined;
   private transferReceiver: PhoneV3WearEngineReceiver | undefined = undefined;
   private wifiTransferService: WifiRecordingTransferService | undefined = undefined;
@@ -233,7 +234,33 @@ export class PhoneV3DeviceRuntime {
     });
   }
 
+  playRange(groupKey: string, startMs: number, endMs: number): void {
+    const playback = this.playbackService;
+    const group = this.recordingGroup(groupKey);
+    if (playback === undefined || this.isPlaybackBusy) {
+      return;
+    }
+    if (group === undefined || startMs < 0 || endMs <= startMs || startMs >= group.durationMs) {
+      this.status = '播放失败：本地录音缺失或片段时间无效';
+      return;
+    }
+    this.selectedRecordingGroupKey = group.key;
+    this.latestRecording = group.recordings[0];
+    this.rangeEndMs = endMs;
+    this.isPlaybackBusy = true;
+    const paths = group.recordings.map((recording): string => recording.path);
+    const durations = group.recordings.map((recording): number => phoneV3ReceivedRecordingDurationMs(recording));
+    playback.playSequence(paths, durations, startMs).then((): void => {
+      this.isPlaybackBusy = false;
+    }, (error: Object): void => {
+      this.rangeEndMs = -1;
+      this.isPlaybackBusy = false;
+      this.status = `片段播放失败：${recordingErrorMessage(error)}`;
+    });
+  }
+
   togglePlayback(): void {
+    this.rangeEndMs = -1;
     const playback = this.playbackService;
     const token = this.lifecycleToken;
     if (playback === undefined) {
@@ -281,6 +308,7 @@ export class PhoneV3DeviceRuntime {
   }
 
   seekPlayback(positionMs: number): void {
+    this.rangeEndMs = -1;
     const playback = this.playbackService;
     const token = this.lifecycleToken;
     if (playback === undefined || this.isPlaybackBusy) {
@@ -303,6 +331,7 @@ export class PhoneV3DeviceRuntime {
   }
 
   stopPlayback(): void {
+    this.rangeEndMs = -1;
     const playback = this.playbackService;
     if (playback === undefined) {
       return;
@@ -494,6 +523,10 @@ export class PhoneV3DeviceRuntime {
           return;
         }
         this.playbackPositionMs = positionMs;
+        if (this.rangeEndMs >= 0 && positionMs >= this.rangeEndMs) {
+          this.rangeEndMs = -1;
+          this.playbackService?.pause().catch((): void => {});
+        }
         if (durationMs > 0) {
           this.playbackDurationMs = durationMs;
         }

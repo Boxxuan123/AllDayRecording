@@ -7,7 +7,8 @@ const projectRoot = resolve(process.argv[2] || process.cwd());
 const sdkRoot = resolveSdkRoot();
 const studioHome = resolveStudioHome(sdkRoot);
 const isWindows = process.platform === 'win32';
-const hvigor = join(studioHome, 'tools', 'hvigor', 'bin', isWindows ? 'hvigorw.js' : 'hvigorw');
+const hvigor = process.env.HVIGOR_TEST_EXECUTABLE ||
+  join(studioHome, 'tools', 'hvigor', 'bin', isWindows ? 'hvigorw.js' : 'hvigorw');
 const timeoutMs = positiveInteger(process.env.HOST_TEST_TIMEOUT_MS, 60_000);
 const modules = ['entry', 'phone'];
 
@@ -27,6 +28,7 @@ process.stdout.write(
 );
 
 async function runModuleTests(moduleName) {
+  const productName = moduleName === 'phone' ? 'phone' : 'default';
   const reportPath = join(projectRoot, moduleName, '.test', 'default', 'intermediates',
     'test', 'coverage_data', 'test_result.txt');
   const reportMtimeBefore = existsSync(reportPath) ? statSync(reportPath).mtimeMs : -1;
@@ -38,7 +40,7 @@ async function runModuleTests(moduleName) {
   const moduleStartedAt = Date.now();
   const args = [
     '--mode', 'module',
-    '-p', 'product=default',
+    '-p', `product=${productName}`,
     '-p', `module=${moduleName}@default`,
     '-p', 'buildMode=debug',
     'test', '--no-daemon'

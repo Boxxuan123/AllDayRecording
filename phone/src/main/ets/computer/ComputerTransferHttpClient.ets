@@ -24,6 +24,8 @@ import {
   DeviceV3SyncRequest,
   DeviceV3SyncResponse,
   DeviceV3ReviewSnapshot,
+  DeviceV3AnnotationRequest,
+  DeviceV3AnnotationResponse,
   DeviceV3ReviewActionRequest,
   DeviceV3ReviewActionResponse,
   DeviceV3ReviewAudioRequest,
@@ -41,6 +43,14 @@ import {
 
 const CONNECT_TIMEOUT_MS: number = 20000;
 const READ_TIMEOUT_MS: number = 120000;
+
+export class ComputerHttpError extends Error {
+  statusCode: number;
+  constructor(statusCode: number, message: string) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+}
 
 interface ComputerErrorResponse {
   error?: string;
@@ -158,10 +168,21 @@ export class ComputerTransferHttpClient {
       new Uint8Array(0), undefined, undefined);
   }
 
-  async createUpload(metadata: ComputerUploadMetadata): Promise<ComputerUploadResponse> {
+  async createUpload(metadata: ComputerUploadMetadata, onRetry: () => void = (): void => {}): Promise<ComputerUploadResponse> {
     const body = util.TextEncoder.create('utf-8').encodeInto(JSON.stringify(metadata));
-    return this.authenticatedJson<ComputerUploadResponse>('POST', COMPUTER_TRANSFER_UPLOADS_PATH,
-      body, 'application/json; charset=utf-8', undefined);
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.authenticatedJson<ComputerUploadResponse>('POST', COMPUTER_TRANSFER_UPLOADS_PATH,
+          body, 'application/json; charset=utf-8', undefined);
+      } catch (error) {
+        const failure = error as Error;
+        if (attempt >= 2 || (failure instanceof ComputerHttpError && failure.statusCode < 500)) {
+          throw failure;
+        }
+        onRetry();
+        await retryPause(attempt);
+      }
+    }
   }
 
   async queryUpload(uploadId: string): Promise<ComputerUploadResponse> {
@@ -169,12 +190,37 @@ export class ComputerTransferHttpClient {
       new Uint8Array(0), undefined, undefined);
   }
 
-  async appendUpload(uploadId: string, offset: number, chunk: Uint8Array): Promise<ComputerUploadResponse> {
+  async appendUpload(uploadId: string, offset: number, chunk: Uint8Array,
+    onRetry: () => void = (): void => {}): Promise<ComputerUploadResponse> {
     if (!Number.isSafeInteger(offset) || offset < 0 || chunk.length <= 0) {
       throw new Error('上传分片偏移或大小无效');
     }
-    return this.authenticatedJson<ComputerUploadResponse>('PUT', uploadItemPath(uploadId), chunk,
-      'application/octet-stream', offset);
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.authenticatedJson<ComputerUploadResponse>('PUT', uploadItemPath(uploadId), chunk,
+          'application/octet-stream', offset);
+      } catch (error) {
+        const failure = error as Error;
+        if (attempt >= 2 || (failure instanceof ComputerHttpError &&
+          failure.statusCode < 500 && failure.statusCode !== 409)) {
+          throw failure;
+        }
+        onRetry();
+        await retryPause(attempt);
+        // The response may have been lost after fsync. Query before resending.
+        const current = await this.queryUpload(uploadId);
+        if (current.upload.offset === offset + chunk.length) {
+          if (current.upload.status === 'completed') {
+            return this.createUpload({ relative_path: current.upload.relative_path,
+              size: current.upload.size, sha256: current.upload.sha256, kind: current.upload.kind }, onRetry);
+          }
+          return current;
+        }
+        if (current.upload.offset !== offset) {
+          throw new Error(`电脑断点已改变，请重试续传：${current.upload.relative_path}`);
+        }
+      }
+    }
   }
 
   async v3Status(): Promise<DeviceV3StatusResponse> {
@@ -185,6 +231,12 @@ export class ComputerTransferHttpClient {
   async sync(request: DeviceV3SyncRequest): Promise<DeviceV3SyncResponse> {
     const body = util.TextEncoder.create('utf-8').encodeInto(JSON.stringify(request));
     return this.authenticatedJson<DeviceV3SyncResponse>('POST', DEVICE_V3_SYNC_PATH,
+      body, 'application/json; charset=utf-8', undefined);
+  }
+
+  async annotations(request: DeviceV3AnnotationRequest): Promise<DeviceV3AnnotationResponse> {
+    const body = util.TextEncoder.create('utf-8').encodeInto(JSON.stringify(request));
+    return this.authenticatedJson<DeviceV3AnnotationResponse>('POST', '/device/v3/annotations',
       body, 'application/json; charset=utf-8', undefined);
   }
 
@@ -256,7 +308,7 @@ export class ComputerTransferHttpClient {
       const response = await request.request(`${this.baseUrl}${path}`, options);
       const text = responseText(response.result);
       if (response.responseCode < 200 || response.responseCode >= 300) {
-        throw new Error(serverErrorMessage(response.responseCode, text));
+        throw new ComputerHttpError(response.responseCode, serverErrorMessage(response.responseCode, text));
       }
       try {
         return JSON.parse(text) as T;
@@ -341,4 +393,10 @@ function serverErrorMessage(code: number, body: string): string {
   } catch (error) {
   }
   return `电脑请求失败（HTTP ${code}）`;
+}
+
+function retryPause(attempt: number): Promise<void> {
+  return new Promise<void>((resolve: () => void): void => {
+    setTimeout(resolve, 500 * (attempt + 1));
+  });
 }

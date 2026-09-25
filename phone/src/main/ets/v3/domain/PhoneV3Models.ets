@@ -1,3 +1,5 @@
+import { phoneV3SoundKind } from './PhoneV3SoundKind';
+import { phoneV3PersonFact, phoneV3PersonUncertain } from './PhoneV3PersonFact';
 export class PhoneV3ProjectionRow {
   resourceId: string;
   revision: number;
@@ -56,8 +58,10 @@ export class PhoneV3Conflict {
   status: string;
   errorJson: string;
   createdAt: number;
+  payloadJson: string;
 
-  constructor(operationId: string, kind: string, status: string, errorJson: string, createdAt: number) {
+  constructor(operationId: string, kind: string, status: string, errorJson: string, createdAt: number, payloadJson: string = '{}') {
+    this.payloadJson = payloadJson;
     this.operationId = operationId;
     this.kind = kind;
     this.status = status;
@@ -84,6 +88,9 @@ export class PhoneV3SyncStatus {
 }
 
 export class PhoneV3Utterance {
+  soundKind: string = 'speech';
+  annotationPending: boolean = false;
+  annotationPersonId: string = '';
   utteranceId: string;
   sessionId: string;
   speakerTrackId: string | null;
@@ -127,6 +134,12 @@ export class PhoneV3Utterance {
     this.revision = revision;
     this.status = status;
     this.evidenceJson = evidenceJson;
+    this.soundKind = phoneV3SoundKind(evidenceJson);
+    this.annotationPersonId = phoneV3PersonFact(evidenceJson);
+    if (phoneV3PersonUncertain(evidenceJson)) {
+      this.identity = 'unknown';
+      this.speakerLabel = '人物待确认';
+    }
   }
 }
 

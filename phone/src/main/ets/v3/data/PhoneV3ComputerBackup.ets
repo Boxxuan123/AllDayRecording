@@ -1,5 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import {
+  ComputerUploadProgressHandler,
   ComputerUploadResult
 } from '../../computer/ComputerRecordingUploadService';
 import { createComputerRecordingBackupService } from '../../computer/ComputerRecordingBackupService';
@@ -17,10 +18,13 @@ import {
 import { PhoneV3LocalAudioLink } from '../domain/PhoneV3Models';
 
 export class PhoneV3ComputerBackup implements PhoneV3AudioBackupPort {
+  private onProgress: ComputerUploadProgressHandler;
   private context: common.UIAbilityContext;
   private repository: PhoneV3ProjectionRepositoryPort;
 
-  constructor(context: common.UIAbilityContext, repository: PhoneV3ProjectionRepositoryPort) {
+  constructor(context: common.UIAbilityContext, repository: PhoneV3ProjectionRepositoryPort,
+    onProgress: ComputerUploadProgressHandler = (): void => {}) {
+    this.onProgress = onProgress;
     this.context = context;
     this.repository = repository;
   }
@@ -34,7 +38,7 @@ export class PhoneV3ComputerBackup implements PhoneV3AudioBackupPort {
       return new PhoneV3AudioBackupResult();
     }
     const outcome = await createComputerRecordingBackupService(this.context, this.repository)
-      .backup(recordings, (): void => {});
+      .backup(recordings, this.onProgress);
     return backupResult(outcome.upload);
   }
 }

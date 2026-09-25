@@ -1,6 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { ReceivedRecordingFile } from 'common';
-import { ComputerReceiverDiscovery } from './ComputerReceiverDiscovery';
+import { connectComputerReceiver } from './ComputerReceiverConnection';
 import {
   ComputerRecordingUploadService,
   ComputerUploadProgressHandler,
@@ -23,7 +23,8 @@ export interface ComputerRecordingBackupReceiptPort {
 export interface ComputerRecordingBackupRuntimePort {
   connect(): Promise<ComputerTransferConfig>;
   upload(config: ComputerTransferConfig, recordings: Array<ReceivedRecordingFile>,
-    onProgress: ComputerUploadProgressHandler): Promise<ComputerUploadResult>;
+    onProgress: ComputerUploadProgressHandler,
+    onSessionCompleted?: (session: PreparedComputerSession) => Promise<void>): Promise<ComputerUploadResult>;
 }
 
 export class ComputerRecordingBackupOutcome {
@@ -53,8 +54,14 @@ export class ComputerRecordingBackupService {
       throw new Error('没有可上传的手表分段录音');
     }
     const config = await this.runtime.connect();
-    const result = await this.runtime.upload(config, recordings, onProgress);
-    await this.recordReceipts(sessions);
+    const completed = new Set<string>();
+    const result = await this.runtime.upload(config, recordings, onProgress,
+      async (session: PreparedComputerSession): Promise<void> => {
+        await this.recordReceipts([session]);
+        completed.add(session.manifest.sessionKey);
+      });
+    await this.recordReceipts(sessions.filter((session: PreparedComputerSession): boolean =>
+      !completed.has(session.manifest.sessionKey)));
     return new ComputerRecordingBackupOutcome(config, result);
   }
 
@@ -79,17 +86,13 @@ export class ComputerRecordingBackupRuntime implements ComputerRecordingBackupRu
   }
 
   async connect(): Promise<ComputerTransferConfig> {
-    const config = await this.configStore.load();
-    if (!config.isPaired()) {
-      throw new Error('请先完成电脑 Passkey 配对');
-    }
-    const discoveredUrl = await new ComputerReceiverDiscovery(this.context).discover(config.receiverId);
-    return this.configStore.saveLastAddress(discoveredUrl);
+    return connectComputerReceiver(this.context, this.configStore);
   }
 
   upload(config: ComputerTransferConfig, recordings: Array<ReceivedRecordingFile>,
-    onProgress: ComputerUploadProgressHandler): Promise<ComputerUploadResult> {
-    return new ComputerRecordingUploadService(this.context, config).upload(recordings, onProgress);
+    onProgress: ComputerUploadProgressHandler,
+    onSessionCompleted?: (session: PreparedComputerSession) => Promise<void>): Promise<ComputerUploadResult> {
+    return new ComputerRecordingUploadService(this.context, config).upload(recordings, onProgress, onSessionCompleted);
   }
 }
 

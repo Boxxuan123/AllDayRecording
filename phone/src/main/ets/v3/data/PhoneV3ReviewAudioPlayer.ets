@@ -8,55 +8,67 @@ const MAX_REVIEW_AUDIO_BYTES: number = 16 * 1024 * 1024;
 
 export class PhoneV3ReviewAudioPlayer {
   private directory: string;
-  private player: AudioPlaybackService;
-  private stopTimer: number = -1;
-  private playbackStarted: (() => void) | undefined = undefined;
+  private player: AudioPlaybackService | undefined = undefined;
+  private generation: number = 0;
+  private currentPath: string = '';
 
   constructor(context: common.UIAbilityContext) {
     this.directory = `${context.cacheDir}/${REVIEW_AUDIO_DIRECTORY}`;
     ensureDirectory(this.directory);
-    this.player = new AudioPlaybackService((playing: boolean, _message: string): void => {
-      const started = this.playbackStarted;
-      if (playing && started !== undefined) {
-        this.playbackStarted = undefined;
-        started();
-      }
-    });
   }
 
-  async play(response: DeviceV3ReviewAudioResponse, onStarted: () => void): Promise<void> {
+  async play(response: DeviceV3ReviewAudioResponse, onStarted: () => void,
+    onCompleted: () => void = (): void => {},
+    onFailure: (message: string) => void = (_message: string): void => {},
+    onProgress: (position: number) => void = (_position: number): void => {}): Promise<void> {
+    const generation = this.generation + 1;
+    await this.release();
+    if (generation !== this.generation) { return; }
     validateReviewAudio(response);
     const bytes = decodeBase64Url(response.data_base64url);
     if (bytes.length === 0 || bytes.length > MAX_REVIEW_AUDIO_BYTES) {
       throw new Error('声纹审核音频大小无效');
     }
-    const extension = safeAudioExtension(response.format);
-    const path = `${this.directory}/${safeFileName(response.prototype_id)}.${extension}`;
+    const path = `${this.directory}/${safeFileName(response.prototype_id)}-${generation}.${safeAudioExtension(response.format)}`;
     writeBytes(path, bytes);
-    this.playbackStarted = onStarted;
+    this.currentPath = path;
+    let started: boolean = false;
+    const player = new AudioPlaybackService((playing: boolean, message: string): void => {
+      if (generation !== this.generation) { return; }
+      if (playing && !started) { started = true; onStarted(); }
+      if (message === '播放完成') {
+        this.generation += 1;
+        this.removeFile(path);
+        onCompleted();
+      } else if (message.startsWith('播放失败') || message === '播放已暂停') {
+        this.release().then((): void => {}, (): void => {});
+        onFailure(message);
+      }
+    }, (position: number, _duration: number): void => {
+      if (generation === this.generation) { onProgress(position); }
+    });
+    this.player = player;
     try {
-      await this.player.play(path, 0, response.start_ms);
+      await player.play(path, response.end_ms - response.start_ms, response.start_ms);
     } catch (_error) {
-      this.playbackStarted = undefined;
+      if (generation === this.generation) { await this.release(); }
       throw new Error('播放声纹审核音频失败');
     }
-    if (this.stopTimer >= 0) {
-      clearTimeout(this.stopTimer);
-    }
-    const duration = Math.max(800, Math.min(15000, response.end_ms - response.start_ms));
-    this.stopTimer = setTimeout((): void => {
-      this.player.release().then((): void => {}, (): void => {});
-      this.stopTimer = -1;
-    }, duration);
   }
 
   async release(): Promise<void> {
-    this.playbackStarted = undefined;
-    if (this.stopTimer >= 0) {
-      clearTimeout(this.stopTimer);
-      this.stopTimer = -1;
-    }
-    await this.player.release();
+    this.generation += 1;
+    const player = this.player;
+    const path = this.currentPath;
+    this.player = undefined;
+    this.currentPath = '';
+    if (player !== undefined) { await player.release(); }
+    this.removeFile(path);
+  }
+
+  private removeFile(path: string): void {
+    if (path.length === 0) { return; }
+    try { fileIo.unlinkSync(path); } catch (_error) {}
   }
 }
 

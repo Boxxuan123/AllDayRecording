@@ -1,5 +1,11 @@
+import { syncRequestBatch } from '../data/PhoneSyncBatch';
+import { PHONE_V3_SOUND_KINDS, phoneV3SoundKindLabel } from '../domain/PhoneV3SoundKind';
+import { PhoneV3LocalAnnotation, PhoneV3AnnotationSentence, applyLocalAnnotations, annotationRows } from '../domain/PhoneV3LocalAnnotation';
 import {
   DeviceV3ClientOperation,
+  DeviceV3PersonChoice,
+  DeviceV3AnnotationRequest,
+  DeviceV3AnnotationResponse,
   DeviceV3ReviewActionRequest,
   DeviceV3ReviewAudioResponse,
   DeviceV3SyncRequest
@@ -56,11 +62,27 @@ interface UtteranceCorrectionPayload {
   identity: string;
 }
 
+const activeSyncRepositories: Set<PhoneV3ProjectionRepositoryPort> = new Set<PhoneV3ProjectionRepositoryPort>();
+
 export class PhoneV3SyncResult {
   batches: number;
   submittedOperations: number;
   finalCursor: string;
   backup: PhoneV3AudioBackupResult;
+  remainingOperations: number = 0;
+  completion: string = 'complete';
+  pullPending: boolean = false;
+
+  summary(): string {
+    let reason = '全部完成';
+    switch (this.completion) {
+      case 'waiting': reason = '等待回执、依赖或人工处理'; break;
+      case 'cancelled': reason = '已停止，稍后可继续'; break;
+      case 'no_progress': reason = '电脑未返回进展，请稍后重试'; break;
+      case 'budget_exhausted': reason = '已达本轮上限，请继续同步'; break;
+    }
+    return `${reason}；剩余 ${this.remainingOperations} 项${this.pullPending ? '，远端数据尚未拉取完' : ''}`;
+  }
 
   constructor(batches: number, submittedOperations: number, finalCursor: string,
     backup: PhoneV3AudioBackupResult = new PhoneV3AudioBackupResult()) {
@@ -72,6 +94,10 @@ export class PhoneV3SyncResult {
 }
 
 export class PhoneV3UseCases {
+  private syncActive: boolean = false;
+  private syncCancelled: boolean = false;
+  cancelSynchronize(): void { this.syncCancelled = true; }
+
   private repository: PhoneV3ProjectionRepositoryPort;
   private localAudio: PhoneV3LocalAudioRepositoryPort;
   private remote: PhoneV3RemotePort;
@@ -105,8 +131,10 @@ export class PhoneV3UseCases {
     const paired = await this.remote.isPaired();
     const reminderValues = phoneV3Reminders(reminders);
     await this.reconcileReminders(reminderValues);
+    const sessions = mergePhoneV3Sessions(localFacts, links, recordings, processing, utterances);
+    applyLocalAnnotations(sessions, await this.repository.annotationOperations());
     return new PhoneV3Snapshot(
-      mergePhoneV3Sessions(localFacts, links, recordings, processing, utterances),
+      sessions,
       conflicts, status, paired, reminderValues, phoneV3ReviewItems(reviews));
   }
 
@@ -156,53 +184,187 @@ export class PhoneV3UseCases {
     await this.repository.enqueue(operation);
   }
 
-  async synchronize(): Promise<PhoneV3SyncResult> {
+  async localPeople(): Promise<Array<DeviceV3PersonChoice>> {
+    return this.repository.cachedPeople();
+  }
+
+  async queueSpeakerAnnotation(utterances: Array<PhoneV3Utterance>, personId: string,
+    name: string): Promise<void> {
+    if (utterances.length === 0 || utterances.length > 2000) {
+      throw new Error('请选择 1 至 2000 句');
+    }
+    const people = await this.repository.cachedPeople();
+    const person = personId.length > 0 ? people.find((value: DeviceV3PersonChoice): boolean =>
+      value.person_id === personId) : undefined;
+    if (personId.length > 0 && person === undefined) { throw new Error('请重新选择人物'); }
+    const label = person === undefined ? name.trim() : person.display_name;
+    if (label.length === 0 || label.length > 100) { throw new Error('人物姓名应为 1 至 100 字'); }
+    const choice: DeviceV3PersonChoice = person ?? { person_id: newOperationId(), display_name: label, local: true };
+    const payload: PhoneV3LocalAnnotation = {
+      selections: utterances.map((value: PhoneV3Utterance): PhoneV3AnnotationSentence => {
+        return { utterance_id: value.utteranceId, revision: value.revision,
+          text: value.text, speaker_label: value.speakerLabel ?? '未知说话人', sound_kind: value.soundKind };
+      }), person_name: label
+    };
+    if (choice.local) { payload.new_person_id = choice.person_id; payload.display_name = label; }
+    else { payload.person_id = choice.person_id; }
+    await this.repository.beginTransaction();
     try {
-      const backup = this.audioBackup === undefined ? new PhoneV3AudioBackupResult() :
+      await this.repository.cachePeople([choice]);
+      await this.enqueueAnnotationItems('speaker.assign', payload);
+      await this.repository.commit();
+    } catch (error) {
+      await this.repository.rollback();
+      throw error instanceof Error ? error : new Error(JSON.stringify(error));
+    }
+  }
+
+  async queueSoundClassification(utterances: Array<PhoneV3Utterance>, soundKind: string): Promise<void> {
+    if (utterances.length === 0 || utterances.length > 2000 || PHONE_V3_SOUND_KINDS.indexOf(soundKind) < 0) {
+      throw new Error('请选择 1 至 2000 个片段和有效的声音类型');
+    }
+    const payload: PhoneV3LocalAnnotation = { sound_kind: soundKind, person_name: phoneV3SoundKindLabel(soundKind),
+      selections: utterances.map((value: PhoneV3Utterance): PhoneV3AnnotationSentence => {
+        return { utterance_id: value.utteranceId, revision: value.revision, text: value.text,
+          speaker_label: value.speakerLabel ?? '未知说话人', sound_kind: value.soundKind };
+      }) };
+    await this.repository.beginTransaction();
+    try {
+      await this.enqueueAnnotationItems('segment.classify', payload);
+      await this.repository.commit();
+    } catch (error) {
+      await this.repository.rollback();
+      throw error instanceof Error ? error : new Error(JSON.stringify(error));
+    }
+  }
+
+  private async enqueueAnnotationItems(kind: string, payload: PhoneV3LocalAnnotation): Promise<void> {
+    const predecessors = await this.repository.annotationOperations();
+    for (let selection of payload.selections) {
+      const dependencies: Array<string> = [];
+      for (let operation of predecessors) {
+        if (operation.kind !== kind) { continue; }
+        const previous = operation.payload as PhoneV3LocalAnnotation;
+        if (previous.selections.some((row: PhoneV3AnnotationSentence): boolean =>
+          row.utterance_id === selection.utterance_id)) { dependencies.push(operation.operation_id); }
+      }
+      const item: PhoneV3LocalAnnotation = { selections: [selection], person_name: payload.person_name,
+        person_id: payload.person_id, new_person_id: payload.new_person_id,
+        display_name: payload.display_name, sound_kind: payload.sound_kind, depends_on: dependencies };
+      await this.repository.enqueue({ operation_id: newOperationId(), kind: kind,
+        base_revision: null, payload: item });
+    }
+  }
+
+  async annotationConflictRows(payload: PhoneV3LocalAnnotation): Promise<Array<PhoneV3Utterance>> {
+    return annotationRows(mergePhoneV3Sessions([], [], await this.repository.projectionRows('recording_session'),
+      [], await this.repository.projectionRows('utterance')), payload);
+  }
+
+  async resolveAnnotationConflict(operationId: string, keepLocal: boolean,
+    reviewed: Array<PhoneV3Utterance> = []): Promise<void> {
+    const conflicts = await this.repository.conflictRows();
+    const conflict = conflicts.find((value): boolean => value.operationId === operationId);
+    if (conflict === undefined || ['speaker.assign', 'segment.classify'].indexOf(conflict.kind) < 0) { throw new Error('此标注审核已处理'); }
+    const payload = JSON.parse(conflict.payloadJson) as PhoneV3LocalAnnotation;
+    if (keepLocal) {
+      const rows = await this.annotationConflictRows(payload);
+      if (rows.length !== payload.selections.length || rows.some((row: PhoneV3Utterance): boolean => row.status !== 'active')) {
+        throw new Error('部分发言已被删除或重新转写，请保留电脑结果后，重新选择需要标注的发言');
+      }
+      if (reviewed.length !== rows.length || rows.some((row: PhoneV3Utterance): boolean =>
+        !reviewed.some((value: PhoneV3Utterance): boolean => value.utteranceId === row.utteranceId && value.revision === row.revision))) {
+        throw new Error('审核期间发言又有更新，请重新打开本项核对');
+      }
+      payload.selections = rows.map((value: PhoneV3Utterance): PhoneV3AnnotationSentence => {
+        return { utterance_id: value.utteranceId, revision: value.revision,
+          text: value.text, speaker_label: value.speakerLabel ?? '未知说话人', sound_kind: value.soundKind };
+      });
+    }
+    await this.repository.beginTransaction();
+    try {
+      if (keepLocal) {
+        await this.repository.enqueue({ operation_id: newOperationId(), kind: conflict.kind,
+          base_revision: null, payload: payload });
+      }
+      await this.repository.removeConflict(operationId);
+      await this.repository.commit();
+    } catch (error) {
+      await this.repository.rollback();
+      throw error instanceof Error ? error : new Error(JSON.stringify(error));
+    }
+  }
+
+  async refreshRemoteProjection(): Promise<void> {
+    await this.synchronize((): void => {}, true);
+  }
+
+  async synchronize(onStatus: (message: string) => void = (): void => {},
+    pullOnly: boolean = false): Promise<PhoneV3SyncResult> {
+    if (this.syncActive || activeSyncRepositories.has(this.repository)) { throw new Error('同步正在进行'); }
+    activeSyncRepositories.add(this.repository);
+    this.syncActive = true;
+    this.syncCancelled = false;
+    try {
+      const backup = pullOnly || this.audioBackup === undefined ? new PhoneV3AudioBackupResult() :
         await this.audioBackup.backup();
+      onStatus("录音备份已完成，正在连接电脑同步转写与处理状态…");
       const session = await this.remote.connect();
       const status = await session.status();
       if (status.contract_version !== V3_CONTRACT_VERSION ||
         status.projection_version !== V3_PROJECTION_VERSION) {
         throw new Error('电脑 V3 Device API 版本与 Phone 投影不兼容');
       }
-      const pending = await this.repository.pendingOperations(500);
-      const operations: Array<DeviceV3ClientOperation> = [];
-      for (let index = 0; index < pending.length; index += 1) {
-        operations.push({
-          operation_id: pending[index].operation_id,
-          kind: pending[index].kind,
-          base_revision: pending[index].base_revision,
-          payload: pending[index].payload
-        });
-      }
       let cursor = await this.repository.currentCursor();
       let hasMore = true;
       let batches = 0;
-      while (hasMore) {
-        if (batches >= 100) {
-          throw new Error('V3 增量同步批次过多，请稍后重试');
-        }
-        const request: DeviceV3SyncRequest = {
-          projection_version: V3_PROJECTION_VERSION,
-          cursor: cursor === 'cursor-0' ? null : cursor,
-          client_operations: batches === 0 ? operations : [],
-          pull_limit: 500
-        };
+      let submitted = 0;
+      let stopped = '';
+      const attempted: Array<string> = [];
+      while (!this.syncCancelled && batches < 100) {
+        const pending = pullOnly ? [] : await this.repository.pendingOperations(500, attempted);
+        const candidates: Array<DeviceV3ClientOperation> = pending.filter((op): boolean =>
+          attempted.indexOf(op.operation_id) < 0).map((op): DeviceV3ClientOperation => {
+          return { operation_id: op.operation_id, kind: op.kind,
+            base_revision: op.base_revision, payload: op.payload };
+        });
+        if (!hasMore && candidates.length === 0) { break; }
+        const request = syncRequestBatch(cursor, candidates);
+        const operations = request.client_operations;
+        onStatus(`正在同步转写与处理状态：第 ${batches + 1} 批`);
         const response = await session.sync(request);
         await applySyncResponse(this.repository, response);
-        cursor = response.next_cursor;
-        hasMore = response.has_more;
+        for (let op of operations) { attempted.push(op.operation_id); }
+        submitted += response.receipts.filter((receipt): boolean => receipt.status === 'applied' &&
+          operations.some((op): boolean => op.operation_id === receipt.operation_id)).length;
         batches += 1;
+        hasMore = response.has_more;
+        if (hasMore && response.next_cursor === cursor && response.changes.length === 0) {
+          stopped = 'no_progress'; break;
+        }
+        cursor = response.next_cursor;
       }
+      onStatus("正在获取最新审核结果…");
       const reviews = await session.reviews();
       await this.repository.replaceReviewItems(reviews.items);
-      return new PhoneV3SyncResult(batches, operations.length, cursor, backup);
+      try {
+        const people = await session.annotations({ action: 'people' });
+        await this.repository.cachePeople(people.people ?? []);
+      } catch (error) { /* Cached people remain usable while the computer is unavailable. */ }
+      const result = new PhoneV3SyncResult(batches, submitted, cursor, backup);
+      const statusAfter = await this.repository.v3Status();
+      const conflicts = await this.repository.conflictRows();
+      result.remainingOperations = statusAfter.pendingOperations + conflicts.length;
+      result.pullPending = hasMore;
+      result.completion = this.syncCancelled ? 'cancelled' : stopped ||
+        (batches >= 100 ? 'budget_exhausted' : hasMore || result.remainingOperations > 0 ? 'waiting' : 'complete');
+      onStatus(result.summary());
+      return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : JSON.stringify(error);
       await this.repository.markSyncFailure(message);
       throw new Error(message);
-    }
+    } finally { this.syncActive = false; activeSyncRepositories.delete(this.repository); }
   }
 
   async rebuild(): Promise<PhoneV3SyncResult> {
@@ -215,6 +377,31 @@ export class PhoneV3UseCases {
     const response = await session.resolveReview(request);
     await this.repository.replaceReviewItems(response.reviews.items);
     return phoneV3ReviewSnapshotItems(response.reviews.items);
+  }
+
+  async annotations(request: DeviceV3AnnotationRequest): Promise<DeviceV3AnnotationResponse> {
+    const session = await this.remote.connect();
+    const response = await session.annotations(request);
+    if (response.people !== undefined) { await this.repository.cachePeople(response.people); }
+    if (response.utterances !== undefined) {
+      await this.repository.beginTransaction();
+      try {
+        for (let index = 0; index < response.utterances.length; index += 1) {
+          const utterance = validateV3UtteranceDto(response.utterances[index]);
+          await this.repository.applyChange({ sequence: 0, resource_type: 'utterance',
+            resource_id: utterance.utterance_id, revision: utterance.revision,
+            operation: 'upsert', resource: utterance });
+        }
+        await this.repository.commit();
+      } catch (error) {
+        await this.repository.rollback();
+        throw error instanceof Error ? error : new Error(JSON.stringify(error));
+      }
+    }
+    if (response.reviews !== undefined) {
+      await this.repository.replaceReviewItems(response.reviews.items);
+    }
+    return response;
   }
 
   async loadReviewAudio(reviewId: string, prototypeId: string): Promise<DeviceV3ReviewAudioResponse> {

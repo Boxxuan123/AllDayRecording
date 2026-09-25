@@ -1,7 +1,8 @@
 import { common } from '@kit.AbilityKit';
 import { ReceivedRecordingFile } from 'common';
 import {
-  createComputerRecordingBackupService
+  createComputerRecordingBackupService,
+  ComputerRecordingBackupRuntime
 } from '../../computer/ComputerRecordingBackupService';
 import {
   ComputerUploadProgress,
@@ -21,6 +22,7 @@ import {
   parseComputerPairingBootstrap
 } from '../../computer/ComputerTransferProtocol';
 import { prepareComputerSessions } from '../../computer/ComputerSessionManifest';
+import { recordingsNeedingComputerBackup } from '../../v3/data/PhoneV3ComputerBackup';
 import { PhoneV3RecordingStore } from '../../v3/runtime/PhoneV3RecordingStore';
 import { PhonePasskeyClient } from '../../computer/PhonePasskeyClient';
 import {
@@ -198,8 +200,21 @@ export class PhoneComputerTransferViewModel {
       this.refreshRecordings();
       this.status = '正在自动发现已配对电脑…';
       const projection = await this.requireProjection();
+      const pending = recordingsNeedingComputerBackup(this.recordings, await projection.localAudioLinks());
+      if (pending.length === 0) {
+        this.status = '全部录音已备份到电脑，正在同步处理状态…';
+        const connected = await new ComputerRecordingBackupRuntime(context).connect();
+        this.applyConfig(connected);
+        await new PhoneSyncCoordinator(new ComputerTransferHttpClient(context, connected.baseUrl,
+          connected.caPath, connected.deviceId), projection).synchronize();
+        this.cancelRetry();
+        await this.refreshProjectionStatus(projection);
+        this.progressPercent = 100;
+        this.status = '全部录音已备份，处理状态同步完成';
+        return;
+      }
       const outcome = await createComputerRecordingBackupService(context, projection)
-        .backup(this.recordings, (progress: ComputerUploadProgress): void => {
+        .backup(pending, (progress: ComputerUploadProgress): void => {
           this.progressPercent = progress.percent();
           this.completedFiles = progress.completedFiles;
           this.totalFiles = progress.totalFiles;

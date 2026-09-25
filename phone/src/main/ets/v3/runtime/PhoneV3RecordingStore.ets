@@ -175,10 +175,11 @@ export class PhoneV3RecordingStore {
   private loadFromDisk(): Array<ReceivedRecordingFile> {
     const loaded: Array<ReceivedRecordingFile> = [];
     this.loadManifest(loaded);
+    const indexedCount = loaded.length;
     this.scanExistingSyncFiles(loaded);
     this.recordings = loaded;
     this.sortNewestFirst();
-    if (loaded.length > 0) {
+    if (loaded.length > indexedCount) {
       try {
         this.writeManifest();
       } catch (error) {
@@ -283,7 +284,7 @@ export class PhoneV3RecordingStore {
       const prefix = `${this.filesDirectory}/`;
       for (let index = 0; index < this.recordings.length; index += 1) {
         const recording = this.recordings[index];
-        if (!recording.path.startsWith(prefix) || !fileIo.accessSync(recording.path)) {
+        if (!recording.path.startsWith(prefix)) {
           continue;
         }
         entries.push({

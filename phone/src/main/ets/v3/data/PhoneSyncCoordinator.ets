@@ -1,3 +1,4 @@
+import { syncRequestBatch } from './PhoneSyncBatch';
 import { ComputerTransferHttpClient } from '../../computer/ComputerTransferHttpClient';
 import {
   DeviceV3ClientOperation,
@@ -34,18 +35,15 @@ export class PhoneSyncCoordinator {
       let cursor = await this.repository.currentCursor();
       let hasMore = true;
       let batches = 0;
-      while (hasMore) {
+      let submitted = 0;
+      while (hasMore || submitted < operations.length) {
         if (batches >= 100) {
           throw new Error('V3 增量同步批次过多，请稍后重试');
         }
-        const request: DeviceV3SyncRequest = {
-          projection_version: V3_PROJECTION_VERSION,
-          cursor: cursor === 'cursor-0' ? null : cursor,
-          client_operations: batches === 0 ? operations : [],
-          pull_limit: 500
-        };
+        const request = syncRequestBatch(cursor, operations.slice(submitted));
         const response = await this.client.sync(request);
         await applySyncResponse(this.repository, response);
+        submitted += request.client_operations.length;
         cursor = response.next_cursor;
         hasMore = response.has_more;
         batches += 1;

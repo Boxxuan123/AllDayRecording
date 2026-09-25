@@ -163,6 +163,44 @@ export interface DeviceV3StatusResponse {
   server_time: string;
 }
 
+export interface DeviceV3PersonChoice {
+  person_id: string;
+  display_name: string;
+  local?: boolean;
+}
+
+export interface DeviceV3AnnotationSelection {
+  utterance_id: string;
+  revision: number;
+}
+
+export interface DeviceV3AnnotationRequest {
+  action: string;
+  utterance_ids?: Array<string>;
+  session_id?: string;
+  start_ms?: number;
+  end_ms?: number;
+  person_id?: string;
+  display_name?: string;
+  selections?: Array<DeviceV3AnnotationSelection>;
+}
+
+export interface DeviceV3AnnotationResponse {
+  items?: Array<DeviceV3AnnotationStatus>;
+  people?: Array<DeviceV3PersonChoice>;
+  reviews?: DeviceV3ReviewSnapshot;
+  audio?: DeviceV3ReviewAudioResponse;
+  utterances?: Array<Object>;
+}
+
+export interface DeviceV3AnnotationStatus {
+  utterance_id: string;
+  revision: number;
+  fact_status: string;
+  processing_status: string;
+  processing_reason: string;
+}
+
 export interface DeviceV3ReviewSnapshot {
   items: Array<Object>;
 }
@@ -185,7 +223,17 @@ export interface DeviceV3ReviewAudioRequest {
   prototype_id: string;
 }
 
+export interface DeviceV3ReviewAudioWindow {
+  media_id: string;
+  start_ms: number;
+  end_ms: number;
+  playback_start_ms: number;
+}
+
 export interface DeviceV3ReviewAudioResponse {
+  complete_sample?: boolean;
+  audition_key?: string;
+  windows?: Array<DeviceV3ReviewAudioWindow>;
   review_id: string;
   prototype_id: string;
   format: string;
@@ -215,7 +263,13 @@ export interface DeviceV3ApiError {
   request_id: string;
 }
 
+export interface DeviceV3ResourceResult {
+  resource_id: string;
+  revision: number;
+}
+
 export interface DeviceV3OperationReceipt {
+  resource_results?: Array<DeviceV3ResourceResult>;
   operation_id: string;
   status: string;
   resource_revision: number | null;

@@ -1,5 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import {
+  DeviceV3AnnotationRequest,
+  DeviceV3AnnotationResponse,
   DeviceV3ReviewActionRequest,
   DeviceV3ReviewActionResponse,
   DeviceV3ReviewAudioRequest,
@@ -9,7 +11,7 @@ import {
   DeviceV3SyncRequest,
   DeviceV3SyncResponse
 } from '../../computer/ComputerTransferProtocol';
-import { ComputerReceiverDiscovery } from '../../computer/ComputerReceiverDiscovery';
+import { connectComputerReceiver } from '../../computer/ComputerReceiverConnection';
 import { ComputerTransferConfigStore } from '../../computer/ComputerTransferConfigStore';
 import { ComputerTransferHttpClient } from '../../computer/ComputerTransferHttpClient';
 import { PhoneV3RemotePort, PhoneV3RemoteSession } from '../application/PhoneV3Ports';
@@ -27,6 +29,10 @@ class PhoneV3HttpRemoteSession implements PhoneV3RemoteSession {
 
   async sync(request: DeviceV3SyncRequest): Promise<DeviceV3SyncResponse> {
     return this.client.sync(request);
+  }
+
+  async annotations(request: DeviceV3AnnotationRequest): Promise<DeviceV3AnnotationResponse> {
+    return this.client.annotations(request);
   }
 
   async reviews(): Promise<DeviceV3ReviewSnapshot> {
@@ -57,12 +63,7 @@ export class PhoneV3DeviceRemote implements PhoneV3RemotePort {
   }
 
   async connect(): Promise<PhoneV3RemoteSession> {
-    const config = await this.configStore.load();
-    if (!config.isPaired()) {
-      throw new Error('请先完成电脑 Passkey 配对');
-    }
-    const discoveredUrl = await new ComputerReceiverDiscovery(this.context).discover(config.receiverId);
-    const updated = await this.configStore.saveLastAddress(discoveredUrl);
+    const updated = await connectComputerReceiver(this.context, this.configStore);
     return new PhoneV3HttpRemoteSession(new ComputerTransferHttpClient(
       this.context, updated.baseUrl, updated.caPath, updated.deviceId));
   }

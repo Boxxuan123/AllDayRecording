@@ -10,6 +10,7 @@ import {
   ComputerUploadProgressHandler,
   ComputerUploadResult
 } from '../main/ets/computer/ComputerRecordingUploadService';
+import { PreparedComputerSession, prepareComputerSessions } from '../main/ets/computer/ComputerSessionManifest';
 import { ComputerTransferConfig } from '../main/ets/computer/ComputerTransferConfigStore';
 
 class FakeBackupRuntime implements ComputerRecordingBackupRuntimePort {
@@ -42,6 +43,17 @@ class FakeBackupReceipts implements ComputerRecordingBackupReceiptPort {
   }
 }
 
+class PartialBackupRuntime extends FakeBackupRuntime {
+  async upload(_config: ComputerTransferConfig, recordings: Array<ReceivedRecordingFile>,
+    _onProgress: ComputerUploadProgressHandler,
+    onSessionCompleted?: (session: PreparedComputerSession) => Promise<void>): Promise<ComputerUploadResult> {
+    if (onSessionCompleted !== undefined) {
+      await onSessionCompleted(prepareComputerSessions(recordings)[0]);
+    }
+    throw new Error('second session disconnected');
+  }
+}
+
 function recording(index: number, firstSample: number): ReceivedRecordingFile {
   const fileName = `segment_${index.toString().padStart(6, '0')}_first_${
     firstSample.toString().padStart(12, '0')}.wav`;
@@ -58,6 +70,19 @@ function recording(index: number, firstSample: number): ReceivedRecordingFile {
 
 export default function computerRecordingBackupServiceTest() {
   describe('ComputerRecordingBackupService', () => {
+    it('preservesCompletedSessionReceiptsWhenLaterUploadFails', 0, async () => {
+      const receipts = new FakeBackupReceipts();
+      let failed = false;
+      try {
+        await new ComputerRecordingBackupService(new PartialBackupRuntime(), receipts)
+          .backup([recording(1, 0)], (): void => {});
+      } catch (_error) {
+        failed = true;
+      }
+      expect(failed).assertTrue();
+      expect(receipts.paths.length).assertEqual(1);
+      expect(receipts.sessionKeys[0]).assertEqual('watch-session:1788000000000');
+    });
     it('usesOneUploadPipelineAndRecordsEveryUploadedLocalFile', 0, async () => {
       const runtime = new FakeBackupRuntime();
       const receipts = new FakeBackupReceipts();

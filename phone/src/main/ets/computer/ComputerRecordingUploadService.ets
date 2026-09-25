@@ -1,3 +1,4 @@
+import { ComputerUploadConcurrency, runAdaptiveComputerUploadQueue } from './ComputerUploadQueue';
 import { common } from '@kit.AbilityKit';
 import { util } from '@kit.ArkTS';
 import { deviceInfo } from '@kit.BasicServicesKit';
@@ -20,6 +21,9 @@ import {
 export type ComputerUploadProgressHandler = (progress: ComputerUploadProgress) => void;
 
 export class ComputerUploadProgress {
+  activeFiles: Array<string> = [];
+  sessionKey: string = '';
+  sessionCompleted: boolean = false;
   message: string;
   completedFiles: number;
   totalFiles: number;
@@ -87,7 +91,8 @@ export class ComputerRecordingUploadService {
     this.client = new ComputerTransferHttpClient(context, config.baseUrl, config.caPath, config.deviceId);
   }
 
-  async upload(recordings: Array<ReceivedRecordingFile>, onProgress: ComputerUploadProgressHandler):
+  async upload(recordings: Array<ReceivedRecordingFile>, onProgress: ComputerUploadProgressHandler,
+    onSessionCompleted: (session: PreparedComputerSession) => Promise<void> = async (): Promise<void> => {}):
     Promise<ComputerUploadResult> {
     const sessions = prepareComputerSessions(recordings, currentTimezone());
     if (sessions.length === 0) {
@@ -103,37 +108,56 @@ export class ComputerRecordingUploadService {
     let completedFiles = 0;
     let transferredBytes = 0;
     let skippedFiles = 0;
+    const concurrency = new ComputerUploadConcurrency();
 
     for (let sessionIndex = 0; sessionIndex < sessions.length; sessionIndex += 1) {
       const session = sessions[sessionIndex];
-      for (let recordingIndex = 0; recordingIndex < session.recordings.length; recordingIndex += 1) {
+      const activeFiles = new Map<number, string>();
+      const report = (progress: ComputerUploadProgress): void => {
+        progress.activeFiles = Array.from(activeFiles.values());
+        progress.sessionKey = session.manifest.sessionKey;
+        progress.message = `会话 ${sessionIndex + 1}/${sessions.length} · ${sessionTimeLabel(session.manifest.sessionStartedAt)} · ${progress.message}`;
+        onProgress(progress);
+      };
+      await runAdaptiveComputerUploadQueue(session.recordings.length, concurrency,
+        async (recordingIndex: number): Promise<number> => {
         const recording = session.recordings[recordingIndex];
-        const beforeFile = transferredBytes;
-        const result = await this.uploadRecording(recording, chunkBytes,
-          (remoteOffset: number): void => {
-            onProgress(new ComputerUploadProgress(
-              `正在上传 ${recording.fileName}`,
-              completedFiles,
-              totalFiles,
-              beforeFile + remoteOffset,
-              totalBytes
-            ));
-          });
-        transferredBytes = beforeFile + result.upload.offset;
-        if (result.skipped) {
-          skippedFiles += 1;
-        }
-        completedFiles += 1;
-        onProgress(new ComputerUploadProgress(
-          result.skipped ? `电脑已有，已跳过 ${recording.fileName}` :
+        let acknowledgedOffset = 0;
+        let initialOffset = -1;
+        activeFiles.set(recordingIndex, recording.fileName);
+        report(new ComputerUploadProgress(`并行校验 / 上传（当前上限 ${concurrency.limit} 个）`,
+          completedFiles, totalFiles, transferredBytes, totalBytes));
+        try {
+          const result = await this.uploadRecording(recording, chunkBytes,
+            (remoteOffset: number): void => {
+              if (initialOffset < 0) {
+                initialOffset = remoteOffset;
+              }
+              transferredBytes += remoteOffset - acknowledgedOffset;
+              acknowledgedOffset = remoteOffset;
+              report(new ComputerUploadProgress(`正在上传 ${recording.fileName}`,
+                completedFiles, totalFiles, transferredBytes, totalBytes));
+            }, (): void => { concurrency.congested(Date.now()); });
+          if (result.skipped) {
+            skippedFiles += 1;
+          }
+          completedFiles += 1;
+          activeFiles.delete(recordingIndex);
+          report(new ComputerUploadProgress(result.skipped ? `电脑已有，已跳过 ${recording.fileName}` :
             `已上传 ${completedFiles}/${totalFiles} 个文件`, completedFiles, totalFiles,
-          transferredBytes, totalBytes));
-      }
+            transferredBytes, totalBytes));
+          return result.skipped ? 0 : Math.max(0, result.upload.offset - initialOffset);
+        } finally {
+          activeFiles.delete(recordingIndex);
+        }
+      });
       const manifest = manifests[sessionIndex];
       const beforeManifest = transferredBytes;
+      report(new ComputerUploadProgress('正在校验并提交会话清单', completedFiles, totalFiles,
+        transferredBytes, totalBytes));
       const result = await this.uploadBytes(manifest.relativePath, manifest.bytes, 'manifest', chunkBytes,
         (remoteOffset: number): void => {
-          onProgress(new ComputerUploadProgress(
+          report(new ComputerUploadProgress(
             `正在提交 ${session.directory} 会话清单`, completedFiles, totalFiles,
             beforeManifest + remoteOffset, totalBytes));
         });
@@ -142,16 +166,21 @@ export class ComputerRecordingUploadService {
         skippedFiles += 1;
       }
       completedFiles += 1;
-      onProgress(new ComputerUploadProgress(
+      report(new ComputerUploadProgress(
         result.skipped ? `电脑已有，已跳过 ${manifest.relativePath}` :
           `已上传 ${completedFiles}/${totalFiles} 个文件`, completedFiles, totalFiles,
         transferredBytes, totalBytes));
+      await onSessionCompleted(session);
+      const done = new ComputerUploadProgress('会话备份完成', completedFiles, totalFiles,
+        transferredBytes, totalBytes);
+      done.sessionCompleted = true;
+      report(done);
     }
     return new ComputerUploadResult(sessions.length, totalFiles - manifests.length, manifests.length, skippedFiles);
   }
 
   private async uploadRecording(recording: ReceivedRecordingFile, chunkBytes: number,
-    onOffset: (offset: number) => void): Promise<ComputerFileUploadResult> {
+    onOffset: (offset: number) => void, onRetry: () => void): Promise<ComputerFileUploadResult> {
     const stat = fileIo.statSync(recording.path);
     if (!stat.isFile() || stat.size !== recording.size) {
       throw new Error(`录音文件已改变，请刷新后重试：${recording.fileName}`);
@@ -163,7 +192,7 @@ export class ComputerRecordingUploadService {
       sha256: digest,
       kind: 'recording'
     };
-    let remote = (await this.client.createUpload(metadata)).upload;
+    let remote = (await this.client.createUpload(metadata, onRetry)).upload;
     verifyRemoteUpload(remote, metadata);
     onOffset(remote.offset);
     if (remote.status === 'completed') {
@@ -184,7 +213,7 @@ export class ComputerRecordingUploadService {
           throw new Error(`录音文件没有完整读取：${recording.fileName}`);
         }
         remote = (await this.client.appendUpload(remote.upload_id, remote.offset,
-          new Uint8Array(buffer))).upload;
+          new Uint8Array(buffer), onRetry)).upload;
         verifyRemoteUpload(remote, metadata);
         if (remote.offset !== sentOffset + length) {
           throw new Error(`电脑返回了意外的录音断点：${recording.fileName}`);
@@ -320,4 +349,10 @@ function currentTimezone(): string {
 export function computerDeviceName(): string {
   const name = deviceInfo.marketName.trim();
   return name.length > 0 ? name : deviceInfo.productModel;
+}
+
+function sessionTimeLabel(startedAt: number): string {
+  const date = new Date(startedAt);
+  return `${date.getMonth() + 1}月${date.getDate()}日 ` +
+    `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
 }

@@ -518,9 +518,14 @@ export class WifiRecordingTransferService {
       await this.connectReceiver(receiver);
       await this.authenticateSender(credentials);
       const batchToken = Math.max(1, Math.floor(Date.now() % 4294967295));
+      let nextHash: Promise<string> = hashFileChecked(recordings[0].path).catch((): string => '');
       for (let index = 0; index < recordings.length; index += 1) {
+        const sourceHash = await nextHash;
+        if (index + 1 < recordings.length) {
+          nextHash = hashFileChecked(recordings[index + 1].path).catch((): string => '');
+        }
         const confirmation = await this.sendBatchRecording(recordings[index], index + 1,
-          recordings.length, batchToken);
+          recordings.length, batchToken, sourceHash);
         verifiedSources.push(confirmation.source);
         if (confirmation.transferred) {
           result.transferred += 1;
@@ -552,7 +557,7 @@ export class WifiRecordingTransferService {
   }
 
   private async sendBatchRecording(recording: RecordingFile, batchIndex: number,
-    batchTotal: number, batchToken: number): Promise<WifiBatchRecordingConfirmation> {
+    batchTotal: number, batchToken: number, prefetchedHash: string = ''): Promise<WifiBatchRecordingConfirmation> {
     if (!accessFileChecked(recording.path)) {
       throw new Error(`手表中找不到待发送录音：${recording.fileName}`);
     }
@@ -565,7 +570,7 @@ export class WifiRecordingTransferService {
       throw new Error(`待发送录音路径无效：${recording.fileName}`);
     }
     this.updateBatchProgress(`正在计算 ${batchIndex}/${batchTotal} 的 SHA-256`, batchIndex, batchTotal, 1);
-    const sourceHash = await hashFileChecked(recording.path);
+    const sourceHash = prefetchedHash.length > 0 ? prefetchedHash : await hashFileChecked(recording.path);
     // The batch index is unique within the one-time security session. Using it
     // directly prevents an AES-GCM nonce collision at a numeric wrap boundary.
     const transferToken = batchIndex;

@@ -1,8 +1,12 @@
+import { PhoneV3LocalAnnotation, applyLocalAnnotations } from '../main/ets/v3/domain/PhoneV3LocalAnnotation';
 import { describe, expect, it } from '@ohos/hypium';
 import {
   DeviceV3ClientOperation,
+  DeviceV3PersonChoice,
   DeviceV3Change,
   DeviceV3OperationReceipt,
+  DeviceV3AnnotationRequest,
+  DeviceV3AnnotationResponse,
   DeviceV3ReviewActionRequest,
   DeviceV3ReviewActionResponse,
   DeviceV3ReviewAudioRequest,
@@ -25,6 +29,8 @@ import { PhoneV3UseCases, mergePhoneV3Sessions } from '../main/ets/v3/applicatio
 import { PhonePendingOperation } from '../main/ets/v3/data/PhoneSyncProjection';
 import {
   PhoneV3Conflict,
+  PhoneV3Utterance,
+  PhoneV3SessionCard,
   PhoneV3LocalAudioFact,
   PhoneV3LocalAudioLink,
   PhoneV3ProjectionRow,
@@ -80,6 +86,23 @@ class FakePhoneV3Repository implements PhoneV3ProjectionRepositoryPort {
   cursor: string = 'cursor-0';
   failure: string = '';
   operations: Array<DeviceV3ClientOperation> = [];
+  pendingReads: number = 0;
+  people: Array<DeviceV3PersonChoice> = [];
+  async cachedPeople(): Promise<Array<DeviceV3PersonChoice>> { return this.people; }
+  async cachePeople(people: Array<DeviceV3PersonChoice>): Promise<void> {
+    for (let person of people) {
+      this.people = this.people.filter((value): boolean => value.person_id !== person.person_id).concat([person]);
+    }
+  }
+  async annotationOperations(): Promise<Array<PhonePendingOperation>> {
+    return this.operations.filter((value): boolean => ['speaker.assign', 'segment.classify'].indexOf(value.kind) >= 0).map((value): PhonePendingOperation => {
+      return { operation_id: value.operation_id, kind: value.kind, base_revision: value.base_revision,
+        payload: value.payload, attempt_count: 0 };
+    });
+  }
+  async removeConflict(id: string): Promise<void> {
+    this.conflicts = this.conflicts.filter((value): boolean => value.operationId !== id);
+  }
 
   async beginTransaction(): Promise<void> {}
   async commit(): Promise<void> {}
@@ -88,7 +111,7 @@ class FakePhoneV3Repository implements PhoneV3ProjectionRepositoryPort {
   async acknowledgeReceipt(_receipt: DeviceV3OperationReceipt): Promise<void> {}
   async clearRebuildableRows(): Promise<void> {}
   async enqueue(operation: DeviceV3ClientOperation): Promise<void> { this.operations.push(operation); }
-  async pendingOperations(_limit: number = 500): Promise<Array<PhonePendingOperation>> { return []; }
+  async pendingOperations(_limit: number = 500): Promise<Array<PhonePendingOperation>> { this.pendingReads += 1; return []; }
   async currentCursor(): Promise<string> { return this.cursor; }
   async setCursor(cursor: string, _serverTime: string): Promise<void> { this.cursor = cursor; }
   async localAudioLinks(): Promise<Array<PhoneV3LocalAudioLink>> { return this.links; }
@@ -142,11 +165,17 @@ class FakePhoneV3LocalAudio implements PhoneV3LocalAudioRepositoryPort {
 }
 
 class FakePhoneV3RemoteSession implements PhoneV3RemoteSession {
+  syncRequests: Array<DeviceV3SyncRequest> = [];
+  async annotations(_request: DeviceV3AnnotationRequest): Promise<DeviceV3AnnotationResponse> {
+    return { people: [] };
+  }
+
   async status(): Promise<DeviceV3StatusResponse> {
     return { contract_version: '3.7.0', projection_version: 4, server_time: '2026-08-31T00:00:00Z' };
   }
 
   async sync(_request: DeviceV3SyncRequest): Promise<DeviceV3SyncResponse> {
+    this.syncRequests.push(_request);
     return {
       projection_version: 4,
       receipts: [],
@@ -181,10 +210,11 @@ class FakePhoneV3RemoteSession implements PhoneV3RemoteSession {
 
 class FakePhoneV3Remote implements PhoneV3RemotePort {
   connectCount: number = 0;
+  session: FakePhoneV3RemoteSession = new FakePhoneV3RemoteSession();
   async isPaired(): Promise<boolean> { return true; }
   async connect(): Promise<PhoneV3RemoteSession> {
     this.connectCount += 1;
-    return new FakePhoneV3RemoteSession();
+    return this.session;
   }
 }
 
@@ -263,6 +293,81 @@ export default function phoneV3UseCasesTest() {
       expect(cards[0].utterances[0].evidenceJson.includes('asset-1')).assertTrue();
     });
 
+    it('refreshesAnnotationProjectionWithoutBackupOrSubmittingOfflineEdits', 0, async () => {
+      const repository = new FakePhoneV3Repository();
+      repository.cursor = 'cursor-12';
+      const remote = new FakePhoneV3Remote();
+      const backup = new FakeAudioBackup();
+      const useCases = new PhoneV3UseCases(repository,
+        new FakePhoneV3LocalAudio([]), remote, undefined, backup);
+      await useCases.refreshRemoteProjection();
+      expect(backup.calls).assertEqual(0);
+      expect(repository.pendingReads).assertEqual(0);
+      expect(remote.session.syncRequests.length).assertEqual(1);
+      expect(remote.session.syncRequests[0].cursor).assertEqual('cursor-12');
+      expect(remote.session.syncRequests[0].client_operations.length).assertEqual(0);
+      expect(repository.cursor).assertEqual('cursor-1');
+    });
+
+    it('savesAnnotationsAndNewPeopleWithoutConnectingAndRestoresPendingOverlay', 0, async () => {
+      const repository = new FakePhoneV3Repository();
+      const remote = new FakePhoneV3Remote();
+      const useCases = new PhoneV3UseCases(repository, new FakePhoneV3LocalAudio([]), remote);
+      const row = new PhoneV3Utterance('u', 's', 'track', 'Original', 'track', 'Original',
+        'unknown', 'unknown', '{}', 0, 1000, '', '', 'text', 'text', 7, 'active', '{}');
+      await useCases.queueSpeakerAnnotation([row], '', 'Local person');
+      const restarted = new PhoneV3UseCases(repository, new FakePhoneV3LocalAudio([]), remote);
+      const people = await restarted.localPeople();
+      expect(people.length).assertEqual(1);
+      await restarted.queueSpeakerAnnotation([row], people[0].person_id, '');
+      expect((repository.operations[1].payload as PhoneV3LocalAnnotation).depends_on![0])
+        .assertEqual(repository.operations[0].operation_id);
+      expect((repository.operations[1].payload as PhoneV3LocalAnnotation).new_person_id).assertEqual(people[0].person_id);
+      const session = new PhoneV3SessionCard('s', 's', '', '', '', 0, '', '', '', 0, 1, 0,
+        [], 0, 0, '', '', '', 0, [row]);
+      applyLocalAnnotations([session], await repository.annotationOperations());
+      expect(row.speakerLabel).assertEqual('Local person');
+      expect(row.originalSpeakerLabel).assertEqual('Original');
+      expect(row.speakerTrackId).assertEqual('track');
+      expect(row.revision).assertEqual(7);
+      expect(row.annotationPending).assertTrue();
+      expect(remote.connectCount).assertEqual(0);
+    });
+
+    it('classifiesAndRestoresOfflineWithoutChangingOriginalEvidence', 0, async () => {
+      const repository = new FakePhoneV3Repository();
+      const remote = new FakePhoneV3Remote();
+      const useCases = new PhoneV3UseCases(repository, new FakePhoneV3LocalAudio([]), remote);
+      const row = new PhoneV3Utterance('u', 's', 'track', 'Original', 'track', 'Original',
+        'unknown', 'unknown', '{}', 0, 1000, '', '', 'text', 'text', 7, 'active', '{}');
+      const session = new PhoneV3SessionCard('s', 's', '', '', '', 0, '', '', '', 0, 1, 0,
+        [], 0, 0, '', '', '', 0, [row]);
+      await useCases.queueSoundClassification([row], 'non_speech');
+      expect(repository.operations[0].kind).assertEqual('segment.classify');
+      applyLocalAnnotations([session], await repository.annotationOperations());
+      expect(row.soundKind).assertEqual('non_speech');
+      expect(row.originalText).assertEqual('text');
+      expect(row.revision).assertEqual(7);
+      await useCases.queueSoundClassification([row], 'speech');
+      applyLocalAnnotations([session], await repository.annotationOperations());
+      expect(row.soundKind).assertEqual('speech');
+      expect(row.speakerTrackId).assertEqual('track');
+      expect(remote.connectCount).assertEqual(0);
+    });
+
+    it('retainsConflictPayloadUntilUserChoosesComputerResultOffline', 0, async () => {
+      const repository = new FakePhoneV3Repository();
+      const remote = new FakePhoneV3Remote();
+      const payload: PhoneV3LocalAnnotation = { selections: [], person_name: 'Local' };
+      repository.conflicts = [new PhoneV3Conflict('op', 'speaker.assign', 'conflict', '{}', 1, JSON.stringify(payload))];
+      const useCases = new PhoneV3UseCases(repository, new FakePhoneV3LocalAudio([]), remote);
+      expect((await useCases.loadCached([])).conflicts[0].payloadJson).assertEqual(JSON.stringify(payload));
+      await useCases.resolveAnnotationConflict('op', false);
+      expect(repository.conflicts.length).assertEqual(0);
+      expect(repository.operations.length).assertEqual(0);
+      expect(remote.connectCount).assertEqual(0);
+    });
+
     it('queuesOptimisticUtteranceCorrectionInTheDurableOutbox', 0, async () => {
       const repository = new FakePhoneV3Repository();
       const useCases = new PhoneV3UseCases(repository,
@@ -301,6 +406,63 @@ export default function phoneV3UseCasesTest() {
       expect(repository.operations[0].base_revision).assertEqual(7);
       expect(JSON.stringify(repository.operations[0].payload).includes('修订文本')).assertTrue();
       expect(JSON.stringify(repository.operations[0].payload).includes('self')).assertTrue();
+    });
+
+    it('requeuesReviewedRevisionsAndKeepsConflictWhenReviewIsStale', 0, async () => {
+      const repository = new FakePhoneV3Repository();
+      const remote = new FakePhoneV3Remote();
+      const useCases = new PhoneV3UseCases(repository, new FakePhoneV3LocalAudio([]), remote);
+      const utterance = mergePhoneV3Sessions([], [], [new PhoneV3ProjectionRow(
+        SESSION_ID, 1, JSON.stringify({
+          session_id: SESSION_ID,
+          session_key: SESSION_KEY,
+          captured_start: '2026-01-01T00:00:00Z'
+        }), 1000)], [], [new PhoneV3ProjectionRow(
+        '01ARZ3NDEKTSV4RRFFQ69G5FAY', 7, JSON.stringify({
+          utterance_id: '01ARZ3NDEKTSV4RRFFQ69G5FAY',
+          session_id: SESSION_ID,
+          speaker_track_id: '01ARZ3NDEKTSV4RRFFQ69G5FAZ',
+          speaker_label: 'SPEAKER_00',
+          original_speaker_track_id: '01ARZ3NDEKTSV4RRFFQ69G5FAZ',
+          original_speaker_label: 'SPEAKER_00',
+          identity: 'unknown',
+          original_identity: 'unknown',
+          identity_evidence: { source: 'none', decision: 'unknown' } as IdentityEvidenceFixture,
+          start_ms: 100,
+          end_ms: 900,
+          start_at: '2026-01-01T00:00:00.100Z',
+          end_at: '2026-01-01T00:00:00.900Z',
+          text: '测试文本',
+          original_text: '测试文本',
+          revision: 7,
+          status: 'active',
+          evidence: { source: 'test' } as CorrectionEvidenceFixture
+        }), 2000)])[0].utterances[0];
+      const payload: PhoneV3LocalAnnotation = { person_id: 'p', person_name: 'Local', selections: [
+        { utterance_id: utterance.utteranceId, revision: 1, text: 'old', speaker_label: 'old' }
+      ] };
+      repository.recordingRows = [new PhoneV3ProjectionRow(SESSION_ID, 1,
+        JSON.stringify({ session_id: SESSION_ID, session_key: SESSION_KEY, captured_start: '2026-01-01T00:00:00Z' }), 1)];
+      repository.utteranceRows = [new PhoneV3ProjectionRow(utterance.utteranceId, 7, JSON.stringify({
+        utterance_id: utterance.utteranceId, session_id: SESSION_ID,
+        speaker_track_id: utterance.speakerTrackId, speaker_label: utterance.speakerLabel,
+        original_speaker_track_id: utterance.originalSpeakerTrackId, original_speaker_label: utterance.originalSpeakerLabel,
+        identity: utterance.identity, original_identity: utterance.originalIdentity,
+        identity_evidence: { source: 'none', decision: 'unknown' } as IdentityEvidenceFixture,
+        start_ms: utterance.startMs, end_ms: utterance.endMs, start_at: utterance.startAt, end_at: utterance.endAt,
+        text: utterance.text, original_text: utterance.originalText, revision: 7, status: 'active',
+        evidence: { source: 'test' } as CorrectionEvidenceFixture
+      }), 1)];
+      repository.conflicts = [new PhoneV3Conflict('op', 'speaker.assign', 'conflict', '{}', 1, JSON.stringify(payload))];
+      let failed = false;
+      try { await useCases.resolveAnnotationConflict('op', true, []); } catch (error) { failed = true; }
+      expect(failed).assertTrue();
+      expect(repository.conflicts.length).assertEqual(1);
+      expect(repository.operations.length).assertEqual(0);
+      await useCases.resolveAnnotationConflict('op', true, [utterance]);
+      expect(repository.conflicts.length).assertEqual(0);
+      expect((repository.operations[0].payload as PhoneV3LocalAnnotation).selections[0].revision).assertEqual(7);
+      expect(remote.connectCount).assertEqual(0);
     });
 
     it('loadsOfflineFirstThroughFakeRepositoryWithoutOpeningRemote', 0, async () => {

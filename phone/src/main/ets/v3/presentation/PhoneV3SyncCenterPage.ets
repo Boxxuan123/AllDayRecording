@@ -200,6 +200,10 @@ export struct PhoneV3SyncCenterPage {
             .buttonStyle(ButtonStyleMode.EMPHASIZED)
             .onClick((): void => this.viewModel.synchronize())
 
+          if (this.viewModel.busy) {
+            Button('本批完成后停止同步').onClick((): void => this.viewModel.cancelSynchronize())
+          }
+
           Button(this.viewModel.snapshot.paired ? '管理电脑连接' : '连接电脑',
           { type: ButtonType.Capsule })
             .width('100%')
@@ -207,6 +211,18 @@ export struct PhoneV3SyncCenterPage {
             .buttonStyle(ButtonStyleMode.NORMAL)
             .onClick((): void => this.onOpenComputerConnection())
 
+          if (this.viewModel.computerProgress.totalFiles > 0) {
+            if (this.viewModel.computerProgress.activeFiles.length > 0) {
+              Text('并行文件：\n' + this.viewModel.computerProgress.activeFiles.join('\n'))
+                .width('100%').fontSize(11).maxLines(6)
+            }
+            Progress({ value: this.viewModel.computerProgress.percent(), total: 100, type: ProgressType.Linear })
+              .width('100%')
+            Text(`文件 ${this.viewModel.computerProgress.completedFiles}/${this.viewModel.computerProgress.totalFiles} · ` +
+              `${formatRecordingSize(this.viewModel.computerProgress.transferredBytes)} / ` +
+              `${formatRecordingSize(this.viewModel.computerProgress.totalBytes)}`)
+              .fontSize(12)
+          }
           if (this.viewModel.message.length > 0) {
             Text(this.viewModel.message)
               .width('100%')

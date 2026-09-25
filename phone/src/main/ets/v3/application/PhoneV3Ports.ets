@@ -1,5 +1,8 @@
 import {
   DeviceV3ClientOperation,
+  DeviceV3PersonChoice,
+  DeviceV3AnnotationRequest,
+  DeviceV3AnnotationResponse,
   DeviceV3ReviewActionRequest,
   DeviceV3ReviewActionResponse,
   DeviceV3ReviewAudioRequest,
@@ -23,8 +26,12 @@ import {
 
 export interface PhoneV3ProjectionRepositoryPort extends PhoneProjectionStorage,
   ComputerRecordingBackupReceiptPort {
+  annotationOperations(): Promise<Array<PhonePendingOperation>>;
+  cachedPeople(): Promise<Array<DeviceV3PersonChoice>>;
+  cachePeople(people: Array<DeviceV3PersonChoice>): Promise<void>;
+  removeConflict(operationId: string): Promise<void>;
   enqueue(operation: DeviceV3ClientOperation): Promise<void>;
-  pendingOperations(limit?: number): Promise<Array<PhonePendingOperation>>;
+  pendingOperations(limit?: number, excludedIds?: Array<string>): Promise<Array<PhonePendingOperation>>;
   currentCursor(): Promise<string>;
   projectionRows(resourceType: string): Promise<Array<PhoneV3ProjectionRow>>;
   localAudioLinks(): Promise<Array<PhoneV3LocalAudioLink>>;
@@ -64,6 +71,7 @@ export interface PhoneV3ReminderSchedulerPort {
 export interface PhoneV3RemoteSession {
   status(): Promise<DeviceV3StatusResponse>;
   sync(request: DeviceV3SyncRequest): Promise<DeviceV3SyncResponse>;
+  annotations(request: DeviceV3AnnotationRequest): Promise<DeviceV3AnnotationResponse>;
   reviews(): Promise<DeviceV3ReviewSnapshot>;
   resolveReview(request: DeviceV3ReviewActionRequest): Promise<DeviceV3ReviewActionResponse>;
   reviewAudio(request: DeviceV3ReviewAudioRequest): Promise<DeviceV3ReviewAudioResponse>;
@@ -77,6 +85,7 @@ export interface PhoneV3RemotePort {
 export interface PhoneV3DeviceBridgePort {
   state(): PhoneV3DeviceState;
   selectSession(sessionKey: string): void;
+  playRange(groupKey: string, startMs: number, endMs: number): void;
   togglePlayback(): void;
   seekPlayback(positionMs: number): void;
   stopPlayback(): void;

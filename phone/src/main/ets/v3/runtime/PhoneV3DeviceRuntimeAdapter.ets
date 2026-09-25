@@ -40,6 +40,10 @@ export class PhoneV3DeviceRuntimeAdapter implements PhoneV3DeviceBridgePort {
     }
   }
 
+  playRange(groupKey: string, startMs: number, endMs: number): void {
+    this.runtime.playRange(groupKey, startMs, endMs);
+  }
+
   togglePlayback(): void {
     this.runtime.clearOperationStatus();
     this.runtime.togglePlayback();

@@ -1,4 +1,6 @@
+import { phoneV3SoundKindLabel } from '../domain/PhoneV3SoundKind';
 import { PhoneV3SessionCard, PhoneV3Utterance } from '../domain/PhoneV3Models';
+import { PhoneV3SpeakerAnnotationPanel } from './PhoneV3SpeakerAnnotationPanel';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 import { PHONE_V3_UI_STATE_STORAGE_KEY, PhoneV3UiState } from './PhoneV3UiState';
 import { PHONE_V3_BACKUP_ACTION_CONTENT_END_OFFSET } from './PhoneV3NativeUi';
@@ -22,6 +24,9 @@ class PhoneV3SpeakerSummary {
 export struct PhoneV3PeoplePage {
   viewModel: PhoneV3ViewModel = new PhoneV3ViewModel();
   @Prop stateRevision: number = 0;
+  @State private annotationVisible: boolean = false;
+  @State private advancedVisible: boolean = false;
+  @State private annotationUtterances: Array<PhoneV3Utterance> = [];
   onOpenSession: (session: PhoneV3SessionCard) => void = (_session: PhoneV3SessionCard): void => {};
   onOpenReviews: () => void = (): void => {};
 
@@ -30,15 +35,24 @@ export struct PhoneV3PeoplePage {
     return this.stateRevision >= 0 && state !== undefined ? state : new PhoneV3UiState();
   }
 
+  private summarySessions: Array<PhoneV3SessionCard> | undefined = undefined;
+  private summaryRows: Array<PhoneV3SpeakerSummary> = [];
+
   private summaries(): Array<PhoneV3SpeakerSummary> {
+    const sessions = this.currentUiState().snapshot.sessions;
+    if (sessions === this.summarySessions) {
+      return this.summaryRows;
+    }
+    this.summarySessions = sessions;
     const values: Map<string, PhoneV3SpeakerSummary> = new Map<string, PhoneV3SpeakerSummary>();
-    for (let sessionIndex = 0; sessionIndex < this.currentUiState().snapshot.sessions.length; sessionIndex += 1) {
-      const session = this.currentUiState().snapshot.sessions[sessionIndex];
+    for (let sessionIndex = 0; sessionIndex < sessions.length; sessionIndex += 1) {
+      const session = sessions[sessionIndex];
       for (let utteranceIndex = 0; utteranceIndex < session.utterances.length; utteranceIndex += 1) {
         const utterance = session.utterances[utteranceIndex];
         const speakerKey = this.speakerKey(utterance);
-        const key = speakerKey === 'self' ? 'self' : `${session.id}:${speakerKey}`;
-        const label = utterance.identity === 'self' ? '本人' :
+        const key = speakerKey === 'self' || utterance.annotationPersonId.length > 0 ? speakerKey : `${session.id}:${speakerKey}`;
+        const label = utterance.annotationPending ? `${utterance.speakerLabel ?? '未知说话人'} · 待同步` :
+          utterance.identity === 'self' ? '本人' :
           utterance.speakerLabel === null ? '未指定说话人' : utterance.speakerLabel;
         const current = values.get(key) ?? new PhoneV3SpeakerSummary(key, label);
         current.utteranceCount += 1;
@@ -58,14 +72,30 @@ export struct PhoneV3PeoplePage {
       }
       return right.utteranceCount - left.utteranceCount;
     });
+    this.summaryRows = result;
     return result;
   }
 
   private speakerKey(utterance: PhoneV3Utterance): string {
+    if (utterance.annotationPersonId.length > 0) { return `local:${utterance.annotationPersonId}`; }
     if (utterance.identity === 'self') {
       return 'self';
     }
-    return utterance.speakerTrackId ?? utterance.speakerLabel ?? 'unassigned';
+    return utterance.speakerTrackId ?? `unassigned:${utterance.utteranceId}`;
+  }
+
+  private utterancesFor(summary: PhoneV3SpeakerSummary): Array<PhoneV3Utterance> {
+    const result: Array<PhoneV3Utterance> = [];
+    for (let session of this.currentUiState().snapshot.sessions) {
+      for (let utterance of session.utterances) {
+        const speakerKey = this.speakerKey(utterance);
+        const key = speakerKey === 'self' || utterance.annotationPersonId.length > 0 ? speakerKey : `${session.id}:${speakerKey}`;
+        if (key === summary.key) {
+          result.push(utterance);
+        }
+      }
+    }
+    return result;
   }
 
   private sessionFor(summary: PhoneV3SpeakerSummary): PhoneV3SessionCard | undefined {
@@ -114,24 +144,29 @@ export struct PhoneV3PeoplePage {
     .backgroundColor($r('app.color.surface_primary'))
     .borderRadius(14)
     .onClick((): void => {
-      const session = this.sessionFor(summary);
-      if (session !== undefined) {
-        this.onOpenSession(session);
-      }
+      this.annotationUtterances = this.utterancesFor(summary);
+      this.annotationVisible = true;
     })
+  }
+
+  @Builder
+  private annotationSheet() {
+    PhoneV3SpeakerAnnotationPanel({ viewModel: this.viewModel,
+      utterances: this.annotationUtterances, stateRevision: this.stateRevision, fullScreen: true,
+      onClose: (): void => { this.annotationVisible = false; } })
   }
 
   build() {
     Scroll() {
       Column({ space: 14 }) {
-        if (this.pendingPeopleReviews() > 0) {
+        Column() {
           Row({ space: 10 }) {
             Column({ space: 4 }) {
               Text(`${this.pendingPeopleReviews()} 项人物审核`)
                 .fontSize(16)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.text_primary'))
-              Text('包含声音身份与人物记忆')
+              Text('优先核对影响提醒和人物记忆的问题；不必清空未知声音')
                 .fontSize(12)
                 .fontColor($r('app.color.text_secondary'))
             }
@@ -148,6 +183,9 @@ export struct PhoneV3PeoplePage {
           .borderRadius(16)
         }
 
+        Button(this.advancedVisible ? '收起高级整理' : '高级整理：按说话人浏览全部片段')
+          .onClick((): void => { this.advancedVisible = !this.advancedVisible; })
+        if (this.advancedVisible) {
         Text('说话人')
           .width('100%')
           .fontSize(18)
@@ -168,16 +206,22 @@ export struct PhoneV3PeoplePage {
           }, (summary: PhoneV3SpeakerSummary): string => summary.key)
         }
 
-        Text('人物资料、跨天记忆和关系观察将在对应投影同步后继续出现在人物详情中。')
+        Text('点击说话人进入片段标注；每页显示 20 句，可搜索并跨页选择。')
           .width('100%')
           .fontSize(12)
           .fontColor($r('app.color.text_secondary'))
           .padding({ top: 4 })
+        }
       }
       .width('100%')
       .padding({ left: 20, right: 20, top: 8 })
       .alignItems(HorizontalAlign.Start)
     }
+    .bindSheet(this.annotationVisible, this.annotationSheet(), {
+      height: SheetSize.LARGE,
+      showClose: false,
+      onDisappear: (): void => { this.annotationVisible = false; this.viewModel.stopPlayback(); }
+    })
     .contentEndOffset(PHONE_V3_BACKUP_ACTION_CONTENT_END_OFFSET)
     .align(Alignment.TopStart)
     .width('100%')

@@ -15,15 +15,24 @@ interface VoiceCandidatePayload {
   best_score?: number | null;
   score_margin?: number | null;
   review_status?: string;
+  audio_available?: boolean;
+  audio_unavailable_reason?: string;
+  audition_key?: string;
   representative_clips?: Array<VoiceClipPayload>;
 }
 
 interface VoiceReviewContextPayload {
+  evidence_utterance_ids?: Array<string>;
   voice_mode?: string;
   voice_candidates?: Array<VoiceCandidatePayload>;
 }
 
 export class PhoneV3VoiceCandidate {
+  windowCount: number = 0;
+  totalMs: number = 0;
+  ranges: string = '';
+  auditionKey: string = '';
+  unavailableReason: string = '';
   prototypeId: string;
   sessionId: string;
   speakerTrackId: string;
@@ -83,7 +92,7 @@ export function phoneV3VoiceCandidates(item: PhoneV3ReviewItem): Array<PhoneV3Vo
     const clip = clips.length > 0 ? clips[0] : undefined;
     const startMs = clip !== undefined && validOffset(clip.start_ms) ? clip.start_ms as number : 0;
     const endMs = clip !== undefined && validOffset(clip.end_ms) ? clip.end_ms as number : startMs + 6000;
-    values.push(new PhoneV3VoiceCandidate(
+    const result = new PhoneV3VoiceCandidate(
       candidate.prototype_id,
       typeof candidate.session_id === 'string' ? candidate.session_id : '',
       typeof candidate.speaker_track_id === 'string' ? candidate.speaker_track_id : '',
@@ -91,8 +100,18 @@ export function phoneV3VoiceCandidates(item: PhoneV3ReviewItem): Array<PhoneV3Vo
       optionalScore(candidate.quality_score), optionalScore(candidate.best_score),
       optionalScore(candidate.score_margin),
       typeof candidate.review_status === 'string' ? candidate.review_status : 'pending',
-      clip !== undefined && typeof clip.media_id === 'string' && clip.media_id.length > 0,
-      startMs, Math.max(endMs, startMs + 800)));
+      candidate.audio_available === true,
+      startMs, endMs);
+    result.windowCount = clips.length;
+    result.auditionKey = candidate.audition_key ?? '';
+    result.unavailableReason = candidate.audio_unavailable_reason ?? '请更新电脑端以提供完整试听';
+    for (const window of clips) {
+      if (validOffset(window.start_ms) && validOffset(window.end_ms)) {
+        result.totalMs += (window.end_ms as number) - (window.start_ms as number);
+        result.ranges += `${window.media_id}: ${(window.start_ms as number) / 1000}–${(window.end_ms as number) / 1000} 秒\n`;
+      }
+    }
+    values.push(result);
   }
   values.sort((left: PhoneV3VoiceCandidate, right: PhoneV3VoiceCandidate): number =>
     sortableScore(left.bestScore) - sortableScore(right.bestScore) ||
@@ -106,6 +125,7 @@ export function phoneV3ReviewReason(reason: string): string {
     case 'reminder_requires_confirmation': return '确认后才会创建并安排提醒';
     case 'durable_person_memory_requires_confirmation': return '确认后会作为跨天人物记忆保留';
     case 'trusted_memory_requires_confirmation': return '确认后才会写入可信事件记录';
+    case 'voice_grant_management': return '撤回只停止此样本授权，不改变人物标注或其它样本';
     case 'voice_identity_requires_confirmation': return '每个声音样本都要单独听过再判断';
     case 'recurring_unknown_speaker_requires_confirmation': return '该未知声音已跨多次录音出现';
     default: return '这项操作会改变长期状态，需要你的判断';
@@ -122,4 +142,13 @@ function sortableScore(value: number | null): number {
 
 function validOffset(value: number | undefined): boolean {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+export function phoneV3ReviewEvidenceIds(item: PhoneV3ReviewItem): Array<string> {
+  try {
+    const context = JSON.parse(item.contextJson) as VoiceReviewContextPayload;
+    return Array.isArray(context.evidence_utterance_ids) ? context.evidence_utterance_ids : [];
+  } catch (_error) {
+    return [];
+  }
 }

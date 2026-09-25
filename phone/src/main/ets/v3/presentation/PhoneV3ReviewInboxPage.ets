@@ -1,12 +1,15 @@
-import { PhoneV3ReviewItem, PhoneV3SessionCard } from '../domain/PhoneV3Models';
+import { PhoneV3AnnotationConflictPanel } from './PhoneV3AnnotationConflictPanel';
+import { PhoneV3Conflict, PhoneV3ReviewItem, PhoneV3SessionCard, PhoneV3Utterance } from '../domain/PhoneV3Models';
 import {
   PhoneV3VoiceCandidate,
   phoneV3ReviewReason,
+  phoneV3ReviewEvidenceIds,
   phoneV3VoiceCandidates,
   phoneV3VoiceMode
 } from '../domain/PhoneV3ReviewModels';
+import { PhoneV3SpeakerAnnotationPanel } from './PhoneV3SpeakerAnnotationPanel';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
-import { phoneV3SessionTitle } from './PhoneV3UiFormat';
+import { phoneV3SessionTitle, phoneV3TimelineTime } from './PhoneV3UiFormat';
 import { PHONE_V3_UI_STATE_STORAGE_KEY, PhoneV3UiState } from './PhoneV3UiState';
 import { PHONE_V3_BACKUP_ACTION_CONTENT_END_OFFSET } from './PhoneV3NativeUi';
 
@@ -29,8 +32,8 @@ export struct PhoneV3ReviewInboxPage {
   @State private selectedFilter: number = 0;
   @State private groupMode: number = 0;
   @State private expandedReviewIds: Array<string> = [];
+  @State private annotationReviewId: string = '';
   @State private discoveryName: string = '';
-  @State private heardReviewSampleKeys: Array<string> = [];
   onOpenSession: (session: PhoneV3SessionCard) => void = (_session: PhoneV3SessionCard): void => {};
 
   private currentUiState(): PhoneV3UiState {
@@ -38,21 +41,37 @@ export struct PhoneV3ReviewInboxPage {
     return this.stateRevision >= 0 && state !== undefined ? state : new PhoneV3UiState();
   }
 
-  private reviewSampleKey(reviewId: string, prototypeId: string): string {
-    return `${reviewId}:${prototypeId}`;
+  aboutToDisappear(): void {
+    this.viewModel.stopPlayback();
+  }
+
+  private reviewUtterances(item: PhoneV3ReviewItem): Array<PhoneV3Utterance> {
+    const ids = phoneV3ReviewEvidenceIds(item);
+    const candidates = phoneV3VoiceCandidates(item);
+    const result: Array<PhoneV3Utterance> = [];
+    for (let session of this.currentUiState().snapshot.sessions) {
+      for (let utterance of session.utterances) {
+        if (ids.indexOf(utterance.utteranceId) >= 0 || candidates.some((candidate: PhoneV3VoiceCandidate): boolean =>
+          candidate.sessionId === utterance.sessionId && candidate.speakerTrackId === utterance.speakerTrackId)) {
+          result.push(utterance);
+        }
+      }
+    }
+    return result;
+  }
+
+  private discoveryHeard(item: PhoneV3ReviewItem): boolean {
+    return phoneV3VoiceCandidates(item).some((candidate: PhoneV3VoiceCandidate): boolean =>
+      this.reviewSampleWasPlayed(item.reviewId, candidate.prototypeId));
   }
 
   private reviewSampleWasPlayed(reviewId: string, prototypeId: string): boolean {
-    const key = this.reviewSampleKey(reviewId, prototypeId);
-    return this.heardReviewSampleKeys.indexOf(key) >= 0 ||
-      this.viewModel.reviewSampleWasPlayed(reviewId, prototypeId);
+    return this.viewModel.reviewSampleWasPlayed(reviewId, prototypeId);
   }
 
-  private markReviewSamplePlayed(reviewId: string, prototypeId: string): void {
-    const key = this.reviewSampleKey(reviewId, prototypeId);
-    if (this.heardReviewSampleKeys.indexOf(key) < 0) {
-      this.heardReviewSampleKeys = this.heardReviewSampleKeys.concat([key]);
-    }
+  private annotationConflicts(): Array<PhoneV3Conflict> {
+    return this.selectedFilter > 1 ? [] : this.currentUiState().snapshot.conflicts.filter(
+      (value: PhoneV3Conflict): boolean => ['speaker.assign', 'segment.classify'].indexOf(value.kind) >= 0);
   }
 
   private visibleReviews(): Array<PhoneV3ReviewItem> {
@@ -192,7 +211,7 @@ export struct PhoneV3ReviewInboxPage {
     Column({ space: 9 }) {
       Row() {
         Column({ space: 3 }) {
-          Text(`样本 ${candidate.prototypeId.substring(0, 8)}`)
+          Text(`${candidate.windowCount} 个窗口 · ${candidate.totalMs / 1000} 秒（不含间隙）`)
             .fontSize(14)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.text_primary'))
@@ -205,33 +224,42 @@ export struct PhoneV3ReviewInboxPage {
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
         if (this.reviewSampleWasPlayed(item.reviewId, candidate.prototypeId)) {
-          Text('已听')
+          Text('全部播放完成')
             .fontSize(12)
             .fontColor($r('app.color.brand_primary'))
         }
       }
       .width('100%')
 
-      Button(candidate.hasAudio ? '播放这条样本' : '没有可播放的样本', { type: ButtonType.Capsule })
+      Text(candidate.ranges).fontSize(11)
+      if (this.viewModel.reviewPlaybackPrototype === candidate.prototypeId) {
+        Text(this.viewModel.reviewPlaybackRange).fontSize(11)
+      }
+      Button('停止试听').onClick((): void => this.viewModel.stopPlayback())
+      Button(candidate.hasAudio ? '完整串播这条样本' : candidate.unavailableReason, { type: ButtonType.Capsule })
         .width('100%')
         .height(40)
         .buttonStyle(ButtonStyleMode.NORMAL)
         .enabled(candidate.hasAudio && !this.currentUiState().busy)
-        .onClick((): void => this.viewModel.playReviewSample(item.reviewId, candidate.prototypeId,
-          (): void => this.markReviewSamplePlayed(item.reviewId, candidate.prototypeId)))
+        .onClick((): void => this.viewModel.playReviewSample(item.reviewId, candidate.prototypeId))
 
       Row({ space: 8 }) {
+        if (phoneV3VoiceMode(item) === 'accepted_grant') {
+          this.decisionButton('撤回此样本授权', false, true, (): void =>
+            this.viewModel.resolveReview(item.reviewId, 'retract', candidate.prototypeId))
+        } else {
         this.voiceDecisionButton('确认是他', true, item.reviewId, candidate.prototypeId, (): void =>
           this.viewModel.resolveReview(item.reviewId, 'confirm', candidate.prototypeId))
         this.voiceDecisionButton('不是他', false, item.reviewId, candidate.prototypeId, (): void =>
           this.viewModel.resolveReview(item.reviewId, 'reject', candidate.prototypeId))
         this.decisionButton('暂不确定', false, true, (): void =>
           this.viewModel.resolveReview(item.reviewId, 'uncertain', candidate.prototypeId))
+        }
       }
       .width('100%')
 
-      if (!this.reviewSampleWasPlayed(item.reviewId, candidate.prototypeId)) {
-        Text('播放实际开始后，才会解锁“确认是他”和“不是他”。')
+      if (phoneV3VoiceMode(item) !== 'accepted_grant' && !this.reviewSampleWasPlayed(item.reviewId, candidate.prototypeId)) {
+        Text('所有窗口实际播放完成后，才会解锁“确认是他”和“不是他”。')
           .width('100%')
           .fontSize(11)
           .fontColor($r('app.color.text_secondary'))
@@ -270,18 +298,20 @@ export struct PhoneV3ReviewInboxPage {
   @Builder
   private discoveryActions(item: PhoneV3ReviewItem) {
     Column({ space: 9 }) {
-      TextInput({ text: this.discoveryName, placeholder: '输入人物姓名' })
-        .width('100%')
-        .height(42)
-        .onChange((value: string): void => {
-          this.discoveryName = value;
-        })
+      ForEach(phoneV3VoiceCandidates(item), (candidate: PhoneV3VoiceCandidate) => {
+        Text(candidate.ranges).fontSize(11)
+        Button(`串播 ${candidate.windowCount} 窗口 · ${candidate.totalMs / 1000} 秒`)
+          .enabled(candidate.hasAudio && !this.currentUiState().busy)
+          .onClick((): void => this.viewModel.playReviewSample(item.reviewId, candidate.prototypeId))
+      }, (candidate: PhoneV3VoiceCandidate): string => candidate.prototypeId)
+      Text(this.viewModel.reviewPlaybackRange).fontSize(11)
+      Button('停止试听').onClick((): void => this.viewModel.stopPlayback())
+      Text('只确认实际听过的原句。分组混入其他人时，仅选择属于同一人的片段；其余可以保持未知。')
+        .fontSize(12).fontColor($r('app.color.text_secondary'))
       Row({ space: 8 }) {
-        this.decisionButton('创建并关联人物', true, this.discoveryName.trim().length > 0, (): void =>
-          this.viewModel.resolveReview(item.reviewId, 'create_person', '', this.discoveryName,
-            (): void => {
-              this.discoveryName = '';
-            }))
+        this.decisionButton('选择听过的原句', true, true, (): void => {
+          this.annotationReviewId = item.reviewId;
+        })
         this.decisionButton('忽略这个声音', false, true, (): void =>
           this.viewModel.resolveReview(item.reviewId, 'ignore'))
       }
@@ -344,7 +374,7 @@ export struct PhoneV3ReviewInboxPage {
         .fontSize(12)
         .fontColor($r('app.color.brand_warning'))
 
-      if (item.kind === 'voice_identity' && phoneV3VoiceMode(item) === 'known_person') {
+      if (item.kind === 'voice_identity' && (phoneV3VoiceMode(item) === 'known_person' || phoneV3VoiceMode(item) === 'accepted_grant')) {
         this.knownVoiceActions(item)
       } else if (item.kind === 'voice_identity' && phoneV3VoiceMode(item) === 'speaker_discovery') {
         this.discoveryActions(item)
@@ -352,6 +382,17 @@ export struct PhoneV3ReviewInboxPage {
         this.standardActions(item)
       }
 
+      if (this.reviewUtterances(item).length > 0) {
+        Button(this.annotationReviewId === item.reviewId ? '收起原句' : '试听原句并关联人物')
+          .width('100%')
+          .onClick((): void => {
+            this.annotationReviewId = this.annotationReviewId === item.reviewId ? '' : item.reviewId;
+          })
+        if (this.annotationReviewId === item.reviewId) {
+          PhoneV3SpeakerAnnotationPanel({ viewModel: this.viewModel,
+            utterances: this.reviewUtterances(item), stateRevision: this.stateRevision })
+        }
+      }
       if (this.matchingSession(item.sessionId) !== undefined) {
         Button('查看原录音', { type: ButtonType.Capsule })
           .width('100%')
@@ -393,7 +434,10 @@ export struct PhoneV3ReviewInboxPage {
 
       Scroll() {
         Column({ space: 10 }) {
-          if (this.visibleReviews().length === 0) {
+          ForEach(this.annotationConflicts(), (conflict: PhoneV3Conflict) => {
+            PhoneV3AnnotationConflictPanel({ viewModel: this.viewModel, conflict: conflict, stateRevision: this.stateRevision })
+          }, (conflict: PhoneV3Conflict): string => conflict.operationId)
+          if (this.visibleReviews().length === 0 && this.annotationConflicts().length === 0) {
             Column({ space: 8 }) {
               Text('当前没有需要你判断的项目')
                 .fontSize(16)

@@ -18,6 +18,8 @@ const RESOURCE_TYPES: Array<string> = [
 
 export interface PhonePendingOperation extends DeviceV3ClientOperation {
   attempt_count: number;
+  applied_revision?: number;
+  projected_resource_ids?: Array<string>;
 }
 
 export interface PhoneProjectionStorage {
@@ -89,6 +91,18 @@ export function validateSyncResponse(response: DeviceV3SyncResponse): void {
       (receipt.status !== 'applied' &&
         (receipt.resource_revision !== null || receipt.error === null))) {
       throw new Error('电脑返回的 V3 操作回执无效');
+    }
+    if (receipt.resource_results !== undefined) {
+      const ids = new Set<string>();
+      if (receipt.status !== 'applied' || !Array.isArray(receipt.resource_results) || receipt.resource_results.length > 2000) {
+        throw new Error('电脑返回的逐资源回执无效');
+      }
+      for (let result of receipt.resource_results) {
+        if (!STABLE_ID.test(result.resource_id) || !Number.isSafeInteger(result.revision) || result.revision < 1 || ids.has(result.resource_id)) {
+          throw new Error('电脑返回的逐资源回执无效');
+        }
+        ids.add(result.resource_id);
+      }
     }
   }
   for (let index = 0; index < response.changes.length; index += 1) {

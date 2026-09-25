@@ -3,6 +3,7 @@ import { relationalStore } from '@kit.ArkData';
 import {
   DeviceV3Change,
   DeviceV3ClientOperation,
+  DeviceV3PersonChoice,
   DeviceV3OperationReceipt
 } from '../../computer/ComputerTransferProtocol';
 import { V3_PROJECTION_VERSION } from '../contracts/V3ContractModels';
@@ -19,7 +20,7 @@ import {
 import { PhoneV3ProjectionRepositoryPort } from '../application/PhoneV3Ports';
 
 const DATABASE_NAME: string = 'phone_v3_projection.db';
-const SCHEMA_VERSION: number = 7;
+const SCHEMA_VERSION: number = 10;
 const TABLES: Array<string> = [
   'projection_recordings', 'projection_audio_assets', 'projection_processing_runs',
   'projection_utterances', 'projection_review_items', 'projection_reminders'
@@ -92,6 +93,8 @@ export interface PhoneProjectionStatus {
 
 export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPort {
   private store: relationalStore.RdbStore;
+  private transactionTail: Promise<void> = Promise.resolve();
+  private releaseTransaction: () => void = (): void => {};
 
   private constructor(store: relationalStore.RdbStore) {
     this.store = store;
@@ -108,15 +111,21 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
   }
 
   async beginTransaction(): Promise<void> {
-    this.store.beginTransaction();
+    const previous = this.transactionTail;
+    let release: () => void = (): void => {};
+    this.transactionTail = new Promise<void>((resolve): void => { release = resolve; });
+    await previous;
+    this.releaseTransaction = release;
+    try { this.store.beginTransaction(); } catch (error) { release(); throw repositoryError(error as Object); }
   }
 
   async commit(): Promise<void> {
     this.store.commit();
+    this.releaseTransaction();
   }
 
   async rollback(): Promise<void> {
-    this.store.rollBack();
+    try { this.store.rollBack(); } finally { this.releaseTransaction(); }
   }
 
   async enqueue(operation: DeviceV3ClientOperation): Promise<void> {
@@ -128,13 +137,16 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
         JSON.stringify(operation.payload), Date.now()]);
   }
 
-  async pendingOperations(limit: number = 500): Promise<Array<PhonePendingOperation>> {
+  async pendingOperations(limit: number = 500, excludedIds: Array<string> = []): Promise<Array<PhonePendingOperation>> {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
       throw new Error('Phone outbox 查询上限无效');
     }
     const result = await this.store.querySql(
       `SELECT operation_id, kind, base_revision, payload_json, attempt_count
-       FROM outbox ORDER BY created_at, operation_id LIMIT ?`, [limit]);
+       FROM outbox WHERE applied_revision IS NULL OR (
+         kind IN ('speaker.assign','segment.classify') AND json_array_length(payload_json,'$.selections')>1
+         AND NOT EXISTS (SELECT 1 FROM outbox_resource_receipts r WHERE r.operation_id=outbox.operation_id))
+       ORDER BY created_at, rowid`);
     const operations: Array<PhonePendingOperation> = [];
     try {
       while (result.goToNextRow()) {
@@ -150,7 +162,48 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
     } finally {
       result.close();
     }
+    const blocked = new Set<string>(operations.map((op): string => op.operation_id));
+    for (let conflict of await this.conflictRows()) { blocked.add(conflict.operationId); }
+    return operations.filter((op): boolean => {
+      const payload = op.payload as OperationDependencies;
+      return excludedIds.indexOf(op.operation_id) < 0 &&
+        !(payload.depends_on ?? []).some((id: string): boolean => blocked.has(id));
+    }).slice(0, limit);
+  }
+
+  async annotationOperations(): Promise<Array<PhonePendingOperation>> {
+    const result = await this.store.querySql(
+      "SELECT operation_id, payload_json, kind, applied_revision FROM outbox WHERE kind IN ('speaker.assign', 'segment.classify') ORDER BY created_at, rowid");
+    const operations: Array<PhonePendingOperation> = [];
+    try {
+      while (result.goToNextRow()) {
+        operations.push({ operation_id: result.getString(0), kind: result.getString(2),
+          base_revision: null, payload: JSON.parse(result.getString(1)) as Object, attempt_count: 0,
+          applied_revision: result.isColumnNull(3) ? undefined : result.getLong(3),
+          projected_resource_ids: await this.projectedResourceIds(result.getString(0)) });
+      }
+    } finally { result.close(); }
     return operations;
+  }
+
+  async cachedPeople(): Promise<Array<DeviceV3PersonChoice>> {
+    const result = await this.store.querySql('SELECT payload_json FROM annotation_people ORDER BY rowid');
+    const people: Array<DeviceV3PersonChoice> = [];
+    try {
+      while (result.goToNextRow()) { people.push(JSON.parse(result.getString(0)) as DeviceV3PersonChoice); }
+    } finally { result.close(); }
+    return people;
+  }
+
+  async cachePeople(people: Array<DeviceV3PersonChoice>): Promise<void> {
+    for (let person of people) {
+      await this.store.executeSql('INSERT OR REPLACE INTO annotation_people (person_id, payload_json) VALUES (?, ?)',
+        [person.person_id, JSON.stringify(person)]);
+    }
+  }
+
+  async removeConflict(operationId: string): Promise<void> {
+    await this.store.executeSql('DELETE FROM conflicts WHERE operation_id = ?', [operationId]);
   }
 
   async currentCursor(): Promise<string> {
@@ -236,7 +289,7 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
 
   async conflictRows(): Promise<Array<PhoneV3Conflict>> {
     const result = await this.store.querySql(
-      `SELECT operation_id, kind, status, error_json, created_at FROM conflicts
+      `SELECT operation_id, kind, status, error_json, created_at, payload_json FROM conflicts
        ORDER BY created_at DESC, operation_id`);
     const values: Array<PhoneV3Conflict> = [];
     try {
@@ -246,7 +299,8 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
           result.getString(result.getColumnIndex('kind')),
           result.getString(result.getColumnIndex('status')),
           result.getString(result.getColumnIndex('error_json')),
-          result.getLong(result.getColumnIndex('created_at'))));
+          result.getLong(result.getColumnIndex('created_at')),
+          result.getString(result.getColumnIndex('payload_json'))));
       }
     } finally {
       result.close();
@@ -293,7 +347,7 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
   }
 
   async replaceReviewItems(items: Array<Object>): Promise<void> {
-    this.store.beginTransaction();
+    await this.beginTransaction();
     try {
       await this.store.executeSql('DELETE FROM projection_review_items');
       for (let index = 0; index < items.length; index += 1) {
@@ -310,16 +364,16 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
           [item.review_id, revision, JSON.stringify(item),
             Number.isFinite(parsedTime) ? parsedTime : Date.now()]);
       }
-      this.store.commit();
+      await this.commit();
     } catch (error) {
-      this.store.rollBack();
+      await this.rollback();
       throw repositoryError(error as Object);
     }
   }
 
   async markSyncFailure(message: string): Promise<void> {
     const text = message.substring(0, 1000);
-    this.store.beginTransaction();
+    await this.beginTransaction();
     try {
       await this.store.executeSql(
         'UPDATE outbox SET attempt_count = attempt_count + 1, last_error = ?', [text]);
@@ -327,9 +381,9 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
         `UPDATE sync_state SET last_error = ?, last_attempt_at = ?,
          retry_count = retry_count + 1 WHERE singleton_id = 1`,
         [text, Date.now()]);
-      this.store.commit();
+      await this.commit();
     } catch (error) {
-      this.store.rollBack();
+      await this.rollback();
       throw repositoryError(error as Object);
     }
   }
@@ -376,10 +430,66 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
          SELECT operation_id, kind, payload_json, ?, ?, ? FROM outbox WHERE operation_id = ?`,
         [JSON.stringify(receipt.error), Date.now(), receipt.status, receipt.operation_id]);
     }
-    await this.store.executeSql('DELETE FROM outbox WHERE operation_id = ?', [receipt.operation_id]);
+    if (receipt.status === 'applied') {
+      // Retain the only local identity overlay until its authoritative row arrives,
+      // possibly on a later pull page. Applied rows are never sent again.
+      await this.store.executeSql('UPDATE outbox SET applied_revision = ? WHERE operation_id = ?',
+        [receipt.resource_revision, receipt.operation_id]);
+      const pending = await this.store.querySql('SELECT payload_json FROM outbox WHERE operation_id=?', [receipt.operation_id]);
+      try {
+        if (pending.goToNextRow()) {
+          const payload = JSON.parse(pending.getString(0)) as OperationDependencies;
+          const selections = payload.selections ?? [];
+          if (receipt.resource_results !== undefined && (receipt.resource_results.length !== selections.length ||
+            selections.some((s): boolean => !receipt.resource_results!.some((r): boolean => r.resource_id === s.utterance_id)))) {
+            throw new Error('逐资源回执与原操作不一致');
+          }
+          for (let selection of selections) {
+            const target = receipt.resource_results?.find((r): boolean => r.resource_id === selection.utterance_id);
+            const revision = target?.revision ?? (selections.length === 1 ? receipt.resource_revision : null);
+            if (revision !== null) {
+              await this.store.executeSql('INSERT OR IGNORE INTO outbox_resource_receipts VALUES(?,?,?,0)',
+                [receipt.operation_id, selection.utterance_id, revision]);
+            }
+          }
+        }
+      } finally { pending.close(); }
+      await this.clearProjectedOperations();
+    } else {
+      await this.store.executeSql('DELETE FROM outbox WHERE operation_id = ?', [receipt.operation_id]);
+    }
+  }
+
+  private async projectedResourceIds(operationId: string): Promise<Array<string>> {
+    const result = await this.store.querySql('SELECT resource_id FROM outbox_resource_receipts WHERE operation_id=? AND projected=1', [operationId]);
+    const ids: Array<string> = [];
+    try { while (result.goToNextRow()) { ids.push(result.getString(0)); } }
+    finally { result.close(); }
+    return ids;
+  }
+
+  private async clearProjectedOperations(): Promise<void> {
+    await this.store.executeSql(`UPDATE outbox_resource_receipts SET projected=1 WHERE EXISTS (
+      SELECT 1 FROM projection_utterances p WHERE p.resource_id=outbox_resource_receipts.resource_id AND p.revision>=outbox_resource_receipts.target_revision)
+      OR EXISTS (SELECT 1 FROM projection_tombstones t WHERE t.resource_type='utterance'
+        AND t.resource_id=outbox_resource_receipts.resource_id AND t.revision>=outbox_resource_receipts.target_revision)`);
+    const result = await this.store.querySql('SELECT operation_id, payload_json FROM outbox WHERE applied_revision IS NOT NULL');
+    const completed: Array<string> = [];
+    try {
+      while (result.goToNextRow()) {
+        const payload = JSON.parse(result.getString(1)) as OperationDependencies;
+        const projected = await this.projectedResourceIds(result.getString(0));
+        if ((payload.selections ?? []).every((s): boolean => projected.indexOf(s.utterance_id) >= 0)) {
+          completed.push(result.getString(0));
+        }
+      }
+    } finally { result.close(); }
+    for (let id of completed) { await this.store.executeSql('DELETE FROM outbox WHERE operation_id = ?', [id]); }
+    await this.store.executeSql('DELETE FROM outbox_resource_receipts WHERE operation_id NOT IN (SELECT operation_id FROM outbox)');
   }
 
   async setCursor(cursor: string, serverTime: string): Promise<void> {
+    await this.clearProjectedOperations();
     await this.store.executeSql(
       `UPDATE sync_state SET cursor = ?, last_server_time = ?, last_error = '',
        last_attempt_at = ?, last_success_at = ?, retry_count = 0 WHERE singleton_id = 1`,
@@ -491,11 +601,35 @@ async function migrate(store: relationalStore.RdbStore): Promise<void> {
       }
       store.version = 7;
     }
+    if (store.version < 8) {
+      await store.executeSql('CREATE TABLE IF NOT EXISTS annotation_people (person_id TEXT PRIMARY KEY, payload_json TEXT NOT NULL)');
+      store.version = 8;
+    }
+    if (store.version < 9) {
+      await store.executeSql('ALTER TABLE outbox ADD COLUMN applied_revision INTEGER');
+      store.version = 9;
+    }
+    if (store.version < 10) {
+      await store.executeSql(`CREATE TABLE IF NOT EXISTS outbox_resource_receipts (
+        operation_id TEXT NOT NULL, resource_id TEXT NOT NULL, target_revision INTEGER NOT NULL,
+        projected INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(operation_id,resource_id))`);
+      await store.executeSql(`INSERT OR IGNORE INTO outbox_resource_receipts
+        SELECT o.operation_id,json_extract(j.value,'$.utterance_id'),o.applied_revision,0
+        FROM outbox o,json_each(o.payload_json,'$.selections') j
+        WHERE o.applied_revision IS NOT NULL AND json_array_length(o.payload_json,'$.selections')=1`);
+      store.version = 10;
+    }
     store.commit();
   } catch (error) {
     store.rollBack();
     throw repositoryError(error as Object);
   }
+}
+
+interface OperationSelection { utterance_id: string; }
+interface OperationDependencies {
+  depends_on?: Array<string>;
+  selections?: Array<OperationSelection>;
 }
 
 interface RecordingSessionLinkPayload {

@@ -19,7 +19,7 @@ import {
 
 @Component
 export struct PhoneV3RecordingListPage {
-  viewModel: PhoneV3ViewModel = new PhoneV3ViewModel();
+  @ObjectLink viewModel: PhoneV3ViewModel;
   @Prop stateRevision: number = 0;
   @State private searchText: string = '';
   @State private filterIndex: number = 0;
@@ -131,7 +131,9 @@ export struct PhoneV3RecordingListPage {
   @Builder
   private moreButton(session: PhoneV3SessionCard) {
     Button({ type: ButtonType.Circle, stateEffect: true }) {
-      if (this.currentUiState().busy) {
+      if (this.currentUiState().busy && this.viewModel.computerSyncActive &&
+        session.uploadStatus !== 'uploaded' &&
+        this.viewModel.completedSessionKeys.indexOf(session.sessionKey) < 0) {
         LoadingProgress()
           .width(18)
           .height(18)
@@ -170,6 +172,13 @@ export struct PhoneV3RecordingListPage {
           .fontColor($r('app.color.text_secondary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
+        if (this.viewModel.computerSyncActive || this.viewModel.completedSessionKeys.indexOf(session.sessionKey) >= 0) {
+          Text(session.uploadStatus === 'uploaded' || this.viewModel.completedSessionKeys.indexOf(session.sessionKey) >= 0 ?
+            '已备份完成' : this.viewModel.computerProgress.sessionKey === session.sessionKey ?
+            '正在同步此录音' : '等待同步')
+            .fontSize(12)
+            .fontColor($r('app.color.brand_primary'))
+        }
         Text(phoneV3TranscriptSummary(session))
           .width('100%')
           .fontSize(12)
@@ -219,6 +228,16 @@ export struct PhoneV3RecordingListPage {
       .borderRadius(22)
       .backgroundColor($r('app.color.surface_secondary'))
 
+      if (this.viewModel.computerProgress.totalFiles > 0) {
+        Text(this.currentUiState().message)
+          .width('100%').fontSize(12).maxLines(4)
+        if (this.viewModel.computerProgress.activeFiles.length > 0) {
+          Text('并行文件：\n' + this.viewModel.computerProgress.activeFiles.join('\n'))
+            .width('100%').fontSize(11).maxLines(6)
+        }
+        Progress({ value: this.viewModel.computerProgress.percent(), total: 100, type: ProgressType.Linear })
+          .width('100%')
+      }
       if (this.currentUiState().error.length > 0) {
         ExceptionPromptV2({
           options: new PromptOptionsV2({
