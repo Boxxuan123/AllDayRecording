@@ -1,3 +1,4 @@
+import { phoneV3PendingReviews } from '../domain/PhoneV3ReviewModels';
 import {
   ExceptionPromptV2,
   MarginTypeV2,
@@ -31,7 +32,7 @@ export struct PhoneV3RecordingListPage {
   }
 
   private reviewCount(session: PhoneV3SessionCard): number {
-    return this.currentUiState().snapshot.reviewItems.filter((item): boolean =>
+    return phoneV3PendingReviews(this.currentUiState().snapshot.reviewItems).filter((item): boolean =>
       item.sessionId !== null && item.sessionId === session.sessionId).length;
   }
 

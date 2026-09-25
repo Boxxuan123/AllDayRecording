@@ -1,4 +1,5 @@
 import { HdsNavDestination, HdsNavDestinationTitleMode } from '@kit.UIDesignKit';
+import { PhoneV3PersonSelector } from './PhoneV3PersonSelector';
 import { PhoneV3AnnotationConflictPanel } from './PhoneV3AnnotationConflictPanel';
 import { PhoneV3LocalAnnotation } from '../domain/PhoneV3LocalAnnotation';
 import { PHONE_V3_SOUND_KINDS, phoneV3SoundKindLabel } from '../domain/PhoneV3SoundKind';
@@ -23,7 +24,6 @@ export struct PhoneV3AnnotationPage {
   @State private feedback: string = '';
   @State private reloadNeeded: boolean = false;
   @State private people: Array<DeviceV3PersonChoice> = [];
-  @State private personQuery: string = '';
   @State private personId: string = '';
   @State private personLabel: string = '';
   @State private personChanged: boolean = false;
@@ -77,7 +77,7 @@ export struct PhoneV3AnnotationPage {
     this.overflow = false;
     this.name = ''; this.personChanged = false; this.creating = false;
     this.soundKind = '';
-    this.personQuery = ''; this.expanded = false;
+    this.expanded = false;
   }
   private dirty(): boolean { return this.personChanged || this.soundKind.length > 0 || this.name.length > 0; }
   private navigate(action: () => void): void {
@@ -139,13 +139,11 @@ export struct PhoneV3AnnotationPage {
   @State private resultMode: boolean = false;
   @State private selector: string = '';
   @State private selectorVisible: boolean = false;
-  @State private newPerson: boolean = false;
-  @State private newName: string = '';
   @State private overflow: boolean = false;
 
   private openSelector(kind: string): void {
     if (kind !== 'details' && (this.busy || this.reloadNeeded)) { return; }
-    this.selector = kind; this.newPerson = false; this.newName = ''; this.personQuery = '';
+    this.selector = kind;
     this.selectorVisible = true;
   }
   private choosePerson(id: string, label: string): void {
@@ -185,33 +183,20 @@ export struct PhoneV3AnnotationPage {
   }
   @Builder
   private selectorContent() {
+    if (this.selector === 'person') {
+      PhoneV3PersonSelector({ people: this.people, selectedId: this.personId,
+        onSelect: (id: string, label: string): void => this.choosePerson(id, label),
+        onCancel: (): void => { this.selectorVisible = false; } })
+    } else {
     Column({ space: 16 }) {
       Row() {
-        Text(this.selector === 'person' ? this.newPerson ? '新建人物' : '选择说话人' : this.selector === 'sound' ? '声音类型' : '标注详情')
+        Text(this.selector === 'sound' ? '声音类型' : '标注详情')
           .fontSize(20).fontWeight(FontWeight.Bold).layoutWeight(1).fontColor($r('app.color.text_primary'))
         this.quiet('取消', (): void => {
-          if (this.newPerson) { this.newPerson = false; this.newName = ''; }
-          else { this.selectorVisible = false; }
+          this.selectorVisible = false;
         })
       }.width('100%')
-      if (this.selector === 'person' && this.newPerson) {
-        TextInput({ text: this.newName, placeholder: '人物姓名' }).maxLength(100)
-          .onChange((value: string): void => { this.newName = value; })
-        Text('保存标注时才会创建人物').fontSize(13).fontColor($r('app.color.text_secondary')).width('100%')
-        Button('使用此姓名').width('100%').constraintSize({ minHeight: 48 }).enabled(this.newName.trim().length > 0)
-          .onClick((): void => this.choosePerson('', this.newName.trim()))
-      } else if (this.selector === 'person') {
-        TextInput({ text: this.personQuery, placeholder: '搜索人物' })
-          .onChange((value: string): void => { this.personQuery = value; })
-        List() {
-          ForEach(this.people.filter((person: DeviceV3PersonChoice): boolean =>
-            person.display_name.toLowerCase().includes(this.personQuery.toLowerCase())), (person: DeviceV3PersonChoice) => {
-            ListItem() { this.choice(person.display_name, person.person_id, true,
-              (): void => this.choosePerson(person.person_id, person.display_name)) }
-          }, (person: DeviceV3PersonChoice): string => person.person_id)
-          ListItem() { this.setting('新建人物', '', (): void => { this.newPerson = true; this.newName = ''; }) }
-        }.layoutWeight(1).width('100%')
-      } else if (this.selector === 'sound') {
+      if (this.selector === 'sound') {
         List() {
           ForEach(PHONE_V3_SOUND_KINDS, (kind: string) => {
             ListItem() { this.choice(phoneV3SoundKindLabel(kind), kind, false,
@@ -237,6 +222,7 @@ export struct PhoneV3AnnotationPage {
       }
     }.padding(16).width('100%').height('100%').alignItems(HorizontalAlign.Start)
       .backgroundColor($r('app.color.page_background'))
+    }
   }
   @Builder
   private sentence(row: PhoneV3Utterance) {
@@ -345,8 +331,7 @@ export struct PhoneV3AnnotationPage {
       .onBackPressed((): boolean => { this.close(); return true; })
       .onHidden((): void => this.viewModel.stopPlayback())
       .bindSheet($$this.selectorVisible, this.selectorContent(), { height: SheetSize.LARGE,
-        keyboardAvoidMode: SheetKeyboardAvoidMode.RESIZE_ONLY, showClose: false,
-        onDisappear: (): void => { this.newPerson = false; this.newName = ''; } })
+        keyboardAvoidMode: SheetKeyboardAvoidMode.RESIZE_ONLY, showClose: false })
   }
 }
 

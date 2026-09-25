@@ -7,6 +7,7 @@ import {
   DeviceV3AnnotationRequest,
   DeviceV3AnnotationResponse,
   DeviceV3ReviewActionRequest,
+  DeviceV3ReviewActionResponse,
   DeviceV3ReviewAudioResponse,
   DeviceV3SyncRequest
 } from '../../computer/ComputerTransferProtocol';
@@ -38,6 +39,15 @@ import {
 } from './PhoneV3Ports';
 
 interface AnnotationTargetPayload { status: string; }
+interface ReviewRemoteError { statusCode?: number; }
+
+export class PhoneV3ReviewSubmissionError extends Error {
+  committed: boolean;
+  constructor(committed: boolean) {
+    super(committed ? '结果已提交，状态待更新；请仅重试读取' : '请求结果尚未确认，请先核对电脑状态，不要重复提交');
+    this.committed = committed;
+  }
+}
 
 interface RecordingPayload {
   session_id?: string;
@@ -389,9 +399,23 @@ export class PhoneV3UseCases {
 
   async resolveReview(request: DeviceV3ReviewActionRequest): Promise<Array<PhoneV3ReviewItem>> {
     const session = await this.remote.connect();
-    const response = await session.resolveReview(request);
-    await this.repository.replaceReviewItems(response.reviews.items);
+    let response: DeviceV3ReviewActionResponse;
+    try { response = await session.resolveReview(request); }
+    catch (error) {
+      const status = (error as ReviewRemoteError).statusCode;
+      if (status !== undefined && status >= 400 && status < 500) { throw error as Error; }
+      throw new PhoneV3ReviewSubmissionError(false);
+    }
+    try { await this.repository.replaceReviewItems(response.reviews.items); }
+    catch (_) { throw new PhoneV3ReviewSubmissionError(true); }
     return phoneV3ReviewSnapshotItems(response.reviews.items);
+  }
+
+  async refreshReviews(): Promise<Array<PhoneV3ReviewItem>> {
+    const session = await this.remote.connect();
+    const response = await session.reviews();
+    await this.repository.replaceReviewItems(response.items);
+    return phoneV3ReviewSnapshotItems(response.items);
   }
 
   async annotations(request: DeviceV3AnnotationRequest): Promise<DeviceV3AnnotationResponse> {

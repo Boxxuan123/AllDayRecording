@@ -206,6 +206,7 @@ export interface DeviceV3ReviewSnapshot {
 }
 
 export interface DeviceV3ReviewActionRequest {
+  expected_review_key?: string;
   review_id: string;
   action: string;
   prototype_id?: string;

@@ -3,7 +3,8 @@ import { PhoneV3LocalAnnotation } from '../domain/PhoneV3LocalAnnotation';
 import { ComputerUploadProgress } from '../../computer/ComputerRecordingUploadService';
 import { common } from '@kit.AbilityKit';
 import { DeviceV3ReviewActionRequest, DeviceV3PersonChoice, DeviceV3AnnotationStatus } from '../../computer/ComputerTransferProtocol';
-import { PhoneV3UseCases, mergePhoneV3Sessions } from '../application/PhoneV3UseCases';
+import { PhoneV3UseCases, PhoneV3ReviewSubmissionError, mergePhoneV3Sessions } from '../application/PhoneV3UseCases';
+import { phoneV3VoiceTasks, PhoneV3VoiceEvidenceIndex, phoneV3EvidencePending } from '../domain/PhoneV3VoiceReviewTask';
 import { PhoneV3DeviceBridgePort } from '../application/PhoneV3Ports';
 import { PhoneProjectionRepository } from '../data/PhoneProjectionRepository';
 import { PhoneV3ComputerBackup } from '../data/PhoneV3ComputerBackup';
@@ -40,6 +41,9 @@ enum PhoneV3RetryAction {
 
 @Observed
 export class PhoneV3ViewModel {
+  reviewSubmissionKey: string = '';
+  reviewSubmissionAction: string = '';
+  reviewSubmissionState: string = '';
   snapshot: PhoneV3Snapshot = new PhoneV3Snapshot();
   device: PhoneV3DeviceState = new PhoneV3DeviceState();
   selectedSessionId: string = '';
@@ -76,6 +80,10 @@ export class PhoneV3ViewModel {
   private lastDesiredRecordingState: string = 'recording';
   private localAudioListener: () => void = (): void => this.onLocalAudioChanged();
   private stateChangeListener: () => void = (): void => {};
+
+  constructor(useCases?: PhoneV3UseCases, reviewAudioPlayer?: PhoneV3ReviewAudioPlayer) {
+    this.useCases = useCases; this.reviewAudioPlayer = reviewAudioPlayer;
+  }
 
   setStateChangeListener(listener: () => void): void {
     this.stateChangeListener = listener;
@@ -208,12 +216,21 @@ export class PhoneV3ViewModel {
   resolveReview(reviewId: string, action: string, prototypeId: string = '',
     displayName: string = '', onResolved: () => void = (): void => {}): void {
     const useCases = this.useCases;
-    if (useCases === undefined || this.busy) {
+    if (useCases === undefined || this.busy || this.reviewSubmissionState.length > 0) {
       return;
     }
     if (prototypeId.length > 0 && (action === 'confirm' || action === 'reject') &&
       !this.reviewSampleWasPlayed(reviewId, prototypeId)) { return; }
     const request: DeviceV3ReviewActionRequest = { review_id: reviewId, action: action };
+    const task = phoneV3VoiceTasks(this.snapshot.reviewItems, action === 'retract').find(
+      (value): boolean => value.item.reviewId === reviewId && value.candidate.prototypeId === prototypeId);
+    if (prototypeId && task !== undefined) {
+      const index = new PhoneV3VoiceEvidenceIndex(); index.update(this.snapshot.sessions);
+      if (action !== 'retract' && (index.sourceChanged(task.candidate) || phoneV3EvidencePending(index.resolve(task.candidate)))) {
+        this.fail(new Error('依据已修改，等待同步/样本更新')); return;
+      }
+      if (task.candidate.reviewKey) { request.expected_review_key = task.candidate.reviewKey; }
+    }
     if (prototypeId.length > 0) {
       request.prototype_id = prototypeId;
     }
@@ -226,6 +243,8 @@ export class PhoneV3ViewModel {
     this.lastRetryAction = PhoneV3RetryAction.NONE;
     this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.BUSY,
       undefined, undefined, '正在提交审核判断…'));
+    this.reviewSubmissionKey = `${reviewId}:${prototypeId}`;
+    this.reviewSubmissionAction = action;
     useCases.resolveReview(request).then((reviewItems): void => {
       const current = this.snapshot;
       const snapshot = new PhoneV3Snapshot(
@@ -234,6 +253,31 @@ export class PhoneV3ViewModel {
       this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SNAPSHOT_READY,
         snapshot, undefined, '审核结果已保存到电脑'));
       onResolved();
+    }).catch((error: Object): void => {
+      if (error instanceof PhoneV3ReviewSubmissionError) {
+        this.reviewSubmissionState = error.committed ? 'committed' : 'unknown';
+      }
+      this.fail(error);
+    });
+  }
+
+  refreshVoiceReviews(onLoaded: () => void = (): void => {}): void {
+    if (this.useCases === undefined || this.busy) { return; }
+    this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.BUSY, undefined, undefined, '正在核对电脑审核状态…'));
+    this.useCases.refreshReviews().then((items): void => {
+      const current = this.snapshot;
+      this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SNAPSHOT_READY,
+        new PhoneV3Snapshot(current.sessions, current.conflicts, current.sync, current.paired, current.reminders, items)));
+      if (this.reviewSubmissionState === 'committed') { this.reviewSubmissionState = ''; }
+      else if (this.reviewSubmissionState === 'unknown') {
+        const all = phoneV3VoiceTasks(items).concat(phoneV3VoiceTasks(items, true));
+        const task = all.find((value): boolean => value.key === this.reviewSubmissionKey);
+        const expected = this.reviewSubmissionAction === 'confirm' ? 'confirmed' :
+          this.reviewSubmissionAction === 'reject' ? 'rejected' : this.reviewSubmissionAction;
+        if (task === undefined || task.candidate.reviewStatus === expected) { this.reviewSubmissionState = ''; }
+        else { this.error = '结果尚未确认，请稍后再次核对；不会重复提交'; }
+      }
+      onLoaded(); this.stateChangeListener();
     }).catch((error: Object): void => this.fail(error));
   }
 
@@ -424,7 +468,11 @@ export class PhoneV3ViewModel {
       if (response.complete_sample !== true || response.review_id !== reviewId || response.prototype_id !== prototypeId ||
         candidate === undefined || candidate.auditionKey.length === 0 || response.audition_key !== candidate.auditionKey ||
         response.end_ms - response.start_ms !== candidate.totalMs || response.windows === undefined ||
-        response.windows.length !== candidate.windowCount) {
+        response.windows.length !== candidate.windowCount || response.windows.some((window, index: number): boolean => {
+          const clip = candidate.clips[index];
+          return clip === undefined || window.media_id !== clip.media_id || window.start_ms !== clip.start_ms || window.end_ms !== clip.end_ms ||
+            window.playback_start_ms !== candidate.clips.slice(0, index).reduce((total: number, previous): number => total + (previous.end_ms ?? 0) - (previous.start_ms ?? 0), 0);
+        })) {
         throw new Error('样本已变化或电脑未提供完整试听，请刷新后重试');
       }
       await player.play(response, (): void => {
@@ -450,7 +498,7 @@ export class PhoneV3ViewModel {
         const window = response.windows.find((value): boolean => position >= value.playback_start_ms &&
           position < value.playback_start_ms + value.end_ms - value.start_ms);
         if (window !== undefined) {
-          const label = `正在播放 ${window.media_id}: ${window.start_ms / 1000}–${window.end_ms / 1000} 秒`;
+          const label = `正在播放第 ${response.windows.indexOf(window) + 1} / ${response.windows.length} 段窗口`;
           if (label !== this.reviewPlaybackRange) { this.reviewPlaybackRange = label; this.stateChangeListener(); }
         }
       });
@@ -670,6 +718,17 @@ export class PhoneV3ViewModel {
         fresh.startMs !== source.startMs || fresh.endMs !== source.endMs ||
         JSON.stringify(session?.localPaths) !== JSON.stringify(oldSession?.localPaths)) {
         this.stopPlayback();
+      }
+    }
+    if (this.auditionReviewId) {
+      const task = phoneV3VoiceTasks(snapshot.reviewItems).find((item): boolean =>
+        item.item.reviewId === this.auditionReviewId && (item.candidate.prototypeId === this.reviewPlaybackPrototype ||
+          this.playedReviewSampleKeys.includes(item.key)));
+      if (task !== undefined) {
+        const index = new PhoneV3VoiceEvidenceIndex(); index.update(snapshot.sessions);
+        if (index.sourceChanged(task.candidate) || phoneV3EvidencePending(index.resolve(task.candidate))) {
+          this.stopPlayback();
+        }
       }
     }
     // The review includes sample windows, audition key, revision and grant context.

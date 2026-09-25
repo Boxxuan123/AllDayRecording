@@ -1,12 +1,14 @@
 import { PhoneV3ReviewItem } from './PhoneV3Models';
 
-interface VoiceClipPayload {
+export interface VoiceClipPayload {
   media_id?: string;
   start_ms?: number;
   end_ms?: number;
 }
 
 interface VoiceCandidatePayload {
+  review_key?: string;
+  evidence_utterances?: Array<PhoneV3VoiceEvidence>;
   prototype_id?: string;
   session_id?: string;
   speaker_track_id?: string;
@@ -22,12 +24,16 @@ interface VoiceCandidatePayload {
 }
 
 interface VoiceReviewContextPayload {
+  review_lane?: string;
   evidence_utterance_ids?: Array<string>;
   voice_mode?: string;
   voice_candidates?: Array<VoiceCandidatePayload>;
 }
 
 export class PhoneV3VoiceCandidate {
+  reviewKey: string = '';
+  clips: Array<VoiceClipPayload> = [];
+  evidence: Array<PhoneV3VoiceEvidence> = [];
   windowCount: number = 0;
   totalMs: number = 0;
   ranges: string = '';
@@ -103,6 +109,9 @@ export function phoneV3VoiceCandidates(item: PhoneV3ReviewItem): Array<PhoneV3Vo
       candidate.audio_available === true,
       startMs, endMs);
     result.windowCount = clips.length;
+    result.clips = clips;
+    result.evidence = candidate.evidence_utterances ?? [];
+    result.reviewKey = candidate.review_key ?? '';
     result.auditionKey = candidate.audition_key ?? '';
     result.unavailableReason = candidate.audio_unavailable_reason ?? '请更新电脑端以提供完整试听';
     for (const window of clips) {
@@ -118,6 +127,33 @@ export function phoneV3VoiceCandidates(item: PhoneV3ReviewItem): Array<PhoneV3Vo
       sortableScore(left.scoreMargin) - sortableScore(right.scoreMargin) ||
       left.prototypeId.localeCompare(right.prototypeId));
   return values;
+}
+
+export interface PhoneV3VoiceEvidence {
+  utterance_id: string;
+  revision: number;
+  session_id: string;
+  utterance_start_ms: number;
+  utterance_end_ms: number;
+  window_index: number;
+  media_id: string;
+  clip_start_ms: number;
+  clip_end_ms: number;
+  session_start_ms: number;
+  session_end_ms: number;
+}
+
+export function phoneV3ReviewIsHistory(item: PhoneV3ReviewItem): boolean {
+  try {
+    const context = JSON.parse(item.contextJson) as VoiceReviewContextPayload;
+    return context.voice_mode === 'accepted_grant' || context.review_lane === 'history';
+  } catch (_) { return false; }
+}
+
+export function phoneV3PendingReviews(items: Array<PhoneV3ReviewItem>, filter: number = 0): Array<PhoneV3ReviewItem> {
+  return items.filter((item: PhoneV3ReviewItem): boolean => !phoneV3ReviewIsHistory(item) &&
+    (filter === 0 || filter === 1 && item.kind === 'voice_identity' || filter === 2 && item.kind === 'reminder' ||
+      filter === 3 && (item.kind === 'person_memory' || item.kind === 'knowledge_proposal')));
 }
 
 export function phoneV3ReviewReason(reason: string): string {

@@ -1,4 +1,5 @@
 import { PhoneV3AnnotationListPage } from '../../v3/presentation/PhoneV3AnnotationListPage';
+import { PhoneV3VoiceReviewPage } from '../../v3/presentation/PhoneV3VoiceReviewPage';
 import { PhoneV3AnnotationPage } from '../../v3/presentation/PhoneV3AnnotationPage';
 import { PhoneV3AnnotationEditor } from '../../v3/domain/PhoneV3AnnotationEditor';
 import { PhoneV3Utterance } from '../../v3/domain/PhoneV3Models';
@@ -55,6 +56,12 @@ class AnnotationRoute {
   editor: PhoneV3AnnotationEditor;
   title: string;
   constructor(editor: PhoneV3AnnotationEditor, title: string) { this.editor = editor; this.title = title; }
+}
+
+class VoiceReviewRoute {
+  reviewId: string;
+  history: boolean;
+  constructor(reviewId: string, history: boolean) { this.reviewId = reviewId; this.history = history; }
 }
 
 @Component
@@ -211,7 +218,13 @@ export struct PhoneRootPage {
 
   @Builder
   private destination(name: string, param: Object) {
-    if (name === 'annotationList') {
+    if (name === 'voiceReview') {
+      PhoneV3VoiceReviewPage({ viewModel: this.v3ViewModel, navStack: this.navStack, stateRevision: this.v3StateRevision,
+        reviewId: (param as VoiceReviewRoute).reviewId, history: (param as VoiceReviewRoute).history,
+        onOpenAnnotation: (rows: Array<PhoneV3Utterance>, title: string): void => this.openAnnotation(rows, title),
+        onOpenSession: (session: PhoneV3SessionCard): void => this.openV3Session(session),
+        onConnect: (): void => this.openComputerTransfer() })
+    } else if (name === 'annotationList') {
       PhoneV3AnnotationListPage({ viewModel: this.v3ViewModel, editor: (param as AnnotationRoute).editor,
         scopeTitle: (param as AnnotationRoute).title, stateRevision: this.v3StateRevision,
         onOpen: (editor: PhoneV3AnnotationEditor, title: string): void => {
@@ -336,6 +349,10 @@ export struct PhoneRootPage {
         viewModel: this.v3ViewModel,
         stateRevision: this.v3StateRevision,
         selectedTab: $selectedMainTab,
+        onOpenVoice: (reviewId: string, history: boolean): void => {
+          this.v3ViewModel.stopPlayback();
+          this.navStack.pushPath({ name: 'voiceReview', param: new VoiceReviewRoute(reviewId, history) });
+        },
         onOpenAnnotationList: (rows: Array<PhoneV3Utterance>, title: string): void => this.openAnnotation(rows, title, true),
         onOpenAnnotation: (rows: Array<PhoneV3Utterance>, title: string): void => this.openAnnotation(rows, title),
         onOpenSession: (session: PhoneV3SessionCard): void => this.openV3Session(session),

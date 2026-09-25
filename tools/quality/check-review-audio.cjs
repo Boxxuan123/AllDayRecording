@@ -69,6 +69,33 @@ const tick=()=>new Promise(r=>setImmediate(r));
  assert(vm.error.includes('完整试听'));await wrapper.release();assert.equal(files.size,0);
  console.log('PASS unrelated refresh preserves full audition; changed review/grant invalidates credential; partial responses fail closed');
 
+ // Real ViewModel remote outcome guard: never advance on failed/ambiguous submission.
+ const {PhoneV3ReviewSubmissionError}=require(path.join(root,'phone/src/main/ets/v3/application/PhoneV3UseCases.ets'));
+ const remoteVm=new PhoneV3ViewModel();let remoteWrites=0, advanced=0, reads=0;
+ const pendingReview={reviewId:'remote',kind:'voice_identity',contextJson:JSON.stringify({voice_mode:'known_person',voice_candidates:[{prototype_id:'sample',review_status:'pending'}]})};
+ remoteVm.snapshot=new PhoneV3Snapshot();remoteVm.snapshot.reviewItems=[pendingReview];
+ remoteVm.useCases={resolveReview:async()=>{remoteWrites++;throw new PhoneV3ReviewSubmissionError(true)},refreshReviews:async()=>{reads++;return []}};
+ remoteVm.resolveReview('remote','uncertain','sample','',()=>advanced++);await tick();
+ assert.equal(advanced,0);assert.equal(remoteVm.reviewSubmissionState,'committed');
+ remoteVm.resolveReview('remote','uncertain','sample');await tick();assert.equal(remoteWrites,1);
+ remoteVm.refreshVoiceReviews();await tick();assert.equal(reads,1);assert.equal(remoteWrites,1);assert.equal(remoteVm.reviewSubmissionState,'');
+ remoteVm.snapshot.reviewItems=[pendingReview];
+ remoteVm.useCases.resolveReview=async()=>{remoteWrites++;throw new PhoneV3ReviewSubmissionError(false)};
+ remoteVm.useCases.refreshReviews=async()=>{reads++;return [pendingReview]};
+ remoteVm.resolveReview('remote','uncertain','sample','',()=>advanced++);await tick();
+ remoteVm.refreshVoiceReviews();await tick();assert.equal(remoteVm.reviewSubmissionState,'unknown');
+ remoteVm.resolveReview('remote','uncertain','sample');await tick();assert.equal(remoteWrites,2);assert.equal(advanced,0);
+ remoteVm.useCases.refreshReviews=async()=>[];remoteVm.refreshVoiceReviews();await tick();
+ assert.equal(remoteVm.reviewSubmissionState,'');assert.equal(advanced,0);assert.equal(remoteWrites,2);
+ const mappedCandidate={prototype_id:'sample',session_id:'s',representative_clips:[{media_id:'m',start_ms:0,end_ms:500}],evidence_utterances:[{utterance_id:'u',session_id:'s',revision:1,utterance_start_ms:0,utterance_end_ms:900,window_index:0,media_id:'m',clip_start_ms:0,clip_end_ms:500,session_start_ms:0,session_end_ms:500}]};
+ remoteVm.snapshot.reviewItems=[{...pendingReview,contextJson:JSON.stringify({voice_mode:'known_person',voice_candidates:[mappedCandidate]})}];
+ const changedSource={utteranceId:'u',sessionId:'s',revision:1,status:'active',startMs:0,endMs:900,annotationFacts:{person:'pending',sound:''}};
+ remoteVm.snapshot.sessions=[{sessionId:'s',utterances:[changedSource]}];
+ remoteVm.resolveReview('remote','uncertain','sample');await tick();assert.equal(remoteWrites,2);assert.match(remoteVm.error,/依据已修改/);
+ changedSource.annotationFacts.person='';changedSource.revision=2;
+ remoteVm.resolveReview('remote','uncertain','sample');await tick();assert.equal(remoteWrites,2);
+ console.log('PASS remote committed/read failure only re-reads; ambiguous timeout stays locked while pending; disappearance never fakes success');
+
  // Real ViewModel save boundary: UI success is independent of the following read.
  const saveVm = new PhoneV3ViewModel();
  let queueCalls = 0, saved = [], releaseSave;

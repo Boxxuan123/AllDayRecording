@@ -1,3 +1,4 @@
+import { phoneV3PendingReviews } from '../domain/PhoneV3ReviewModels';
 import { ExceptionPromptV2, MarginTypeV2, PromptOptionsV2, SymbolGlyphModifier } from '@kit.ArkUI';
 import { PhoneV3SessionCard } from '../domain/PhoneV3Models';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
@@ -18,7 +19,7 @@ export struct PhoneV3HomePage {
 
   private pendingReviewCount(): number {
     const snapshot = this.currentUiState().snapshot;
-    return snapshot.reviewItems.length + snapshot.conflicts.filter((value): boolean => ['speaker.assign', 'segment.classify'].indexOf(value.kind) >= 0).length;
+    return phoneV3PendingReviews(snapshot.reviewItems).length + snapshot.conflicts.filter((value): boolean => ['speaker.assign', 'segment.classify'].indexOf(value.kind) >= 0).length;
   }
 
   private currentUiState(): PhoneV3UiState {

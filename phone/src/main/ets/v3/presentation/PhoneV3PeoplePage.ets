@@ -1,3 +1,4 @@
+import { phoneV3PendingReviews } from '../domain/PhoneV3ReviewModels';
 import { PhoneV3SessionCard, PhoneV3Utterance } from '../domain/PhoneV3Models';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 import { PHONE_V3_UI_STATE_STORAGE_KEY, PhoneV3UiState } from './PhoneV3UiState';
@@ -47,7 +48,7 @@ export struct PhoneV3PeoplePage {
   }
 
   private pendingPeopleReviews(): number {
-    return this.currentUiState().snapshot.reviewItems.filter((item): boolean =>
+    return phoneV3PendingReviews(this.currentUiState().snapshot.reviewItems).filter((item): boolean =>
       item.kind === 'voice_identity' || item.kind === 'person_memory').length;
   }
 

@@ -100,9 +100,9 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
     this.store = store;
   }
 
-  static async open(context: common.UIAbilityContext): Promise<PhoneProjectionRepository> {
+  static async open(context: common.UIAbilityContext, databaseName: string = DATABASE_NAME): Promise<PhoneProjectionRepository> {
     const config: relationalStore.StoreConfig = {
-      name: DATABASE_NAME,
+      name: databaseName,
       securityLevel: relationalStore.SecurityLevel.S2
     };
     const store = await relationalStore.getRdbStore(context, config);
