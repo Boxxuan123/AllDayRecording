@@ -33,7 +33,7 @@ const response = (changes = [], receipts = []) => ({ projection_version: contrac
     change(dto(1)), change(dto(2))]));
   let rows = await read();
   assert.equal(state(rows[0]).done, false);
-  await use.queueAnnotation([rows[0]], '', '张卫平', true, 'unintelligible');
+  await use.queueAnnotation([rows[0]], '', '合成人物甲', true, 'unintelligible');
   assert.equal(connects, 0);
   let ops = await repo.annotationOperations();
   assert.equal(ops.length, 2);
@@ -41,7 +41,7 @@ const response = (changes = [], receipts = []) => ({ projection_version: contrac
   rows = await read();
   assert.equal(state(rows[0]).done, true);
   assert.equal(rows[0].soundKind, 'unintelligible');
-  assert.equal(rows[0].speakerLabel, '张卫平');
+  assert.equal(rows[0].speakerLabel, '合成人物甲');
   stores.at(-1).db.close();
   repo = await Repository.open({ databasePath });
   use = new UseCases(repo, { list: async () => [] }, remote);
@@ -55,14 +55,14 @@ const response = (changes = [], receipts = []) => ({ projection_version: contrac
   const person = (await repo.cachedPeople())[0];
   const evidence = { person_annotation: { person_id: person.person_id, state: 'active' },
     annotation_fact_ids: { person: [id(4000)], sound: [id(4001)] }, sound_kind: 'unintelligible' };
-  await apply(repo, response([change({ ...dto(1, 3, evidence), speaker_label: '张卫平' })]));
+  await apply(repo, response([change({ ...dto(1, 3, evidence), speaker_label: '合成人物甲' })]));
   assert.equal((await repo.annotationOperations()).length, 0);
   assert.equal(state((await read())[0]).sync, '已同步');
   stores.at(-1).db.close();
   repo = await Repository.open({ databasePath });
   use = new UseCases(repo, { list: async () => [] }, remote);
   assert.equal(state((await read())[0]).done, true);
-  await apply(repo, response([change({ ...dto(1, 4, evidence), text: '无关文本更新', speaker_label: '改名后的张卫平' })]));
+  await apply(repo, response([change({ ...dto(1, 4, evidence), text: '无关文本更新', speaker_label: '改名后的合成人物甲' })]));
   assert.equal(state((await read())[0]).done, true);
   console.log('PASS disk restart, two dimensions, offline failure, receipt-before-projection, cleanup, rename and text update');
 

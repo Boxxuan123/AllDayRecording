@@ -8,7 +8,6 @@ import {
   phoneV3VoiceCandidates,
   phoneV3VoiceMode
 } from '../domain/PhoneV3ReviewModels';
-import { PhoneV3SpeakerAnnotationPanel } from './PhoneV3SpeakerAnnotationPanel';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 import { phoneV3SessionTitle, phoneV3TimelineTime } from './PhoneV3UiFormat';
 import { PHONE_V3_UI_STATE_STORAGE_KEY, PhoneV3UiState } from './PhoneV3UiState';
@@ -28,6 +27,7 @@ class PhoneV3ReviewGroup {
 
 @Component
 export struct PhoneV3ReviewInboxPage {
+  onOpenAnnotation: (rows: Array<PhoneV3Utterance>, title: string) => void = (): void => {};
   viewModel: PhoneV3ViewModel = new PhoneV3ViewModel();
   @Prop stateRevision: number = 0;
   @State private selectedFilter: number = 0;
@@ -392,8 +392,11 @@ export struct PhoneV3ReviewInboxPage {
             this.annotationReviewId = this.annotationReviewId === item.reviewId ? '' : item.reviewId;
           })
         if (this.annotationReviewId === item.reviewId) {
-          PhoneV3SpeakerAnnotationPanel({ viewModel: this.viewModel,
-            utterances: this.reviewUtterances(item), stateRevision: this.stateRevision })
+          ForEach(this.reviewUtterances(item), (row: PhoneV3Utterance) => {
+            Text(row.text).fontSize(15).maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%').padding(12).backgroundColor($r('app.color.surface_secondary')).borderRadius(12)
+              .onClick((): void => this.onOpenAnnotation([row], '审核原句'))
+          }, (row: PhoneV3Utterance): string => row.utteranceId)
         }
       }
       if (this.matchingSession(item.sessionId) !== undefined) {

@@ -1,3 +1,7 @@
+import { PhoneV3AnnotationListPage } from '../../v3/presentation/PhoneV3AnnotationListPage';
+import { PhoneV3AnnotationPage } from '../../v3/presentation/PhoneV3AnnotationPage';
+import { PhoneV3AnnotationEditor } from '../../v3/domain/PhoneV3AnnotationEditor';
+import { PhoneV3Utterance } from '../../v3/domain/PhoneV3Models';
 import { common } from '@kit.AbilityKit';
 import {
   hdsMaterial,
@@ -45,6 +49,12 @@ class PhoneV3SessionRouteParams {
 }
 
 class PhoneV3SecondaryRouteParams {
+}
+
+class AnnotationRoute {
+  editor: PhoneV3AnnotationEditor;
+  title: string;
+  constructor(editor: PhoneV3AnnotationEditor, title: string) { this.editor = editor; this.title = title; }
 }
 
 @Component
@@ -129,6 +139,14 @@ export struct PhoneRootPage {
     });
   }
 
+  private openAnnotation(rows: Array<PhoneV3Utterance>, title: string, list: boolean = false): void {
+    const editor = new PhoneV3AnnotationEditor();
+    editor.open(rows, this.v3ViewModel.snapshot.sessions);
+    if (editor.doneMode) { editor.focus(editor.filtered[0]); }
+    this.v3ViewModel.stopPlayback();
+    this.navStack.pushPath({ name: list ? 'annotationList' : 'annotation', param: new AnnotationRoute(editor, title) });
+  }
+
   private openSecondary(name: string): void {
     this.navStack.pushPath({
       name: name,
@@ -193,7 +211,16 @@ export struct PhoneRootPage {
 
   @Builder
   private destination(name: string, param: Object) {
-    if (name === PHONE_COMPUTER_TRANSFER_ROUTE) {
+    if (name === 'annotationList') {
+      PhoneV3AnnotationListPage({ viewModel: this.v3ViewModel, editor: (param as AnnotationRoute).editor,
+        scopeTitle: (param as AnnotationRoute).title, stateRevision: this.v3StateRevision,
+        onOpen: (editor: PhoneV3AnnotationEditor, title: string): void => {
+          this.navStack.pushPath({ name: 'annotation', param: new AnnotationRoute(editor, title) });
+        } })
+    } else if (name === 'annotation') {
+      PhoneV3AnnotationPage({ viewModel: this.v3ViewModel, editor: (param as AnnotationRoute).editor,
+        scopeTitle: (param as AnnotationRoute).title, navStack: this.navStack, stateRevision: this.v3StateRevision })
+    } else if (name === PHONE_COMPUTER_TRANSFER_ROUTE) {
       HdsNavDestination() {
         PhoneComputerTransferPage()
       }
@@ -277,6 +304,7 @@ export struct PhoneRootPage {
         PhoneV3SessionDetailPage({
           viewModel: this.v3ViewModel,
           stateRevision: this.v3StateRevision,
+          onOpenAnnotation: (rows: Array<PhoneV3Utterance>, title: string): void => this.openAnnotation(rows, title),
           routeSession: (param as PhoneV3SessionRouteParams).session
         })
       }
@@ -308,6 +336,8 @@ export struct PhoneRootPage {
         viewModel: this.v3ViewModel,
         stateRevision: this.v3StateRevision,
         selectedTab: $selectedMainTab,
+        onOpenAnnotationList: (rows: Array<PhoneV3Utterance>, title: string): void => this.openAnnotation(rows, title, true),
+        onOpenAnnotation: (rows: Array<PhoneV3Utterance>, title: string): void => this.openAnnotation(rows, title),
         onOpenSession: (session: PhoneV3SessionCard): void => this.openV3Session(session),
         onOpenComputerTransfer: (): void => this.openComputerTransfer(),
         onOpenSync: (): void => this.openSecondary(PHONE_V3_SYNC_ROUTE),

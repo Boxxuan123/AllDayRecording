@@ -1,6 +1,6 @@
 import { SymbolGlyphModifier, uiMaterial } from '@kit.ArkUI';
 import { motion } from '@kit.MultimodalAwarenessKit';
-import { PhoneV3SessionCard } from '../domain/PhoneV3Models';
+import { PhoneV3SessionCard, PhoneV3Utterance } from '../domain/PhoneV3Models';
 import { PhoneV3HomePage } from './PhoneV3HomePage';
 import { PhoneV3MorePage } from './PhoneV3MorePage';
 import { PhoneV3PeoplePage } from './PhoneV3PeoplePage';
@@ -17,6 +17,8 @@ import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 
 @Component
 export struct PhoneV3RootPage {
+  onOpenAnnotation: (rows: Array<PhoneV3Utterance>, title: string) => void = (): void => {};
+  onOpenAnnotationList: (rows: Array<PhoneV3Utterance>, title: string) => void = (): void => {};
   @ObjectLink viewModel: PhoneV3ViewModel;
   @Prop stateRevision: number = 0;
   @Link selectedTab: number;
@@ -151,6 +153,7 @@ export struct PhoneV3RootPage {
 
       TabContent() {
         PhoneV3ReviewInboxPage({
+          onOpenAnnotation: this.onOpenAnnotation,
           viewModel: this.viewModel,
           stateRevision: this.stateRevision,
           onOpenSession: (session: PhoneV3SessionCard): void => this.openSession(session)
@@ -160,6 +163,7 @@ export struct PhoneV3RootPage {
 
       TabContent() {
         PhoneV3PeoplePage({
+          onOpenAnnotation: this.onOpenAnnotationList,
           viewModel: this.viewModel,
           stateRevision: this.stateRevision,
           onOpenSession: (session: PhoneV3SessionCard): void => this.openSession(session),

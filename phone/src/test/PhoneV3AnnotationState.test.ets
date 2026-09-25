@@ -12,7 +12,7 @@ function sessions(value: PhoneV3Utterance): Array<PhoneV3SessionCard> {
   return [new PhoneV3SessionCard('s', 's', '', '', '', 0, '', '', '', 0, 1, 0, [], 0, 0, '', '', '', 0, [value])];
 }
 function operation(): PhonePendingOperation {
-  const payload: PhoneV3LocalAnnotation = { selections: [{ utterance_id: 'u', revision: 1, text: '旧正文', speaker_label: '' }], person_name: '张卫平', person_id: 'p' };
+  const payload: PhoneV3LocalAnnotation = { selections: [{ utterance_id: 'u', revision: 1, text: '旧正文', speaker_label: '' }], person_name: '合成人物甲', person_id: 'p' };
   return { operation_id: 'op', kind: 'speaker.assign', base_revision: null, attempt_count: 0,
     payload: payload };
 }

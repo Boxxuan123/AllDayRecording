@@ -333,7 +333,7 @@ export default function phoneV3UseCasesTest() {
       const row = new PhoneV3Utterance('u', 's', null, null, null, null, '', '', '{}',
         0, 1000, '', '', 'text', 'text', 1, 'active', '{}');
       repository.utteranceRows = [new PhoneV3ProjectionRow(row.utteranceId, row.revision, '{"status":"active"}', 1)];
-      await useCases.queueAnnotation([row], '', '张卫平', true, 'unintelligible');
+      await useCases.queueAnnotation([row], '', '合成人物甲', true, 'unintelligible');
       expect(repository.operations.length).assertEqual(2);
       expect(repository.transactions).assertEqual(1);
       expect(repository.commits).assertEqual(1);

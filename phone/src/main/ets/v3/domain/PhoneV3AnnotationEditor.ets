@@ -24,17 +24,22 @@ export class PhoneV3AnnotationEditor {
   hidden: number = 0;
   selectedCount: number = 0;
   changed: boolean = false;
+  private sequence: Array<string> = [];
 
   open(targets: Array<PhoneV3Utterance>, sessions: Array<PhoneV3SessionCard>): void {
+    this.current = undefined; this.doneMode = false; this.batch = false;
+    this.query = ''; this.page = 0; this.selections.clear();
     this.scope = new Map<string, PhoneV3Utterance>();
     for (let row of targets) { this.scope.set(row.utteranceId, row); }
     this.index.setTargets(targets);
     this.update(sessions);
+    this.doneMode = this.pending === 0 && this.done > 0;
     if (targets.length === 1) {
       const row = this.rows.find((value: PhoneV3Utterance): boolean => value.utteranceId === targets[0].utteranceId);
       if (row !== undefined) { this.doneMode = phoneV3AnnotationState(row).done; this.focus(row); }
     }
     this.filter();
+    this.sequence = this.filtered.map((row: PhoneV3Utterance): string => row.utteranceId);
     if (!this.doneMode && this.current === undefined) { this.focus(this.filtered[0]); }
   }
 
@@ -76,13 +81,24 @@ export class PhoneV3AnnotationEditor {
 
   focus(row: PhoneV3Utterance | undefined): void { this.current = row; this.changed = false; }
   move(delta: number): void {
-    if (this.filtered.length === 0) { this.focus(undefined); return; }
-    const index = this.filtered.findIndex((row: PhoneV3Utterance): boolean => row.utteranceId === this.current?.utteranceId);
-    this.focus(this.filtered[(index + delta + this.filtered.length) % this.filtered.length]);
+    const index = this.sequence.indexOf(this.current?.utteranceId ?? '');
+    const eligible = new Map<string, PhoneV3Utterance>();
+    for (let row of this.filtered) { eligible.set(row.utteranceId, row); }
+    for (let next = index + delta; next >= 0 && next < this.sequence.length; next += delta) {
+      const row = eligible.get(this.sequence[next]);
+      if (row !== undefined) { this.focus(row); return; }
+    }
+    this.focus(undefined);
+  }
+  restartPending(): void {
+    this.doneMode = false; this.filter();
+    this.sequence = this.filtered.map((row: PhoneV3Utterance): string => row.utteranceId);
+    this.focus(this.filtered[0]);
   }
   switchMode(done: boolean): void {
     this.doneMode = done; this.batch = false; this.selections.clear(); this.page = 0;
     this.filter(); this.focus(done ? undefined : this.filtered[0]);
+    this.sequence = this.filtered.map((row: PhoneV3Utterance): string => row.utteranceId);
   }
   setBatch(value: boolean): void {
     this.batch = value; this.selections.clear(); this.filter();
@@ -102,7 +118,10 @@ export class PhoneV3AnnotationEditor {
   saved(ids: Array<string>): void {
     for (let id of ids) { this.selections.delete(id); }
     this.filter();
-    if (!this.batch) { this.focus(this.doneMode ? this.rows.find((row: PhoneV3Utterance): boolean => row.utteranceId === ids[0]) : this.filtered[0]); }
+    if (!this.batch) {
+      if (this.doneMode) { this.focus(this.rows.find((row: PhoneV3Utterance): boolean => row.utteranceId === ids[0])); }
+      else { this.move(1); }
+    }
   }
 }
 

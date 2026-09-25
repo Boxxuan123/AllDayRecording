@@ -15,7 +15,6 @@ import {
   SymbolGlyphModifier
 } from '@kit.ArkUI';
 import { PhoneV3SessionCard, PhoneV3Utterance } from '../domain/PhoneV3Models';
-import { PhoneV3SpeakerAnnotationPanel } from './PhoneV3SpeakerAnnotationPanel';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 import {
   phoneV3AbsoluteTime,
@@ -41,12 +40,12 @@ class PhoneV3SpeakerChoice {
 
 @Component
 export struct PhoneV3SessionDetailPage {
+  onOpenAnnotation: (rows: Array<PhoneV3Utterance>, title: string) => void = (): void => {};
   @ObjectLink viewModel: PhoneV3ViewModel;
   @Prop stateRevision: number = 0;
   routeSession: PhoneV3SessionCard | undefined = undefined;
   @State private isSeeking: boolean = false;
   @State private seeking: number = 0;
-  @State private annotationId: string = '';
   @State private correctionVisible: boolean = false;
   @State private correctionText: string = '';
   @State private correctionSpeakerTrackId: string = '';
@@ -270,11 +269,7 @@ export struct PhoneV3SessionDetailPage {
           .enabled(!this.viewModel.busy && !this.viewModel.device.playbackBusy)
           .onClick((): void => this.viewModel.playUtterance(utterance))
         Button(phoneV3AnnotationState(utterance).review ? '需复核' : phoneV3AnnotationState(utterance).done ? '查看／修改标注' : '标注片段', { type: ButtonType.Capsule })
-          .onClick((): void => { this.annotationId = this.annotationId === utterance.utteranceId ? '' : utterance.utteranceId; })
-      }
-      if (this.annotationId === utterance.utteranceId) {
-        PhoneV3SpeakerAnnotationPanel({ viewModel: this.viewModel,
-          utterances: [utterance], stateRevision: this.stateRevision })
+          .onClick((): void => { this.onOpenAnnotation([utterance], '本句'); })
       }
       Button('编辑转写', { type: ButtonType.Capsule })
         .height(34)

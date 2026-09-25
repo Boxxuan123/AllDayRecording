@@ -58,6 +58,9 @@ export class PhoneV3ViewModel {
   private reviewAudioPlayer: PhoneV3ReviewAudioPlayer | undefined = undefined;
   private audioLoading: boolean = false;
   private annotationAudioPlaying: boolean = false;
+  private annotationAudioSource: PhoneV3Utterance | undefined = undefined;
+  private auditionReviewId: string = '';
+  private auditionReviewEvidence: string = '';
   private audioRequestGeneration: number = 0;
   reviewPlaybackRange: string = '';
   reviewPlaybackPrototype: string = '';
@@ -341,6 +344,8 @@ export class PhoneV3ViewModel {
       return;
     }
     this.playedReviewSampleKeys = [];
+    this.auditionReviewId = '';
+    this.annotationAudioSource = utterance;
     this.reviewPlaybackRange = '';
     this.reviewPlaybackPrototype = '';
     const generation = ++this.audioRequestGeneration;
@@ -397,6 +402,9 @@ export class PhoneV3ViewModel {
       return;
     }
     this.playedReviewSampleKeys = [];
+    this.annotationAudioSource = undefined;
+    this.auditionReviewId = reviewId;
+    this.auditionReviewEvidence = JSON.stringify(this.snapshot.reviewItems.find((item): boolean => item.reviewId === reviewId));
     this.reviewPlaybackRange = '';
     this.reviewPlaybackPrototype = '';
     const generation = ++this.audioRequestGeneration;
@@ -496,6 +504,8 @@ export class PhoneV3ViewModel {
   }
 
   togglePlayback(): void {
+    this.annotationAudioSource = undefined;
+    this.auditionReviewId = '';
     this.playedReviewSampleKeys = [];
     this.reviewPlaybackRange = '';
     this.reviewPlaybackPrototype = '';
@@ -513,6 +523,9 @@ export class PhoneV3ViewModel {
   }
 
   stopPlayback(): void {
+    this.annotationAudioSource = undefined;
+    this.auditionReviewId = '';
+    this.auditionReviewEvidence = '';
     this.annotationAudioPlaying = false;
     this.playedReviewSampleKeys = [];
     this.reviewPlaybackRange = '';
@@ -637,7 +650,6 @@ export class PhoneV3ViewModel {
   }
 
   private async refreshSnapshot(): Promise<void> {
-    this.stopPlayback();
     const useCases = this.useCases;
     if (useCases === undefined) {
       return;
@@ -646,6 +658,26 @@ export class PhoneV3ViewModel {
     const snapshot = await useCases.loadCached(this.localFacts);
     this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SNAPSHOT_READY, snapshot,
       undefined, `已合并 ${snapshot.sessions.length} 条会话；最后游标 ${snapshot.sync.cursor}`));
+  }
+
+  private validateAuditionSource(snapshot: PhoneV3Snapshot): void {
+    const source = this.annotationAudioSource;
+    if (source !== undefined) {
+      const session = snapshot.sessions.find((item): boolean => item.sessionId === source.sessionId);
+      const fresh = session?.utterances.find((row): boolean => row.utteranceId === source.utteranceId);
+      const oldSession = this.snapshot.sessions.find((item): boolean => item.sessionId === source.sessionId);
+      if (fresh === undefined || fresh.status !== 'active' || fresh.revision !== source.revision ||
+        fresh.startMs !== source.startMs || fresh.endMs !== source.endMs ||
+        JSON.stringify(session?.localPaths) !== JSON.stringify(oldSession?.localPaths)) {
+        this.stopPlayback();
+      }
+    }
+    // The review includes sample windows, audition key, revision and grant context.
+    // Keep a completed credential only while that exact review evidence remains current.
+    if (this.auditionReviewId && this.auditionReviewEvidence !== JSON.stringify(
+      snapshot.reviewItems.find((item): boolean => item.reviewId === this.auditionReviewId))) {
+      this.stopPlayback();
+    }
   }
 
   private refreshDeviceState(): void {
@@ -684,6 +716,9 @@ export class PhoneV3ViewModel {
   }
 
   private dispatch(action: PhoneV3UiAction): void {
+    if (action.type === PhoneV3UiActionType.SNAPSHOT_READY && action.snapshot !== undefined) {
+      this.validateAuditionSource(action.snapshot);
+    }
     const next = reducePhoneV3Ui(this.currentUiState(), action);
     if ((this.computerSyncActive || (this.annotationRefreshing && this.busy)) &&
       action.type === PhoneV3UiActionType.SNAPSHOT_READY) {
