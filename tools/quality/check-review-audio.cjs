@@ -66,4 +66,46 @@ const tick=()=>new Promise(r=>setImmediate(r));
  assert(vm.error.includes('完整试听'));await wrapper.release();assert.equal(files.size,0);
  console.log('PASS refresh cancels stale completion and legacy partial responses fail closed');
 
+ // Real ViewModel save boundary: UI success is independent of the following read.
+ const saveVm = new PhoneV3ViewModel();
+ let queueCalls = 0, saved = [], releaseSave;
+ const target = { utteranceId: 'u', revision: 7 };
+ saveVm.useCases = { queueAnnotation: async (rows, personId, name, personChanged, sound) => {
+   queueCalls++; assert.equal(rows[0].revision, 7); assert.equal(name, 'Alice');
+   await new Promise(resolve => { releaseSave = resolve; });
+ }, loadLocal: async () => [], loadCached: async () => new PhoneV3Snapshot() };
+ const submit = () => saveVm.saveAnnotation([target], '', 'Alice', true, '', fresh => saved.push(fresh));
+ submit(); submit(); assert.equal(queueCalls, 1); assert.equal(saveVm.annotationSaving, true);
+ releaseSave(); await tick(); await tick();
+ assert.deepEqual(saved, [true]); assert.equal(saveVm.annotationSaving, false);
+ saveVm.useCases.queueAnnotation = async () => { queueCalls++; throw Error('disk full'); };
+ submit(); await tick(); assert.deepEqual(saved, [true]); assert.match(saveVm.error, /数据库保存失败/);
+ saveVm.useCases.queueAnnotation = async () => { queueCalls++; };
+ saveVm.useCases.loadCached = async () => { throw Error('read failed'); };
+ submit(); await tick(); await tick(); assert.deepEqual(saved, [true, false]);
+ assert.match(saveVm.error, /已在手机保存/);
+ const submitted = queueCalls;
+ saveVm.useCases.loadCached = async () => new PhoneV3Snapshot();
+ let reloaded = 0; saveVm.reloadAnnotationResult(() => reloaded++); await tick();
+ assert.equal(reloaded, 1); assert.equal(queueCalls, submitted);
+ console.log('PASS ViewModel double-click guard, DB failure does not advance, committed-read failure and read-only retry');
+
+ const utterance = { sessionId: 's', startMs: 0, endMs: 9000 };
+ vm.snapshot = new PhoneV3Snapshot();
+ vm.snapshot.sessions = [{ sessionId: 's', localPaths: [], localGroupKey: '', durationMs: 9000 }];
+ let audioResolve;
+ vm.useCases.annotations = () => new Promise(resolve => { audioResolve = resolve; });
+ const playerCount = players.length;
+ vm.playUtterance(utterance); assert.equal(vm.annotationPlaybackState(), '正在加载');
+ vm.stopPlayback(); audioResolve({ audio: response }); await tick();
+ assert.equal(players.length, playerCount); assert.equal(vm.annotationPlaybackState(), '');
+ vm.useCases.annotations = async () => ({ audio: response });
+ vm.playUtterance(utterance); await tick();
+ assert.equal(vm.annotationPlaybackState(), '正在播放');
+ const oldAnnotation = players.at(-1);
+ vm.stopPlayback(); oldAnnotation.emit('completed'); await tick();
+ assert.equal(vm.annotationPlaybackState(), '');
+ console.log('PASS annotation playback has real loading/playing state and ignores stopped request/completion');
+
+
 })().catch(e=>{console.error(e);process.exitCode=1});

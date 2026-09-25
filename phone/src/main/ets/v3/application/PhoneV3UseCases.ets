@@ -1,6 +1,6 @@
 import { syncRequestBatch } from '../data/PhoneSyncBatch';
 import { PHONE_V3_SOUND_KINDS, phoneV3SoundKindLabel } from '../domain/PhoneV3SoundKind';
-import { PhoneV3LocalAnnotation, PhoneV3AnnotationSentence, applyLocalAnnotations, annotationRows } from '../domain/PhoneV3LocalAnnotation';
+import { PhoneV3LocalAnnotation, PhoneV3AnnotationSentence, applyLocalAnnotations, applyAnnotationConflicts, annotationRows } from '../domain/PhoneV3LocalAnnotation';
 import {
   DeviceV3ClientOperation,
   DeviceV3PersonChoice,
@@ -36,6 +36,8 @@ import {
   PhoneV3ReminderSchedulerPort,
   PhoneV3RemotePort
 } from './PhoneV3Ports';
+
+interface AnnotationTargetPayload { status: string; }
 
 interface RecordingPayload {
   session_id?: string;
@@ -133,6 +135,7 @@ export class PhoneV3UseCases {
     await this.reconcileReminders(reminderValues);
     const sessions = mergePhoneV3Sessions(localFacts, links, recordings, processing, utterances);
     applyLocalAnnotations(sessions, await this.repository.annotationOperations());
+    applyAnnotationConflicts(sessions, conflicts);
     return new PhoneV3Snapshot(
       sessions,
       conflicts, status, paired, reminderValues, phoneV3ReviewItems(reviews));
@@ -190,47 +193,59 @@ export class PhoneV3UseCases {
 
   async queueSpeakerAnnotation(utterances: Array<PhoneV3Utterance>, personId: string,
     name: string): Promise<void> {
-    if (utterances.length === 0 || utterances.length > 2000) {
-      throw new Error('请选择 1 至 2000 句');
-    }
-    const people = await this.repository.cachedPeople();
-    const person = personId.length > 0 ? people.find((value: DeviceV3PersonChoice): boolean =>
-      value.person_id === personId) : undefined;
-    if (personId.length > 0 && person === undefined) { throw new Error('请重新选择人物'); }
-    const label = person === undefined ? name.trim() : person.display_name;
-    if (label.length === 0 || label.length > 100) { throw new Error('人物姓名应为 1 至 100 字'); }
-    const choice: DeviceV3PersonChoice = person ?? { person_id: newOperationId(), display_name: label, local: true };
-    const payload: PhoneV3LocalAnnotation = {
-      selections: utterances.map((value: PhoneV3Utterance): PhoneV3AnnotationSentence => {
-        return { utterance_id: value.utteranceId, revision: value.revision,
-          text: value.text, speaker_label: value.speakerLabel ?? '未知说话人', sound_kind: value.soundKind };
-      }), person_name: label
-    };
-    if (choice.local) { payload.new_person_id = choice.person_id; payload.display_name = label; }
-    else { payload.person_id = choice.person_id; }
-    await this.repository.beginTransaction();
-    try {
-      await this.repository.cachePeople([choice]);
-      await this.enqueueAnnotationItems('speaker.assign', payload);
-      await this.repository.commit();
-    } catch (error) {
-      await this.repository.rollback();
-      throw error instanceof Error ? error : new Error(JSON.stringify(error));
-    }
+    await this.queueAnnotation(utterances, personId, name, true, '');
   }
 
   async queueSoundClassification(utterances: Array<PhoneV3Utterance>, soundKind: string): Promise<void> {
-    if (utterances.length === 0 || utterances.length > 2000 || PHONE_V3_SOUND_KINDS.indexOf(soundKind) < 0) {
-      throw new Error('请选择 1 至 2000 个片段和有效的声音类型');
+    await this.queueAnnotation(utterances, '', '', false, soundKind);
+  }
+
+  // One transaction for both dimensions. Helpers below never start nested transactions.
+  async queueAnnotation(utterances: Array<PhoneV3Utterance>, personId: string, name: string,
+    personChanged: boolean, soundKind: string): Promise<void> {
+    if (utterances.length === 0 || utterances.length > 2000 ||
+      (!personChanged && soundKind.length === 0) ||
+      (soundKind.length > 0 && PHONE_V3_SOUND_KINDS.indexOf(soundKind) < 0)) {
+      throw new Error('请选择 1 至 2000 个片段，并选择人物或声音类型');
     }
-    const payload: PhoneV3LocalAnnotation = { sound_kind: soundKind, person_name: phoneV3SoundKindLabel(soundKind),
-      selections: utterances.map((value: PhoneV3Utterance): PhoneV3AnnotationSentence => {
-        return { utterance_id: value.utteranceId, revision: value.revision, text: value.text,
-          speaker_label: value.speakerLabel ?? '未知说话人', sound_kind: value.soundKind };
-      }) };
+    const ids = new Set<string>(utterances.map((row: PhoneV3Utterance): string => row.utteranceId));
+    if (ids.size !== utterances.length || utterances.some((row: PhoneV3Utterance): boolean => row.status !== 'active')) {
+      throw new Error('选择包含重复或失效片段，请重新核对');
+    }
+    const selections = utterances.map((value: PhoneV3Utterance): PhoneV3AnnotationSentence => {
+      return { utterance_id: value.utteranceId, revision: value.revision, text: value.text,
+        speaker_label: value.speakerLabel ?? '未知说话人', sound_kind: value.soundKind,
+        session_id: value.sessionId, start_ms: value.startMs, end_ms: value.endMs };
+    });
     await this.repository.beginTransaction();
     try {
-      await this.enqueueAnnotationItems('segment.classify', payload);
+      const projections = await this.repository.projectionRows('utterance');
+      const current = new Map<string, PhoneV3ProjectionRow>();
+      for (let projection of projections) { if (ids.has(projection.resourceId)) { current.set(projection.resourceId, projection); } }
+      for (let reviewed of utterances) {
+        const projection = current.get(reviewed.utteranceId);
+        if (projection === undefined || projection.revision !== reviewed.revision ||
+          (JSON.parse(projection.payloadJson) as AnnotationTargetPayload).status !== 'active') {
+          throw new Error('片段已变化或不存在，请重新打开核对后保存');
+        }
+      }
+      if (personChanged) {
+        const people = await this.repository.cachedPeople();
+        const person = people.find((value: DeviceV3PersonChoice): boolean => value.person_id === personId);
+        if (personId.length > 0 && person === undefined) { throw new Error('请重新选择人物'); }
+        const label = person === undefined ? name.trim() : person.display_name;
+        if (label.length === 0 || label.length > 100) { throw new Error('人物姓名应为 1 至 100 字'); }
+        const choice: DeviceV3PersonChoice = person ?? { person_id: newOperationId(), display_name: label, local: true };
+        const payload: PhoneV3LocalAnnotation = { selections: selections, person_name: label };
+        if (choice.local) { payload.new_person_id = choice.person_id; payload.display_name = label; }
+        else { payload.person_id = choice.person_id; }
+        await this.repository.cachePeople([choice]);
+        await this.enqueueAnnotationItems('speaker.assign', payload);
+      }
+      if (soundKind.length > 0) {
+        await this.enqueueAnnotationItems('segment.classify', { selections: selections,
+          person_name: phoneV3SoundKindLabel(soundKind), sound_kind: soundKind });
+      }
       await this.repository.commit();
     } catch (error) {
       await this.repository.rollback();

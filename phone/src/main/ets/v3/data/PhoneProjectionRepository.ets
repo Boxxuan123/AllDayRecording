@@ -173,12 +173,13 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
 
   async annotationOperations(): Promise<Array<PhonePendingOperation>> {
     const result = await this.store.querySql(
-      "SELECT operation_id, payload_json, kind, applied_revision FROM outbox WHERE kind IN ('speaker.assign', 'segment.classify') ORDER BY created_at, rowid");
+      "SELECT operation_id, payload_json, kind, applied_revision, last_error FROM outbox WHERE kind IN ('speaker.assign', 'segment.classify') ORDER BY created_at, rowid");
     const operations: Array<PhonePendingOperation> = [];
     try {
       while (result.goToNextRow()) {
         operations.push({ operation_id: result.getString(0), kind: result.getString(2),
           base_revision: null, payload: JSON.parse(result.getString(1)) as Object, attempt_count: 0,
+          last_error: result.getString(4),
           applied_revision: result.isColumnNull(3) ? undefined : result.getLong(3),
           projected_resource_ids: await this.projectedResourceIds(result.getString(0)) });
       }

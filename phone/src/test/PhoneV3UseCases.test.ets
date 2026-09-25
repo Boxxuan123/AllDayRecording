@@ -104,13 +104,30 @@ class FakePhoneV3Repository implements PhoneV3ProjectionRepositoryPort {
     this.conflicts = this.conflicts.filter((value): boolean => value.operationId !== id);
   }
 
-  async beginTransaction(): Promise<void> {}
-  async commit(): Promise<void> {}
-  async rollback(): Promise<void> {}
+  transactions: number = 0;
+  commits: number = 0;
+  rollbacks: number = 0;
+  failKind: string = '';
+  private beforeOperations: Array<DeviceV3ClientOperation> = [];
+  private beforePeople: Array<DeviceV3PersonChoice> = [];
+  async beginTransaction(): Promise<void> {
+    this.transactions++;
+    this.beforeOperations = this.operations.slice();
+    this.beforePeople = this.people.slice();
+  }
+  async commit(): Promise<void> { this.commits++; }
+  async rollback(): Promise<void> {
+    this.rollbacks++;
+    this.operations = this.beforeOperations;
+    this.people = this.beforePeople;
+  }
   async applyChange(_change: DeviceV3Change): Promise<void> {}
   async acknowledgeReceipt(_receipt: DeviceV3OperationReceipt): Promise<void> {}
   async clearRebuildableRows(): Promise<void> {}
-  async enqueue(operation: DeviceV3ClientOperation): Promise<void> { this.operations.push(operation); }
+  async enqueue(operation: DeviceV3ClientOperation): Promise<void> {
+    if (operation.kind === this.failKind) { throw new Error('database write failed'); }
+    this.operations.push(operation);
+  }
   async pendingOperations(_limit: number = 500): Promise<Array<PhonePendingOperation>> { this.pendingReads += 1; return []; }
   async currentCursor(): Promise<string> { return this.cursor; }
   async setCursor(cursor: string, _serverTime: string): Promise<void> { this.cursor = cursor; }
@@ -309,12 +326,35 @@ export default function phoneV3UseCasesTest() {
       expect(repository.cursor).assertEqual('cursor-1');
     });
 
+    it('combinedAnnotationCommitsBothDimensionsAndRollsBackFailure', 0, async () => {
+      const repository = new FakePhoneV3Repository();
+      const remote = new FakePhoneV3Remote();
+      const useCases = new PhoneV3UseCases(repository, new FakePhoneV3LocalAudio([]), remote);
+      const row = new PhoneV3Utterance('u', 's', null, null, null, null, '', '', '{}',
+        0, 1000, '', '', 'text', 'text', 1, 'active', '{}');
+      repository.utteranceRows = [new PhoneV3ProjectionRow(row.utteranceId, row.revision, '{"status":"active"}', 1)];
+      await useCases.queueAnnotation([row], '', '张卫平', true, 'unintelligible');
+      expect(repository.operations.length).assertEqual(2);
+      expect(repository.transactions).assertEqual(1);
+      expect(repository.commits).assertEqual(1);
+      expect(remote.connectCount).assertEqual(0);
+      repository.failKind = 'segment.classify';
+      let failed = false;
+      try { await useCases.queueAnnotation([row], '', '另一个人', true, 'media_speech'); }
+      catch (error) { failed = true; }
+      expect(failed).assertTrue();
+      expect(repository.operations.length).assertEqual(2);
+      expect(repository.people.length).assertEqual(1);
+      expect(repository.rollbacks).assertEqual(1);
+    });
+
     it('savesAnnotationsAndNewPeopleWithoutConnectingAndRestoresPendingOverlay', 0, async () => {
       const repository = new FakePhoneV3Repository();
       const remote = new FakePhoneV3Remote();
       const useCases = new PhoneV3UseCases(repository, new FakePhoneV3LocalAudio([]), remote);
       const row = new PhoneV3Utterance('u', 's', 'track', 'Original', 'track', 'Original',
         'unknown', 'unknown', '{}', 0, 1000, '', '', 'text', 'text', 7, 'active', '{}');
+      repository.utteranceRows = [new PhoneV3ProjectionRow(row.utteranceId, row.revision, '{"status":"active"}', 1)];
       await useCases.queueSpeakerAnnotation([row], '', 'Local person');
       const restarted = new PhoneV3UseCases(repository, new FakePhoneV3LocalAudio([]), remote);
       const people = await restarted.localPeople();
@@ -342,6 +382,7 @@ export default function phoneV3UseCasesTest() {
         'unknown', 'unknown', '{}', 0, 1000, '', '', 'text', 'text', 7, 'active', '{}');
       const session = new PhoneV3SessionCard('s', 's', '', '', '', 0, '', '', '', 0, 1, 0,
         [], 0, 0, '', '', '', 0, [row]);
+      repository.utteranceRows = [new PhoneV3ProjectionRow(row.utteranceId, row.revision, '{"status":"active"}', 1)];
       await useCases.queueSoundClassification([row], 'non_speech');
       expect(repository.operations[0].kind).assertEqual('segment.classify');
       applyLocalAnnotations([session], await repository.annotationOperations());

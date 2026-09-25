@@ -1,3 +1,4 @@
+import { phoneV3AnnotationLabel, phoneV3AnnotationState } from '../domain/PhoneV3AnnotationState';
 import { phoneV3SoundKindLabel } from '../domain/PhoneV3SoundKind';
 import { formatRecordingDuration } from 'common';
 import {
@@ -260,8 +261,7 @@ export struct PhoneV3SessionDetailPage {
         .width('100%')
         .fontSize(15)
         .fontColor($r('app.color.text_primary'))
-      Text(`${phoneV3SoundKindLabel(utterance.soundKind)}${utterance.annotationPending ? ' · 待同步' : ''} · ${utterance.speakerLabel === null ? '未指定说话人' : utterance.speakerLabel} · ` +
-        `${this.identityLabel(utterance.identity)}${utterance.status === 'corrected' ? ' · 已校正' : ''}`)
+      Text(phoneV3AnnotationLabel(utterance))
         .width('100%')
         .fontSize(12)
         .fontColor($r('app.color.text_secondary'))
@@ -269,7 +269,7 @@ export struct PhoneV3SessionDetailPage {
         Button('试听这句', { type: ButtonType.Capsule })
           .enabled(!this.viewModel.busy && !this.viewModel.device.playbackBusy)
           .onClick((): void => this.viewModel.playUtterance(utterance))
-        Button('标注片段', { type: ButtonType.Capsule })
+        Button(phoneV3AnnotationState(utterance).review ? '需复核' : phoneV3AnnotationState(utterance).done ? '查看／修改标注' : '标注片段', { type: ButtonType.Capsule })
           .onClick((): void => { this.annotationId = this.annotationId === utterance.utteranceId ? '' : utterance.utteranceId; })
       }
       if (this.annotationId === utterance.utteranceId) {

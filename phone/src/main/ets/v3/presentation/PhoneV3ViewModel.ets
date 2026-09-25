@@ -57,6 +57,7 @@ export class PhoneV3ViewModel {
   private useCases: PhoneV3UseCases | undefined = undefined;
   private reviewAudioPlayer: PhoneV3ReviewAudioPlayer | undefined = undefined;
   private audioLoading: boolean = false;
+  private annotationAudioPlaying: boolean = false;
   private audioRequestGeneration: number = 0;
   reviewPlaybackRange: string = '';
   reviewPlaybackPrototype: string = '';
@@ -276,35 +277,38 @@ export class PhoneV3ViewModel {
 
   assignUtterances(utterances: Array<PhoneV3Utterance>, personId: string, name: string,
     onSaved: () => void): void {
-    const useCases = this.useCases;
-    if (useCases === undefined || this.annotationSaving || utterances.length === 0) { return; }
-    this.annotationSaving = true;
-    this.stateChangeListener();
-    useCases.queueSpeakerAnnotation(utterances, personId, name).then(async (): Promise<void> => {
-      await this.refreshSnapshot();
-      if (!this.busy) {
-        this.clearError(`已在手机保存 ${utterances.length} 句标注，等待同步；冲突会进入审核`);
-      }
-      onSaved();
-    }).catch((error: Object): void => this.fail(error)).finally((): void => {
-      this.annotationSaving = false;
-      this.stateChangeListener();
-    });
+    this.saveAnnotation(utterances, personId, name, true, '', (_refreshed: boolean): void => onSaved());
   }
 
   classifyUtterances(utterances: Array<PhoneV3Utterance>, soundKind: string, onSaved: () => void): void {
+    this.saveAnnotation(utterances, '', '', false, soundKind, (_refreshed: boolean): void => onSaved());
+  }
+
+  saveAnnotation(utterances: Array<PhoneV3Utterance>, personId: string, name: string,
+    personChanged: boolean, soundKind: string, onSaved: (refreshed: boolean) => void): void {
     const useCases = this.useCases;
-    if (useCases === undefined || this.annotationSaving) { return; }
+    if (useCases === undefined || this.annotationSaving || utterances.length === 0) { return; }
+    const targets = utterances.slice();
     this.annotationSaving = true;
     this.stateChangeListener();
-    useCases.queueSoundClassification(utterances, soundKind).then(async (): Promise<void> => {
-      await this.refreshSnapshot();
-      if (!this.busy) { this.clearError('声音类型已保存在手机，等待同步；冲突会进入审核'); }
-      onSaved();
-    }).catch((error: Object): void => this.fail(error)).finally((): void => {
-      this.annotationSaving = false;
-      this.stateChangeListener();
-    });
+    useCases.queueAnnotation(targets, personId, name, personChanged, soundKind).then(async (): Promise<void> => {
+      try {
+        await this.refreshSnapshot();
+        this.clearError('已在手机保存，待同步到电脑');
+        onSaved(true);
+      } catch (error) {
+        this.fail(new Error('已在手机保存，但读取结果失败；请重试读取，不必重复标注'));
+        onSaved(false);
+      }
+    }).catch((error: Object): void => this.fail(new Error(`数据库保存失败：${error instanceof Error ? error.message : JSON.stringify(error)}`)))
+      .finally((): void => {
+        this.annotationSaving = false;
+        this.stateChangeListener();
+      });
+  }
+
+  reloadAnnotationResult(onLoaded: () => void): void {
+    this.refreshSnapshot().then(onLoaded).catch((error: Object): void => this.fail(error));
   }
 
   loadAnnotationConflict(payload: PhoneV3LocalAnnotation, onLoaded: (rows: Array<PhoneV3Utterance>) => void): void {
@@ -323,6 +327,11 @@ export class PhoneV3ViewModel {
       this.annotationSaving = false;
       this.stateChangeListener();
     });
+  }
+
+  annotationPlaybackState(): string {
+    return this.audioLoading ? '正在加载' : this.annotationAudioPlaying || this.device.isPlaying ? '正在播放' :
+      this.device.playbackBusy ? '正在加载' : '';
   }
 
   playUtterance(utterance: PhoneV3Utterance, withContext: boolean = false): void {
@@ -361,8 +370,19 @@ export class PhoneV3ViewModel {
         throw new Error('电脑未返回片段音频');
       }
       await player.play(response.audio, (): void => {
+        if (generation !== this.audioRequestGeneration) { return; }
         this.audioLoading = false;
+        this.annotationAudioPlaying = true;
         this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SUCCESS, undefined, undefined, '正在播放所选片段'));
+      }, (): void => {
+        if (generation !== this.audioRequestGeneration) { return; }
+        this.annotationAudioPlaying = false;
+        this.stateChangeListener();
+      }, (message: string): void => {
+        if (generation !== this.audioRequestGeneration) { return; }
+        this.annotationAudioPlaying = false;
+        this.audioLoading = false;
+        this.fail(new Error(message));
       });
     }).catch((error: Object): void => {
       if (generation === this.audioRequestGeneration) { this.audioLoading = false; this.fail(error); }
@@ -493,6 +513,7 @@ export class PhoneV3ViewModel {
   }
 
   stopPlayback(): void {
+    this.annotationAudioPlaying = false;
     this.playedReviewSampleKeys = [];
     this.reviewPlaybackRange = '';
     this.reviewPlaybackPrototype = '';

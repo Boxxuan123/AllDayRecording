@@ -1,4 +1,5 @@
 import { phoneV3SoundKind } from './PhoneV3SoundKind';
+import { annotationFacts, PhoneV3AnnotationFacts, AnnotationRow } from './PhoneV3AnnotationState';
 import { phoneV3PersonFact, phoneV3PersonUncertain } from './PhoneV3PersonFact';
 export class PhoneV3ProjectionRow {
   resourceId: string;
@@ -87,7 +88,8 @@ export class PhoneV3SyncStatus {
   }
 }
 
-export class PhoneV3Utterance {
+export class PhoneV3Utterance implements AnnotationRow {
+  annotationFacts: PhoneV3AnnotationFacts = new PhoneV3AnnotationFacts();
   soundKind: string = 'speech';
   annotationPending: boolean = false;
   annotationPersonId: string = '';
@@ -134,6 +136,7 @@ export class PhoneV3Utterance {
     this.revision = revision;
     this.status = status;
     this.evidenceJson = evidenceJson;
+    this.annotationFacts = annotationFacts(evidenceJson);
     this.soundKind = phoneV3SoundKind(evidenceJson);
     this.annotationPersonId = phoneV3PersonFact(evidenceJson);
     if (phoneV3PersonUncertain(evidenceJson)) {

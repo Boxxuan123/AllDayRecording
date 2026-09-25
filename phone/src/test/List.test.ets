@@ -1,4 +1,6 @@
 import annotationIndexTest from './PhoneV3AnnotationIndex.test';
+import annotationStateTest from './PhoneV3AnnotationState.test';
+import annotationEditorTest from './PhoneV3AnnotationEditor.test';
 import computerUploadQueueTest from './ComputerUploadQueue.test';
 import phoneV3RecordingStoreTest from './PhoneV3RecordingStore.test';
 import computerTransferProtocolTest from './ComputerTransferProtocol.test';
@@ -13,6 +15,8 @@ import phoneV3ReviewModelsTest from './PhoneV3ReviewModels.test';
 
 export default function testsuite() {
   annotationIndexTest();
+  annotationStateTest();
+  annotationEditorTest();
   computerUploadQueueTest();
   phoneV3RecordingStoreTest();
   computerTransferProtocolTest();

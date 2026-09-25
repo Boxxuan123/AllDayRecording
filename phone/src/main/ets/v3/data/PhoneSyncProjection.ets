@@ -18,6 +18,7 @@ const RESOURCE_TYPES: Array<string> = [
 
 export interface PhonePendingOperation extends DeviceV3ClientOperation {
   attempt_count: number;
+  last_error?: string;
   applied_revision?: number;
   projected_resource_ids?: Array<string>;
 }

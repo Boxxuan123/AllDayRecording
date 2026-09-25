@@ -1,3 +1,4 @@
+import { phoneV3AnnotationState } from '../domain/PhoneV3AnnotationState';
 import { phoneV3SoundKindLabel } from '../domain/PhoneV3SoundKind';
 import { PhoneV3SessionCard, PhoneV3Utterance } from '../domain/PhoneV3Models';
 import { PhoneV3SpeakerAnnotationPanel } from './PhoneV3SpeakerAnnotationPanel';
@@ -6,6 +7,9 @@ import { PHONE_V3_UI_STATE_STORAGE_KEY, PhoneV3UiState } from './PhoneV3UiState'
 import { PHONE_V3_BACKUP_ACTION_CONTENT_END_OFFSET } from './PhoneV3NativeUi';
 
 class PhoneV3SpeakerSummary {
+  done: number = 0;
+  review: number = 0;
+  pendingSync: number = 0;
   key: string;
   label: string;
   utteranceCount: number;
@@ -56,6 +60,10 @@ export struct PhoneV3PeoplePage {
           utterance.speakerLabel === null ? '未指定说话人' : utterance.speakerLabel;
         const current = values.get(key) ?? new PhoneV3SpeakerSummary(key, label);
         current.utteranceCount += 1;
+        const annotation = phoneV3AnnotationState(utterance);
+        if (annotation.done) { current.done++; }
+        if (annotation.review) { current.review++; }
+        if (annotation.sync && annotation.sync !== '已同步') { current.pendingSync++; }
         if (current.sessionIds.indexOf(session.id) < 0) {
           current.sessionIds.push(session.id);
         }
@@ -129,7 +137,7 @@ export struct PhoneV3PeoplePage {
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
-        Text(`${summary.sessionIds.length} 段录音 · ${summary.utteranceCount} 条发言`)
+        Text(`待标注 ${summary.utteranceCount - summary.done} · 已标注 ${summary.done} · 需复核 ${summary.review} · 待同步 ${summary.pendingSync}`)
           .fontSize(12)
           .fontColor($r('app.color.text_secondary'))
       }
@@ -183,6 +191,10 @@ export struct PhoneV3PeoplePage {
           .borderRadius(16)
         }
 
+        if (this.annotationUtterances.length > 0) {
+          Button('查看上次标注范围').buttonStyle(ButtonStyleMode.TEXTUAL)
+            .onClick((): void => { this.annotationVisible = true; })
+        }
         Button(this.advancedVisible ? '收起高级整理' : '高级整理：按说话人浏览全部片段')
           .onClick((): void => { this.advancedVisible = !this.advancedVisible; })
         if (this.advancedVisible) {
@@ -206,7 +218,7 @@ export struct PhoneV3PeoplePage {
           }, (summary: PhoneV3SpeakerSummary): string => summary.key)
         }
 
-        Text('点击说话人进入片段标注；每页显示 20 句，可搜索并跨页选择。')
+        Text('点击说话人逐条标注；已标注发言仍可查看和修改，批量操作可单独进入。')
           .width('100%')
           .fontSize(12)
           .fontColor($r('app.color.text_secondary'))
@@ -218,7 +230,7 @@ export struct PhoneV3PeoplePage {
       .alignItems(HorizontalAlign.Start)
     }
     .bindSheet(this.annotationVisible, this.annotationSheet(), {
-      height: SheetSize.LARGE,
+      height: SheetSize.LARGE, keyboardAvoidMode: SheetKeyboardAvoidMode.RESIZE_ONLY,
       showClose: false,
       onDisappear: (): void => { this.annotationVisible = false; this.viewModel.stopPlayback(); }
     })

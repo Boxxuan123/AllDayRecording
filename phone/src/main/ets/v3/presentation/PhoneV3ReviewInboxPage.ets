@@ -1,3 +1,4 @@
+import { phoneV3AnnotationState } from '../domain/PhoneV3AnnotationState';
 import { PhoneV3AnnotationConflictPanel } from './PhoneV3AnnotationConflictPanel';
 import { PhoneV3Conflict, PhoneV3ReviewItem, PhoneV3SessionCard, PhoneV3Utterance } from '../domain/PhoneV3Models';
 import {
@@ -383,6 +384,8 @@ export struct PhoneV3ReviewInboxPage {
       }
 
       if (this.reviewUtterances(item).length > 0) {
+        Text(`原句标注：已标注 ${this.reviewUtterances(item).filter((row: PhoneV3Utterance): boolean => phoneV3AnnotationState(row).done).length} / ${this.reviewUtterances(item).length} · 声纹审核需单独处理`)
+          .fontSize(12).fontColor($r('app.color.text_secondary'))
         Button(this.annotationReviewId === item.reviewId ? '收起原句' : '试听原句并关联人物')
           .width('100%')
           .onClick((): void => {

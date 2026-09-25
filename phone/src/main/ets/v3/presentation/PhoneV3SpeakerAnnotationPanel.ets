@@ -1,298 +1,370 @@
-import { phoneV3SoundKindLabel } from '../domain/PhoneV3SoundKind';
-import { PhoneV3AnnotationIndex } from '../domain/PhoneV3AnnotationIndex';
+import { PhoneV3AnnotationConflictPanel } from './PhoneV3AnnotationConflictPanel';
+import { PhoneV3LocalAnnotation } from '../domain/PhoneV3LocalAnnotation';
+import { PHONE_V3_SOUND_KINDS, phoneV3SoundKindLabel } from '../domain/PhoneV3SoundKind';
+import { PhoneV3AnnotationEditor } from '../domain/PhoneV3AnnotationEditor';
+import { phoneV3AnnotationState, phoneV3AnnotationLabel, phoneV3AnnotationKey } from '../domain/PhoneV3AnnotationState';
 import { DeviceV3PersonChoice, DeviceV3AnnotationStatus } from '../../computer/ComputerTransferProtocol';
 import { phoneV3SampleStatus } from '../domain/PhoneV3SampleStatus';
-import { PhoneV3SessionCard, PhoneV3Utterance } from '../domain/PhoneV3Models';
+import { PhoneV3Utterance, PhoneV3Conflict } from '../domain/PhoneV3Models';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
-import { phoneV3AbsoluteTime, phoneV3TimelineTime } from './PhoneV3UiFormat';
+import { phoneV3AbsoluteTime } from './PhoneV3UiFormat';
 
 @Component
 export struct PhoneV3SpeakerAnnotationPanel {
   viewModel: PhoneV3ViewModel = new PhoneV3ViewModel();
   @Prop fullScreen: boolean = false;
-  onClose: () => void = (): void => {};
-  @State private editorVisible: boolean = false;
-  @State private pageIndex: number = 0;
-  @State private searchText: string = '';
-  private listScroller: Scroller = new Scroller();
-  @Prop @Watch('onSourceChanged') utterances: Array<PhoneV3Utterance> = [];
+  @Prop utterances: Array<PhoneV3Utterance> = [];
   @Prop @Watch('onStateChanged') stateRevision: number = 0;
-  @State private selectedIds: Array<string> = [];
+  onClose: () => void = (): void => {};
+  @State private editor: PhoneV3AnnotationEditor = new PhoneV3AnnotationEditor();
+  @State private visible: boolean = false;
+  @State private busy: boolean = false;
+  @State private playback: string = '';
+  @State private error: string = '';
+  @State private feedback: string = '';
+  @State private reloadNeeded: boolean = false;
   @State private people: Array<DeviceV3PersonChoice> = [];
-  @State private personIndex: number = 0;
+  @State private picker: boolean = false;
+  @State private personQuery: string = '';
+  @State private searchDraft: string = '';
   @State private personId: string = '';
+  @State private personLabel: string = '';
+  @State private personChanged: boolean = false;
+  @State private creating: boolean = false;
   @State private name: string = '';
-  @State private saved: boolean = false;
-  @State private pageRows: Array<PhoneV3Utterance> = [];
-  @State private totalCount: number = 0;
-  @State private selectedCount: number = 0;
-  @State private matchCount: number = 0;
-  @State private pages: number = 1;
-  @State private operationBusy: boolean = false;
-  @State private playbackBusy: boolean = false;
-  @State private refreshing: boolean = false;
-  @State private errorText: string = '';
+  @State private soundExpanded: boolean = false;
+  @State private soundKind: string = '';
+  @State private expanded: boolean = false;
+  @State private withContext: boolean = false;
+  @State private details: boolean = false;
+  @State private showSelected: boolean = false;
   @State private sampleStatuses: Array<DeviceV3AnnotationStatus> = [];
-  @State private actionIndex: number = 0;
-  private actionKinds: Array<string> = ['', 'non_speech', 'unintelligible', 'background_speech', 'speech', 'overlapping_speech', 'remote_speech', 'media_speech', 'live_speech'];
-  private actionOptions: Array<SelectOption> = [{ value: '关联人物' }, { value: '非人声／噪声' },
-    { value: '人声听不清' }, { value: '背景人声／电视声（来源未定）' }, { value: '恢复正常发言' },
-    { value: '内容清楚但多人重叠' }, { value: '电话／会议中的实际互动者' }, { value: '确定是媒体播放' }, { value: '确认是现场实际对话' }];
-  @State private personLabel: string = '创建新人物';
-  @State private personOptions: Array<SelectOption> = [{ value: '创建新人物' }];
-  private index: PhoneV3AnnotationIndex = new PhoneV3AnnotationIndex();
-  private filteredRows: Array<PhoneV3Utterance> = [];
-  private localAudioSessions: Set<string> = new Set<string>();
+  private lastSavedIds: Array<string> = [];
+  private opened: boolean = false;
+  private contentScroller: Scroller = new Scroller();
+  private conflictSource: Array<PhoneV3Conflict> | undefined = undefined;
+  private conflictsById: Map<string, Array<PhoneV3Conflict>> = new Map<string, Array<PhoneV3Conflict>>();
+  @State private conflictDetails: boolean = false;
 
+  aboutToAppear(): void { if (this.fullScreen) { this.open(); } }
+  aboutToDisappear(): void { this.viewModel.stopPlayback(); }
 
-  aboutToAppear(): void {
-    this.selectedIds = this.utterances.length === 1 ? [this.utterances[0].utteranceId] : [];
-    this.onSourceChanged();
-    if (this.fullScreen) { this.loadEditor(); }
-  }
-
-  aboutToDisappear(): void {
-    this.viewModel.stopPlayback();
-  }
-
-  private onSourceChanged(): void {
-    this.index.setTargets(this.utterances);
+  private open(): void {
+    this.editor = new PhoneV3AnnotationEditor();
+    this.editor.open(this.utterances, this.viewModel.snapshot.sessions);
+    this.opened = true;
+    this.feedback = ''; this.reloadNeeded = false; this.searchDraft = '';
+    this.resetForm();
+    this.visible = true;
+    this.viewModel.loadPeople((values: Array<DeviceV3PersonChoice>): void => { this.people = values; });
     this.onStateChanged();
   }
-
   private onStateChanged(): void {
-    if (this.index.update(this.viewModel.snapshot.sessions)) {
-      this.localAudioSessions = new Set<string>(this.viewModel.snapshot.sessions.filter(
-        (session: PhoneV3SessionCard): boolean => session.localPaths.length > 0 && session.localGroupKey.length > 0)
-        .map((session: PhoneV3SessionCard): string => session.sessionId));
-      this.totalCount = this.index.rows.length;
-      this.updateSelectionCount();
-      this.filterRows();
+    if (this.opened) { this.editor.update(this.viewModel.snapshot.sessions); }
+    if (this.conflictSource !== this.viewModel.snapshot.conflicts) {
+      this.conflictSource = this.viewModel.snapshot.conflicts;
+      this.conflictsById.clear();
+      for (let conflict of this.conflictSource) {
+        if (conflict.kind !== 'speaker.assign' && conflict.kind !== 'segment.classify') { continue; }
+        try {
+          const payload = JSON.parse(conflict.payloadJson) as PhoneV3LocalAnnotation;
+          for (let selection of payload.selections ?? []) {
+            this.conflictsById.set(selection.utterance_id, (this.conflictsById.get(selection.utterance_id) ?? []).concat([conflict]));
+          }
+        } catch (error) { continue; }
+      }
     }
-    this.operationBusy = this.viewModel.annotationSaving;
-    this.playbackBusy = this.viewModel.device.playbackBusy;
-    this.refreshing = this.viewModel.annotationRefreshing;
-    this.errorText = this.viewModel.error;
+    this.busy = this.viewModel.annotationSaving;
+    this.error = this.viewModel.error;
+    this.playback = this.viewModel.annotationPlaybackState();
   }
-
-  private selected(): Array<PhoneV3Utterance> {
-    const ids = new Set<string>(this.selectedIds);
-    return this.index.rows.filter((value: PhoneV3Utterance): boolean => ids.has(value.utteranceId));
+  private resetForm(): void {
+    const row = this.editor.current;
+    this.personId = row?.annotationPersonId ?? '';
+    this.personLabel = this.personId ? row?.speakerLabel ?? '已选人物' : '';
+    this.name = ''; this.personChanged = false; this.creating = false;
+    this.soundKind = ''; this.soundExpanded = false; this.picker = false;
+    this.personQuery = ''; this.expanded = false; this.conflictDetails = false;
   }
-
+  private dirty(): boolean { return this.personChanged || this.soundKind.length > 0 || this.name.length > 0; }
+  private navigate(action: () => void): void {
+    if (this.busy || this.reloadNeeded) { return; }
+    if (this.dirty()) {
+      AlertDialog.show({ title: '放弃未保存的修改？', message: '这次输入尚未保存。',
+        primaryButton: { value: '继续编辑', action: (): void => {} },
+        secondaryButton: { value: '放弃修改', action: (): void => { this.viewModel.stopPlayback(); action(); this.resetForm(); this.contentScroller.scrollTo({ xOffset: 0, yOffset: 0 }); } } });
+    } else { this.viewModel.stopPlayback(); action(); this.resetForm(); this.contentScroller.scrollTo({ xOffset: 0, yOffset: 0 }); }
+  }
+  private close(): void {
+    if (this.reloadNeeded && !this.busy) {
+      this.viewModel.stopPlayback(); this.visible = false; this.opened = false; this.onClose(); return;
+    }
+    this.navigate((): void => { this.visible = false; this.opened = false; this.onClose(); });
+  }
+  private focus(row: PhoneV3Utterance): void {
+    this.navigate((): void => { this.editor.focus(row); });
+  }
+  private focused(): Array<PhoneV3Utterance> {
+    const current = this.editor.current;
+    return current ? [this.editor.rows.find((row: PhoneV3Utterance): boolean => row.utteranceId === current.utteranceId) ?? current] : [];
+  }
+  private disabledReason(): string {
+    if (this.reloadNeeded) { return '已保存，请先重试读取结果'; }
+    if (this.editor.changed) { return '片段已变化，请点击重新核对'; }
+    const count = this.editor.batch ? this.editor.selectedCount : this.editor.current ? 1 : 0;
+    if (count === 0) { return '请选择要标注的片段'; }
+    if (this.editor.targets().some((row: PhoneV3Utterance): boolean => row.status !== 'active')) { return '片段来源已失效，请重新选择'; }
+    if (count > 2000) { return '每次最多保存 2000 条，请减少选择'; }
+    if (this.personChanged && !this.creating && !this.personId) { return '请选择人物'; }
+    if (this.creating && this.name.trim().length === 0) { return '请输入新人物姓名'; }
+    if (!this.personChanged && this.soundKind.length === 0) { return '请选择人物或修改声音类型'; }
+    return '';
+  }
+  private save(): void {
+    if (this.busy || this.disabledReason()) { return; }
+    const targets = this.editor.targets().slice();
+    const ids = targets.map((row: PhoneV3Utterance): string => row.utteranceId);
+    const label = [this.personChanged ? `人物已确认：${this.creating ? this.name.trim() : this.personLabel}` : '',
+      this.soundKind ? `已标记：${phoneV3SoundKindLabel(this.soundKind)}` : ''].filter((value: string): boolean => value.length > 0).join(' · ');
+    this.viewModel.saveAnnotation(targets, this.creating ? '' : this.personId, this.name,
+      this.personChanged, this.soundKind, (refreshed: boolean): void => {
+        this.lastSavedIds = ids;
+        this.feedback = `${label} · 已在手机保存，待同步到电脑`;
+        this.reloadNeeded = !refreshed;
+        if (refreshed) { this.afterRead(); }
+      });
+  }
+  private afterRead(): void {
+    this.editor.update(this.viewModel.snapshot.sessions);
+    this.editor.saved(this.lastSavedIds);
+    this.reloadNeeded = false;
+    this.resetForm();
+    this.contentScroller.scrollTo({ xOffset: 0, yOffset: 0 });
+    this.viewModel.loadPeople((values: Array<DeviceV3PersonChoice>): void => { this.people = values; });
+  }
+  private viewSaved(): void {
+    this.navigate((): void => {
+      this.editor.switchMode(true);
+      this.editor.focus(this.editor.rows.find((row: PhoneV3Utterance): boolean => row.utteranceId === this.lastSavedIds[0]));
+    });
+  }
   private querySamples(retry: boolean = false): void {
-    const ids = this.pageRows.map((row: PhoneV3Utterance): string => row.utteranceId);
-    if (ids.length === 0) { return; }
-    this.viewModel.loadSampleStatus(ids, retry, (items: Array<DeviceV3AnnotationStatus>): void => {
-      this.sampleStatuses = items;
-    });
+    const rows = this.editor.batch ? this.editor.pageRows : this.focused();
+    this.viewModel.loadSampleStatus(rows.map((row: PhoneV3Utterance): string => row.utteranceId), retry,
+      (items: Array<DeviceV3AnnotationStatus>): void => { this.sampleStatuses = items; });
   }
-
-  private sampleStatus(row: PhoneV3Utterance): string {
-    if (row.annotationPending) { return '人工事实：本地待同步；样本状态待服务器确认'; }
-    for (let conflict of this.viewModel.snapshot.conflicts) {
-      if (conflict.payloadJson.includes(row.utteranceId)) { return '人工事实：同步冲突或失败，请到审核页处理'; }
-    }
-    const status = this.sampleStatuses.find((value: DeviceV3AnnotationStatus): boolean =>
-      value.utterance_id === row.utteranceId && value.revision === row.revision);
-    return status === undefined ? '样本状态尚未查询；保存不等于已采纳或已用于匹配' : phoneV3SampleStatus(status);
+  private listPages(): number { return this.showSelected ? this.editor.selectionPages : this.editor.pages; }
+  private changeListPage(delta: number): void {
+    if (this.showSelected) { this.editor.selectionPage = Math.max(0, Math.min(this.editor.selectionPages - 1, this.editor.selectionPage + delta)); }
+    else { this.editor.page = Math.max(0, Math.min(this.editor.pages - 1, this.editor.page + delta)); }
+    this.editor.filter();
   }
-
-  private updateSelectionCount(): void {
-    this.selectedCount = this.selected().length;
-  }
-
-  private selectAll(): void {
-    this.saved = false;
-    this.selectedIds = this.index.rows.map((value: PhoneV3Utterance): string => value.utteranceId);
-    this.updateSelectionCount();
-  }
-
-  private clearSelection(): void {
-    this.selectedIds = [];
-    this.selectedCount = 0;
-  }
-
-  private choose(id: string, checked: boolean): void {
-    this.saved = false;
-    this.selectedIds = this.selectedIds.filter((value: string): boolean => value !== id);
-    if (checked) {
-      this.selectedIds = this.selectedIds.concat([id]);
-    }
-    this.updateSelectionCount();
-  }
-
-  private loadEditor(): void {
-    this.viewModel.loadPeople((people: Array<DeviceV3PersonChoice>): void => {
-      this.people = people;
-      const selectedIndex = people.findIndex((person: DeviceV3PersonChoice): boolean => person.person_id === this.personId);
-      this.personIndex = selectedIndex + 1;
-      const options: Array<SelectOption> = [{ value: '创建新人物' }];
-      this.personOptions = options.concat(people.map((person: DeviceV3PersonChoice): SelectOption => {
-        return { value: person.display_name };
-      }));
-    });
-  }
-
-  private closeEditor(): void {
-    this.viewModel.stopPlayback();
-    this.editorVisible = false;
-    this.onClose();
-  }
-
-  private filterRows(): void {
-    const query = this.searchText.trim().toLowerCase();
-    this.filteredRows = query.length === 0 ? this.index.rows : this.index.rows.filter(
-      (value: PhoneV3Utterance): boolean => value.text.toLowerCase().includes(query) ||
-        phoneV3AbsoluteTime(value.startAt).includes(query));
-    this.matchCount = this.filteredRows.length;
-    this.pages = Math.max(1, Math.ceil(this.matchCount / 20));
-    this.pageIndex = Math.min(this.pageIndex, this.pages - 1);
-    this.updatePage();
-  }
-
-  private updatePage(): void {
-    this.pageRows = this.filteredRows.slice(this.pageIndex * 20, (this.pageIndex + 1) * 20);
-  }
-
-  private changePage(delta: number): void {
-    this.pageIndex = Math.max(0, Math.min(this.pageIndex + delta, this.pages - 1));
-    this.updatePage();
-    this.listScroller.scrollTo({ xOffset: 0, yOffset: 0 });
+  private hasAudio(row: PhoneV3Utterance): boolean {
+    return this.viewModel.snapshot.sessions.some((session): boolean => session.sessionId === row.sessionId && session.localPaths.length > 0);
   }
 
   @Builder
-  private editor() {
+  private secondary(label: string, action: () => void) {
+    Button(label).buttonStyle(ButtonStyleMode.TEXTUAL).fontSize(14).enabled(!this.busy && !this.reloadNeeded).onClick(action)
+  }
+  @Builder
+  private fragment(row: PhoneV3Utterance) {
+    Column({ space: 10 }) {
+      Text(`${phoneV3AbsoluteTime(row.startAt)} · ${((row.endMs - row.startMs) / 1000).toFixed(1)} 秒`)
+        .fontSize(13).fontColor($r('app.color.text_secondary')).width('100%')
+      Text(phoneV3AnnotationLabel(row)).fontSize(14).width('100%')
+      if (phoneV3AnnotationState(row).review) {
+        Text(phoneV3AnnotationState(row).reason).fontSize(13).fontColor($r('app.color.brand_warning'))
+        this.secondary('核对冲突／过期原因', (): void => { this.conflictDetails = !this.conflictDetails; })
+        if (this.conflictDetails) {
+          ForEach(this.conflictsById.get(row.utteranceId) ?? [], (conflict: PhoneV3Conflict) => {
+            PhoneV3AnnotationConflictPanel({ viewModel: this.viewModel, conflict: conflict, stateRevision: this.stateRevision })
+          }, (conflict: PhoneV3Conflict): string => conflict.operationId)
+          if (!this.conflictsById.has(row.utteranceId)) {
+            Text('请重新试听并核对当前来源，再保存修改；来源已失效的片段需返回会话选择新片段。').fontSize(13)
+          }
+        }
+      }
+      Text(row.text).fontSize(18).maxLines(this.expanded ? 1000 : 4).textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%')
+      this.secondary(this.expanded ? '收起正文' : '展开全文', (): void => { this.expanded = !this.expanded; })
+      Row({ space: 8 }) {
+        if (this.playback.length > 0) {
+          this.secondary(`${this.playback} · 停止`, (): void => this.viewModel.stopPlayback())
+        } else {
+          this.secondary('播放片段', (): void => this.viewModel.playUtterance(row, this.withContext))
+        }
+        Checkbox().select(this.withContext).onChange((value: boolean): void => { this.withContext = value; })
+        Text('包含前后文').fontSize(12)
+      }
+      if (phoneV3AnnotationState(row).sync && phoneV3AnnotationState(row).sync !== '已同步') {
+        Text('连接电脑后，可从首页的同步入口同步；标注已保存在手机。').fontSize(12)
+      }
+      if (!this.hasAudio(row)) { Text('手机没有这段音频，试听需连接电脑；仍可保存标注。').fontSize(12).width('100%') }
+    }.padding(14).width('100%').backgroundColor($r('app.color.surface_secondary')).borderRadius(14)
+  }
+  @Builder
+  private form() {
+    Column({ space: 8 }) {
+      Text('这是谁说的？').fontSize(17).fontWeight(FontWeight.Medium).width('100%')
+      if (this.personLabel) { Text(`当前人物：${this.personLabel}`).fontSize(14).width('100%') }
+      if (!this.personId && this.editor.current?.speakerLabel && !this.editor.batch) {
+        Text(`系统建议：${this.editor.current?.speakerLabel}（尚未人工确认）`).fontSize(12).width('100%')
+      }
+      Row() {
+        this.secondary('选择人物', (): void => {
+          this.picker = !this.picker;
+          if (this.creating) { this.creating = false; this.name = ''; this.personChanged = false; }
+        })
+        this.secondary('新建人物', (): void => { this.creating = true; this.picker = false; this.personChanged = true; })
+      }
+      if (this.picker) {
+        TextInput({ text: this.personQuery, placeholder: '搜索已缓存人物' }).enabled(!this.busy)
+          .onChange((value: string): void => { this.personQuery = value; })
+        ForEach(this.people.filter((person: DeviceV3PersonChoice): boolean =>
+          person.display_name.toLowerCase().includes(this.personQuery.toLowerCase())).slice(0, 30), (person: DeviceV3PersonChoice) => {
+          this.secondary(person.display_name, (): void => {
+            this.personId = person.person_id; this.personLabel = person.display_name;
+            this.personChanged = true; this.creating = false; this.picker = false;
+          })
+        }, (person: DeviceV3PersonChoice): string => person.person_id)
+        Text('显示最多 30 个匹配人物，可继续输入缩小范围。').fontSize(12)
+      }
+      if (this.creating) {
+        TextInput({ text: this.name, placeholder: '新人物姓名' }).maxLength(100).enabled(!this.busy)
+          .onChange((value: string): void => { this.name = value; })
+      }
+      this.secondary(`声音类型：${phoneV3SoundKindLabel(this.soundKind || this.editor.current?.soundKind || 'speech')}${!this.soundKind && !this.editor.current?.annotationFacts.sound ? '（未确认）' : ''} ›`,
+        (): void => { this.soundExpanded = !this.soundExpanded; })
+      if (this.soundExpanded) {
+        ForEach(PHONE_V3_SOUND_KINDS, (kind: string) => {
+          this.secondary(phoneV3SoundKindLabel(kind), (): void => { this.soundKind = kind; this.soundExpanded = false; })
+        }, (kind: string): string => kind)
+        Text('声音类型与人物分别保存；标注不会自动采纳声纹或改变授权。').fontSize(12)
+      }
+    }.width('100%').alignItems(HorizontalAlign.Start).padding(12)
+  }
+  @Builder
+  private list() {
+    ForEach(this.showSelected ? this.editor.selectedPageRows : this.editor.pageRows, (row: PhoneV3Utterance) => {
+      Row({ space: 8 }) {
+        if (this.editor.batch) {
+          Checkbox({ name: row.utteranceId }).select(this.editor.isSelected(row.utteranceId)).enabled(!this.busy)
+            .onChange((value: boolean): void => this.editor.choose(row, value))
+        }
+        Column({ space: 5 }) {
+          Text(phoneV3AnnotationLabel(row)).fontSize(13).width('100%')
+          Text(row.text).fontSize(15).maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%')
+          Text(phoneV3AbsoluteTime(row.startAt)).fontSize(12).width('100%')
+        }.layoutWeight(1).onClick((): void => { if (!this.editor.batch) { this.focus(row); } })
+      }.padding(12).width('100%').backgroundColor($r('app.color.surface_secondary')).borderRadius(12)
+    }, (row: PhoneV3Utterance): string => phoneV3AnnotationKey(row, row.utteranceId, row.revision))
+  }
+  @Builder
+  private content() {
     Column({ space: 8 }) {
       Row() {
-        Text('片段标注').fontSize(20).fontWeight(FontWeight.Bold).layoutWeight(1)
-        Button('关闭').height(40).onClick((): void => this.closeEditor())
+        Text(`片段标注 · ${this.utterances.length === 1 ? '本句' : '本组'}`).fontSize(20).fontWeight(FontWeight.Bold).layoutWeight(1)
+        Button('关闭').buttonStyle(ButtonStyleMode.TEXTUAL).enabled(!this.busy).onClick((): void => this.close())
       }.width('100%')
-      Row({ space: 8 }) {
-        Button('全选整组').fontSize(12).layoutWeight(1).height(36)
-          .onClick((): void => this.selectAll())
-        Button('清空选择').fontSize(12).layoutWeight(1).height(36)
-          .onClick((): void => this.clearSelection())
-        Button('停止试听').fontSize(12).layoutWeight(1).height(36)
-          .onClick((): void => this.viewModel.stopPlayback())
+      Row() {
+        this.secondary(`待标注 ${this.editor.pending}`, (): void => this.navigate((): void => this.editor.switchMode(false)))
+        this.secondary(`已标注 ${this.editor.done}`, (): void => this.navigate((): void => this.editor.switchMode(true)))
       }.width('100%')
-      TextInput({ text: this.searchText, placeholder: '搜索发言内容或时间' }).height(38)
-        .onChange((value: string): void => {
-          this.searchText = value;
-          this.pageIndex = 0;
-          this.filterRows();
-          this.listScroller.scrollTo({ xOffset: 0, yOffset: 0 });
-        })
-      Row({ space: 8 }) {
-        Button('上一页').fontSize(12).height(34).enabled(this.pageIndex > 0)
-          .onClick((): void => this.changePage(-1))
-        Text(`${this.pageIndex + 1} / ${this.pages} 页 · ${this.matchCount} 句`)
-          .fontSize(12).layoutWeight(1).textAlign(TextAlign.Center)
-        Button('下一页').fontSize(12).height(34).enabled(this.pageIndex + 1 < this.pages)
-          .onClick((): void => this.changePage(1))
-      }.width('100%')
-      Scroll(this.listScroller) {
-        Column({ space: 8 }) {
-          if (this.pageRows.length === 0) {
-            Text('没有符合条件的发言').fontSize(14).padding(20)
+      Text(this.editor.doneMode ? '正在查看已标注' : '正在处理待标注').fontSize(12).fontColor($r('app.color.text_secondary'))
+      Scroll(this.contentScroller) {
+        Column({ space: 10 }) {
+          if (this.feedback) {
+            Text(this.feedback).fontSize(14).width('100%').fontColor($r('app.color.brand_success'))
+            if (this.reloadNeeded) {
+              Button('重试读取结果').buttonStyle(ButtonStyleMode.TEXTUAL)
+                .onClick((): void => this.viewModel.reloadAnnotationResult((): void => this.afterRead()))
+            } else { this.secondary('查看／修改刚才的标注', (): void => this.viewSaved()) }
           }
-          ForEach(this.pageRows, (utterance: PhoneV3Utterance) => {
-        Column({ space: 6 }) {
-          Row() {
-            Checkbox({ name: utterance.utteranceId })
-              .select(this.selectedIds.indexOf(utterance.utteranceId) >= 0)
-              .onChange((checked: boolean): void => this.choose(utterance.utteranceId, checked))
-            Text(`${phoneV3AbsoluteTime(utterance.startAt)} · ${phoneV3TimelineTime(utterance.startMs)}–${phoneV3TimelineTime(utterance.endMs)}`)
-              .fontSize(12).layoutWeight(1).fontColor($r('app.color.brand_primary'))
-          }.width('100%')
-          Text(utterance.text).fontSize(14).width('100%')
-          Text(this.sampleStatus(utterance)).fontSize(12).width('100%')
-          Text(`${phoneV3SoundKindLabel(utterance.soundKind)} · 当前归属：${utterance.speakerLabel ?? '未知说话人'}${utterance.annotationPending ? ' · 待同步' : ''}`)
-            .fontSize(12).width('100%').fontColor($r('app.color.text_secondary'))
-          Row({ space: 8 }) {
-            Button(this.localAudioSessions.has(utterance.sessionId) ? '本地试听' : '需连接电脑试听')
-              .fontSize(12).height(36).enabled(!this.operationBusy && !this.playbackBusy)
-              .onClick((): void => this.viewModel.playUtterance(utterance))
-            Button('含前后文').fontSize(12).height(36).enabled(!this.operationBusy && !this.playbackBusy)
-              .onClick((): void => this.viewModel.playUtterance(utterance, true))
-            Button('只选这句').fontSize(12).height(36).onClick((): void => {
-              this.saved = false;
-              this.selectedIds = [utterance.utteranceId];
-              this.updateSelectionCount();
-            })
+          if (this.editor.rows.length > 20) {
+            TextInput({ text: this.searchDraft, placeholder: '搜索本组正文或时间，回车应用' }).enabled(!this.busy)
+              .onChange((value: string): void => { this.searchDraft = value; })
+              .onSubmit((): void => this.navigate((): void => {
+                this.editor.query = this.searchDraft; this.editor.page = 0; this.editor.filter();
+                if (!this.editor.batch) { this.editor.focus(this.editor.doneMode ? undefined : this.editor.filtered[0]); }
+              }))
           }
-        }.padding(10).width('100%').backgroundColor($r('app.color.surface_secondary')).borderRadius(12)
-          }, (utterance: PhoneV3Utterance): string => `${utterance.utteranceId}:${utterance.revision}:${utterance.speakerLabel}:${utterance.annotationPending}:${utterance.soundKind}`)
-        }.width('100%')
-      }.width('100%').layoutWeight(1).align(Alignment.TopStart)
-      Column({ space: 6 }) {
-        Row({ space: 8 }) {
-          Button('查询本页样本状态').fontSize(12).onClick((): void => this.querySamples())
-          Button('重试本页样本处理').fontSize(12).onClick((): void => this.querySamples(true))
-        }
-        Row() {
-          Text(`已选 ${this.selectedCount} / ${this.totalCount} 句（跨页保留）`)
-            .fontSize(13).layoutWeight(1)
-          Button('刷新').fontSize(12).height(32).enabled(!this.operationBusy)
-            .onClick((): void => this.viewModel.refreshAnnotationData())
-        }.width('100%')
-      Select(this.actionOptions).selected(this.actionIndex).value(this.actionOptions[this.actionIndex].value)
-        .onSelect((index: number): void => { this.actionIndex = index; this.saved = false; })
-      if (this.actionIndex === 0) {
-      Select(this.personOptions).selected(this.personIndex)
-        .value(this.personLabel)
-        .onSelect((index: number): void => {
-          this.personIndex = index;
-          this.personLabel = index > 0 ? this.people[index - 1].display_name : '创建新人物';
-          this.personId = index > 0 ? this.people[index - 1].person_id : '';
-          this.saved = false;
-        })
-      if (this.personId.length === 0) {
-        TextInput({ text: this.name, placeholder: '新人物姓名' }).maxLength(100)
-          .onChange((value: string): void => { this.name = value; this.saved = false; })
-      }
-      }
-      if (this.actionIndex > 0) {
-        Text('人物归属独立保留。清楚的重叠或远程对话可提取内容，但不自动用作声纹。').fontSize(11)
-      }
-      if (this.refreshing) {
-        Text('正在后台更新发言，可继续选择人物和片段').fontSize(11)
-      }
-      Button(this.operationBusy ? '正在处理…' : `本地保存 ${this.selectedCount} 个片段标注`)
-        .width('100%').enabled(!this.operationBusy && this.selectedCount > 0 &&
-          (this.actionIndex > 0 || this.personId.length > 0 || this.name.trim().length > 0))
-        .onClick((): void => {
-          if (this.actionIndex === 0) {
-            this.viewModel.assignUtterances(this.selected(), this.personId, this.name,
-              (): void => { this.saved = true; this.clearSelection(); this.loadEditor(); });
-          } else {
-            this.viewModel.classifyUtterances(this.selected(), this.actionKinds[this.actionIndex],
-              (): void => { this.saved = true; this.clearSelection(); });
+          if (!this.editor.doneMode && this.editor.rows.length > 1) {
+            this.secondary(this.editor.batch ? '退出批量' : '批量', (): void => this.navigate((): void => {
+              this.editor.setBatch(!this.editor.batch); this.showSelected = false;
+            }))
           }
-        })
-        if (this.saved) {
-          Text('已在手机保存，等待同步；冲突请到审核处理').fontSize(12).fontColor($r('app.color.brand_success'))
-        }
-        if (this.errorText.length > 0) {
-          Text(this.errorText).fontSize(12).maxLines(3)
-            .fontColor($r('app.color.brand_warning')).width('100%')
-        }
-      }.width('100%').padding(8).backgroundColor($r('app.color.surface_primary')).borderRadius(12)
-    }.width('100%').height('100%').padding({ left: 16, right: 16, top: 12, bottom: 16 })
+          if (this.editor.batch) {
+            Row() {
+              this.secondary(`全选筛选结果 ${this.editor.filtered.length} 条（跨页）`, (): void => this.editor.selectFiltered())
+              this.secondary('清空', (): void => this.editor.setBatch(true))
+            }
+            Text(`已选 ${this.editor.selectedCount} 条 · 筛选外 ${this.editor.hidden} 条`).fontSize(13)
+            this.secondary(this.showSelected ? '返回筛选结果' : '查看全部选择', (): void => { this.showSelected = !this.showSelected; })
+          }
+          if (this.editor.filtered.length === 0 && (!this.editor.current || this.editor.batch)) {
+            Text(this.editor.query.trim() ? '没有符合搜索条件的片段' : this.editor.doneMode ? '本范围还没有已标注片段' : '本范围全部标注完成')
+              .fontSize(18).padding(20)
+            if (!this.editor.doneMode && !this.editor.query.trim()) {
+              this.secondary('查看已标注', (): void => this.navigate((): void => this.editor.switchMode(true)))
+              this.secondary('返回', (): void => this.close())
+            }
+          }
+          if (this.editor.batch || (this.editor.doneMode && !this.editor.current)) { this.list() }
+          if (!this.editor.batch) {
+            ForEach(this.focused(), (row: PhoneV3Utterance) => { this.fragment(row) }, (row: PhoneV3Utterance): string => phoneV3AnnotationKey(row, row.utteranceId, row.revision))
+            if (this.editor.current && this.editor.filtered.length > 1) {
+              Row() {
+                this.secondary('上一条', (): void => this.navigate((): void => this.editor.move(-1)))
+                this.secondary(this.editor.doneMode ? '下一条' : '暂时跳过', (): void => this.navigate((): void => this.editor.move(1)))
+              }
+            }
+            if (this.editor.doneMode && this.editor.current) {
+              this.secondary('返回已标注列表', (): void => this.navigate((): void => this.editor.focus(undefined)))
+            }
+          }
+          if ((this.editor.batch || (this.editor.doneMode && !this.editor.current)) && this.listPages() > 1) {
+            Row() {
+              this.secondary('上一页', (): void => { this.changeListPage(-1); })
+              Text(`${(this.showSelected ? this.editor.selectionPage : this.editor.page) + 1} / ${this.listPages()}`).fontSize(13)
+              this.secondary('下一页', (): void => { this.changeListPage(1); })
+            }
+          }
+          if (this.editor.current || (this.editor.batch && this.editor.pending > 0)) { this.form() }
+          if (this.editor.changed) {
+            this.secondary('重新核对最新片段', (): void => this.navigate((): void => {
+              const id = this.editor.current?.utteranceId;
+              this.editor.setBatch(false);
+              this.editor.focus(this.editor.rows.find((row: PhoneV3Utterance): boolean => row.utteranceId === id));
+            }))
+          }
+          this.secondary(this.details ? '收起样本处理详情' : '更多 › 样本处理详情', (): void => { this.details = !this.details; })
+          if (this.details) {
+            this.secondary('查询样本处理', (): void => this.querySamples())
+            this.secondary('重试样本处理', (): void => this.querySamples(true))
+            ForEach(this.sampleStatuses, (status: DeviceV3AnnotationStatus) => { Text(phoneV3SampleStatus(status)).fontSize(12) },
+              (status: DeviceV3AnnotationStatus): string => `${status.utterance_id}:${status.revision}`)
+            this.secondary('刷新标注数据', (): void => this.viewModel.refreshAnnotationData())
+          }
+          if (this.error) { Text(this.error).fontSize(13).fontColor($r('app.color.brand_warning')).width('100%') }
+        }.width('100%').alignItems(HorizontalAlign.Start).padding({ bottom: 12 })
+      }.layoutWeight(1).width('100%').align(Alignment.TopStart)
+      if (this.editor.current || (this.editor.batch && this.editor.pending > 0)) {
+        Column({ space: 4 }) {
+          if (this.disabledReason()) { Text(this.disabledReason()).fontSize(13).width('100%') }
+          Button(this.busy ? '正在保存…' : this.editor.batch ? `保存 ${this.editor.selectedCount} 条标注` : this.editor.doneMode ? '保存修改' : '保存并继续')
+            .width('100%').enabled(!this.busy && !this.disabledReason()).onClick((): void => this.save())
+        }.padding(8).width('100%').backgroundColor($r('app.color.surface_primary'))
+      }
+    }.padding({ left: 16, right: 16, top: 12, bottom: 16 }).width('100%').height('100%')
       .backgroundColor($r('app.color.page_background')).alignItems(HorizontalAlign.Start)
   }
-
   build() {
-    if (this.fullScreen) {
-      this.editor()
-    } else {
-      Button(`打开片段标注 · ${this.utterances.length} 句`).width('100%')
-        .onClick((): void => { this.editorVisible = true; this.loadEditor(); })
-        .bindSheet(this.editorVisible, this.editor(), {
-          height: SheetSize.LARGE,
-          showClose: false,
-          onDisappear: (): void => { this.editorVisible = false; this.viewModel.stopPlayback(); }
-        })
+    if (this.fullScreen) { this.content() }
+    else {
+      Button(`打开片段标注 · ${this.utterances.length} 句`).buttonStyle(ButtonStyleMode.TEXTUAL).width('100%')
+        .onClick((): void => this.open())
+        .bindSheet(this.visible, this.content(), { height: SheetSize.LARGE, keyboardAvoidMode: SheetKeyboardAvoidMode.RESIZE_ONLY, showClose: false,
+          onDisappear: (): void => { this.visible = false; this.opened = false; this.viewModel.stopPlayback(); } })
     }
   }
 }

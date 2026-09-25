@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { cpSync, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { arch, release, type } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 
@@ -48,6 +48,22 @@ async function runModuleTests(moduleName) {
   const status = await spawnWithTimeout(hvigor, args, moduleName);
   if (status !== 0) {
     fail(`${moduleName} host tests exited with status ${status}.`);
+  }
+  // Newer SDKs compile under the product name, while the bundled Hypium
+  // launcher still reads .test/default. Copy only freshly compiled build output.
+  const productOutput = join(projectRoot, moduleName, '.test', productName);
+  const launcherOutput = join(projectRoot, moduleName, '.test', 'default');
+  if (productOutput !== launcherOutput && existsSync(productOutput)) {
+    const abc = join(productOutput, 'intermediates', 'assets', 'default', 'ets', 'modules.abc');
+    requireFile(abc, `${moduleName} compiled test bytecode`);
+    const sourceLatest = latestSourceMtime(join(projectRoot, moduleName, 'src'));
+    if (statSync(abc).mtimeMs < sourceLatest) {
+      fail(`${moduleName} test bytecode predates source changes: ${abc}`);
+    }
+    cpSync(productOutput, launcherOutput, { recursive: true });
+  }
+  if (productOutput !== launcherOutput && await spawnWithTimeout(hvigor, args, moduleName) !== 0) {
+    fail(`${moduleName} Hypium execution failed.`);
   }
   requireFile(reportPath, `${moduleName} Hypium text report`);
 
@@ -186,4 +202,11 @@ function requireFile(path, label) {
 
 function fail(message) {
   throw new Error(message);
+}
+
+function latestSourceMtime(directory) {
+  return Math.max(0, ...readdirSync(directory, { withFileTypes: true }).map(entry => {
+    const file = join(directory, entry.name);
+    return entry.isDirectory() ? latestSourceMtime(file) : statSync(file).mtimeMs;
+  }));
 }
