@@ -85,6 +85,7 @@ class PhoneSyncBCD(TestCase):
         self.tap('bcd-pause')
         self.until(lambda: self.state()['durable'] == 0)
         cold = self.play()
+        assert self.evidence()['audio'][-1]['cache_hit'] is False, 'Cold measurement reused a PC cache'
         audio_before = len(self.evidence()['audio'])
         hits = [self.play(), self.play()]
         assert len(self.evidence()['audio']) == audio_before
@@ -165,7 +166,8 @@ class PhoneSyncBCD(TestCase):
         self.driver.swipe('DOWN', area=BY.id('phase2-scroll'))
         self.until(lambda: self.evidence()['upload_complete'], 180)
         self.results['T3'] = {'passed':True,'during_upload':during,'next_hit':next_play,
-            'save_visible_proxy_ms':(visible-started)*1000,'receipt_before_upload_complete':True}
+            'save_visible_proxy_ms':(visible-started)*1000,'local_save_times':self.state()['times'],
+            'receipt_before_upload_complete':True}
 
         Step('T4 离线三次保存和重启，500 后自动收敛，电脑新结果自动出现')
         self.fault('offline')
