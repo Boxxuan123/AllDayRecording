@@ -139,6 +139,10 @@ export class PhoneV3ViewModel {
   }
 
   stop(): void {
+    this.prefetchGeneration += 1;
+    this.prefetchIdentity = '';
+    this.reviewWindow = []; this.reviewPageActive = false; this.reviewAudioStates.clear();
+    this.useCases?.cancelReviewPrefetch?.();
     this.coordinator?.stop();
     this.retirement = this.coordinator?.whenIdle() ?? Promise.resolve();
     this.syncEnvironment?.stop();

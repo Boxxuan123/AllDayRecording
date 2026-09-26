@@ -181,4 +181,9 @@ const tick=()=>new Promise(r=>setImmediate(r));
  console.log('PASS annotation playback has real loading/playing state and ignores stopped request/completion');
 
 
+ const closing=new PhoneV3ViewModel();let releasePreparation,loads=0;
+ closing.useCases={cancelSynchronize(){},cancelReviewPrefetch(){},loadReviewAudio:async()=>{loads++;await new Promise(r=>releasePreparation=r)}};
+ closing.setReviewAudioWindow([0,1,2].map(n=>({key:String(n),fingerprint:String(n),item:{reviewId:'r'},candidate:{prototypeId:String(n),hasAudio:true,audioContentKey:'key'}})));
+ await tick();assert.equal(loads,1);closing.stop();releasePreparation();await tick();await tick();assert.equal(loads,1);
+ console.log('PASS stopping the lifecycle prevents subsequent prefetch requests');
 })().catch(e=>{console.error(e);process.exitCode=1});
