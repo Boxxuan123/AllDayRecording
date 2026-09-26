@@ -3,6 +3,8 @@ import { PhoneV3LocalAnnotation, applyAnnotationRows } from '../domain/PhoneV3Lo
 import { indexedUtterances, retainAnnotationIndex } from '../domain/PhoneV3AnnotationIndex';
 import { ComputerUploadProgress } from '../../computer/ComputerRecordingUploadService';
 import { common } from '@kit.AbilityKit';
+import { PhoneSyncCoordinator, PhoneSyncWorkResult, PhoneSyncCoordinatorPort } from '../application/PhoneSyncCoordinator';
+import { PhoneSyncEnvironment } from '../runtime/PhoneSyncEnvironment';
 import { DeviceV3ReviewActionRequest, DeviceV3PersonChoice, DeviceV3AnnotationStatus } from '../../computer/ComputerTransferProtocol';
 import { PhoneV3UseCases, PhoneV3ReviewSubmissionError, mergePhoneV3Sessions } from '../application/PhoneV3UseCases';
 import { phoneV3VoiceTasks, PhoneV3VoiceEvidenceIndex, phoneV3EvidencePending } from '../domain/PhoneV3VoiceReviewTask';
@@ -68,6 +70,17 @@ export class PhoneV3ViewModel {
   computerSyncActive: boolean = false;
   computerSyncMessage: string = '';
   computerSyncError: string = '';
+  backupActive: boolean = false;
+  backupMessage: string = '';
+  backupError: string = '';
+  syncPaused: boolean = false;
+  lightSuccessAt: number = 0;
+  backupSuccessAt: number = 0;
+  private coordinator: PhoneSyncCoordinator | undefined = undefined;
+  private syncEnvironment: PhoneSyncEnvironment | undefined = undefined;
+  private foreground: boolean = true;
+  private retirement: Promise<void> = Promise.resolve();
+  private syncProjectionDirty: boolean = false;
   private snapshotGeneration: number = 0;
   private lifecycleGeneration: number = 0;
   private lastProgressAt: number = 0;
@@ -117,6 +130,9 @@ export class PhoneV3ViewModel {
   }
 
   stop(): void {
+    this.coordinator?.stop();
+    this.retirement = this.coordinator?.whenIdle() ?? Promise.resolve();
+    this.syncEnvironment?.stop();
     this.lifecycleGeneration += 1;
     this.snapshotGeneration += 1;
     this.useCases?.cancelSynchronize();
@@ -184,13 +200,14 @@ export class PhoneV3ViewModel {
   }
 
   synchronize(): void {
+    if (this.coordinator !== undefined) { this.coordinator.trigger(true, true); return; }
     const useCases = this.useCases;
     if (useCases === undefined || this.busy || this.computerSyncActive || this.annotationRefreshing) {
       return;
     }
     const generation = this.lifecycleGeneration;
     this.computerSyncError = '';
-    this.computerSyncMessage = '正在备份录音并连接电脑…';
+    this.computerSyncMessage = '正在同步标注与电脑状态…';
     this.computerProgress = new ComputerUploadProgress('', 0, 0, 0, 0);
     this.completedSessionKeys = [];
     this.computerSyncActive = true;
@@ -203,8 +220,7 @@ export class PhoneV3ViewModel {
       if (generation !== this.lifecycleGeneration) { return; }
       await this.refreshSnapshot();
       if (generation !== this.lifecycleGeneration) { return; }
-      this.computerSyncMessage = `备份完成：新增 ${result.backup.uploadedFiles} 个文件，电脑已有 ${result.backup.skippedFiles} 个；` +
-        `状态同步 ${result.batches} 批；${result.summary()}`;
+      this.computerSyncMessage = `状态同步 ${result.batches} 批；${result.summary()}`;
     }).catch((error: Object): void => {
       if (generation === this.lifecycleGeneration) {
         this.computerSyncError = error instanceof Error ? error.message : '同步失败';
@@ -212,7 +228,95 @@ export class PhoneV3ViewModel {
     }).finally((): void => { this.computerSyncActive = false; this.stateChangeListener(); });
   }
 
-  cancelSynchronize(): void { this.useCases?.cancelSynchronize(); }
+  cancelSynchronize(): void {
+    this.coordinator?.pause(); this.useCases?.cancelSynchronize(); this.syncPaused = true;
+    this.syncEnvironment?.setPaused(true).catch((error: Object): void => { this.computerSyncError = '暂停设置未保存'; });
+  }
+
+  resumeSynchronize(): void {
+    this.syncPaused = false; this.coordinator?.resume();
+    this.syncEnvironment?.setPaused(false).catch((error: Object): void => { this.computerSyncError = '继续设置未保存'; });
+  }
+
+  setForeground(value: boolean): void {
+    this.foreground = value; this.coordinator?.setForeground(value);
+    if (!value) { this.stopPlayback(); }
+  }
+
+  async startForegroundSync(context: common.UIAbilityContext, preferencesName: string = 'phone_foreground_sync'): Promise<void> {
+    const generation = this.lifecycleGeneration;
+    this.syncEnvironment?.stop();
+    const environment = new PhoneSyncEnvironment(context, preferencesName);
+    this.syncEnvironment = environment;
+    this.syncPaused = await environment.paused();
+    if (generation !== this.lifecycleGeneration) { environment.stop(); return; }
+    this.startCoordinator();
+    environment.start((): void => this.coordinator?.trigger(true));
+  }
+
+  private startCoordinator(): void {
+    this.coordinator?.stop();
+    const generation = this.lifecycleGeneration;
+    const useCases = this.useCases;
+    if (useCases === undefined) { return; }
+    const port: PhoneSyncCoordinatorPort = {
+      light: async (): Promise<PhoneSyncWorkResult> => {
+        if (!this.snapshot.paired) { return new PhoneSyncWorkResult(false, 120000, false); }
+        const result = await useCases.synchronize((message: string): void => {
+          if (generation === this.lifecycleGeneration) { this.computerSyncMessage = message; }
+        }, false, 4);
+        if (generation !== this.lifecycleGeneration || !this.foreground) { return new PhoneSyncWorkResult(false, 0, false); }
+        const requiresReload = this.syncProjectionDirty || result.requiresReload;
+        this.syncProjectionDirty = this.syncProjectionDirty || result.changed;
+        if (this.syncProjectionDirty && !this.annotationSaving) {
+          const revision = this.snapshotGeneration;
+          if (result.changed && !requiresReload && result.utteranceIds.length > 0) {
+            const revision = ++this.snapshotGeneration;
+            const fresh = await useCases.refreshUtterances(this.snapshot,result.utteranceIds);
+            if (revision === this.snapshotGeneration && !this.annotationSaving) {
+              this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SNAPSHOT_READY,fresh));
+            }
+          } else { await this.refreshSnapshot(false); }
+          this.syncProjectionDirty = this.snapshotGeneration !== revision + 1 || this.annotationSaving;
+        }
+        this.computerSyncMessage = result.summary();
+        const processing = this.snapshot.sessions.some((session): boolean =>
+          ['queued', 'running', 'pending'].indexOf(session.processingStatus) >= 0);
+        return new PhoneSyncWorkResult(result.completion === 'budget_exhausted',
+          result.remainingOperations > 0 || processing || this.backupActive ? 15000 : 120000);
+      },
+      backup: async (): Promise<PhoneSyncWorkResult> => {
+        if (!this.snapshot.paired) { return new PhoneSyncWorkResult(false, 0, false); }
+        if (this.syncEnvironment === undefined || !await this.syncEnvironment.wifi()) {
+          this.backupMessage = '等待 Wi-Fi 后备份录音'; return new PhoneSyncWorkResult(false, 30000, false);
+        }
+        this.backupMessage = '正在备份录音…';
+        const result = await useCases.backupRecordings();
+        if (generation !== this.lifecycleGeneration) { return new PhoneSyncWorkResult(false, 0, false); }
+        this.backupMessage = result.more ? '本会话备份完成，仍有录音待备份' : '录音备份完成';
+        return new PhoneSyncWorkResult(result.more);
+      },
+      cancelLight: (): void => useCases.cancelSynchronize(),
+      changed: (): void => {
+        if (generation !== this.lifecycleGeneration) { return; }
+        const coordinator = this.coordinator;
+        if (coordinator === undefined) { return; }
+        this.computerSyncActive = coordinator.light.running;
+        this.backupActive = coordinator.backup.running;
+        this.computerSyncError = coordinator.light.error;
+        this.backupError = coordinator.backup.error;
+        this.syncPaused = coordinator.paused;
+        this.lightSuccessAt = coordinator.light.successAt;
+        this.backupSuccessAt = coordinator.backup.successAt;
+        this.stateChangeListener();
+      }
+    };
+    const coordinator = new PhoneSyncCoordinator(port);
+    this.coordinator = coordinator;
+    if (this.syncPaused) { coordinator.pause(); }
+    coordinator.setForeground(this.foreground);
+    coordinator.trigger(true);
+  }
 
   loadSampleStatus(ids: Array<string>, retry: boolean,
     onLoaded: (items: Array<DeviceV3AnnotationStatus>) => void): void {
@@ -235,6 +339,7 @@ export class PhoneV3ViewModel {
       this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SUCCESS,
         undefined, undefined, '校正已保存到 outbox，连接电脑后可同步'));
       onQueued();
+      this.coordinator?.trigger();
       return this.refreshSnapshot();
     }).catch((error: Object): void => this.fail(error));
   }
@@ -331,6 +436,7 @@ export class PhoneV3ViewModel {
   }
 
   refreshAnnotationData(): void {
+    if (this.coordinator !== undefined) { this.coordinator.trigger(false, true); return; }
     const useCases = this.useCases;
     if (useCases === undefined || this.busy || this.computerSyncActive || this.annotationRefreshTask !== undefined) {
       return;
@@ -397,6 +503,7 @@ export class PhoneV3ViewModel {
         if (lifecycle !== this.lifecycleGeneration) { return; }
         this.clearError('已在手机保存，待同步到电脑');
         onSaved(true);
+        this.coordinator?.trigger();
       } catch (error) {
         this.fail(new Error('已在手机保存，但读取结果失败；请重试读取，不必重复标注'));
         if (lifecycle === this.lifecycleGeneration) { onSaved(false); }
@@ -565,10 +672,16 @@ export class PhoneV3ViewModel {
     if (useCases === undefined || this.busy || this.computerSyncActive || this.annotationSaving) {
       return;
     }
+    if (this.coordinator !== undefined && !this.syncPaused) {
+      this.computerSyncError = '请先暂停自动同步，再重新获取电脑数据';
+      this.stateChangeListener();
+      return;
+    }
     this.lastRetryAction = PhoneV3RetryAction.REBUILD;
     this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.BUSY,
       undefined, undefined, '正在保留离线状态并重建电脑投影…'));
-    useCases.rebuild().then((result): Promise<void> => {
+    const idle = this.coordinator?.whenIdle() ?? Promise.resolve();
+    idle.then(() => useCases.rebuild()).then((result): Promise<void> => {
       this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SUCCESS, undefined, undefined,
         `投影重建完成：${result.batches} 批，游标 ${result.finalCursor}`));
       return this.refreshSnapshot();
@@ -723,7 +836,10 @@ export class PhoneV3ViewModel {
   }
 
   private async initialize(context: common.UIAbilityContext): Promise<void> {
+    const lifecycle = this.lifecycleGeneration;
     try {
+      await this.retirement;
+      if (lifecycle !== this.lifecycleGeneration) { return; }
       this.reviewAudioPlayer = new PhoneV3ReviewAudioPlayer(context);
       const local = new PhoneV3LocalAudioRepository(context.filesDir);
       this.localFacts = await local.list();
@@ -733,6 +849,7 @@ export class PhoneV3ViewModel {
       const repository = await PhoneProjectionRepository.open(context);
       this.useCases = new PhoneV3UseCases(repository, local, new PhoneV3DeviceRemote(context),
         new PhoneV3ReminderScheduler(context), new PhoneV3ComputerBackup(context, repository, (progress: ComputerUploadProgress): void => {
+          if (lifecycle !== this.lifecycleGeneration) { return; }
           const now = Date.now();
           if (!progress.sessionCompleted && now - this.lastProgressAt < 150) { return; }
           this.lastProgressAt = now;
@@ -740,10 +857,12 @@ export class PhoneV3ViewModel {
           if (progress.sessionCompleted) {
             this.completedSessionKeys = this.completedSessionKeys.concat([progress.sessionKey]);
           }
-          this.computerSyncMessage = `${progress.message} · 文件 ${progress.completedFiles}/${progress.totalFiles} · ${progress.percent()}%`;
+          this.backupMessage = `${progress.message} · 文件 ${progress.completedFiles}/${progress.totalFiles} · ${progress.percent()}%`;
           this.stateChangeListener();
         }));
       await this.refreshSnapshot();
+      if (lifecycle !== this.lifecycleGeneration) { return; }
+      await this.startForegroundSync(context);
       if (this.refreshQueued) {
         this.refreshQueued = false;
         this.refresh();
@@ -753,13 +872,13 @@ export class PhoneV3ViewModel {
     }
   }
 
-  private async refreshSnapshot(): Promise<void> {
+  private async refreshSnapshot(scanLocal: boolean = true): Promise<void> {
     const generation = ++this.snapshotGeneration;
     const useCases = this.useCases;
     if (useCases === undefined) {
       return;
     }
-    this.localFacts = await useCases.loadLocal();
+    if (scanLocal) { this.localFacts = await useCases.loadLocal(); }
     const snapshot = await useCases.loadCached(this.localFacts);
     if (generation !== this.snapshotGeneration || this.annotationSaving) { return; }
     indexedUtterances(snapshot.sessions);
@@ -812,6 +931,7 @@ export class PhoneV3ViewModel {
   }
 
   private onLocalAudioChanged(): void {
+    this.coordinator?.trigger(true);
     if (this.localRefreshTimer >= 0) {
       return;
     }

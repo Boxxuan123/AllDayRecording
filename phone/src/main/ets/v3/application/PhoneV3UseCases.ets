@@ -1,7 +1,7 @@
 import { syncRequestBatch } from '../data/PhoneSyncBatch';
 import { PhonePendingOperation } from '../data/PhoneSyncProjection';
 import { PHONE_V3_SOUND_KINDS, phoneV3SoundKindLabel } from '../domain/PhoneV3SoundKind';
-import { PhoneV3LocalAnnotation, PhoneV3AnnotationSentence, applyLocalAnnotations, applyAnnotationConflicts, annotationRows } from '../domain/PhoneV3LocalAnnotation';
+import { PhoneV3LocalAnnotation, PhoneV3AnnotationSentence, applyLocalAnnotations, applyAnnotationRows, applyAnnotationConflicts, annotationRows } from '../domain/PhoneV3LocalAnnotation';
 import {
   DeviceV3ClientOperation,
   DeviceV3PersonChoice,
@@ -78,6 +78,9 @@ interface UtteranceCorrectionPayload {
 const activeSyncRepositories: Set<PhoneV3ProjectionRepositoryPort> = new Set<PhoneV3ProjectionRepositoryPort>();
 
 export class PhoneV3SyncResult {
+  changed: boolean = false;
+  utteranceIds: Array<string> = [];
+  requiresReload: boolean = false;
   batches: number;
   submittedOperations: number;
   finalCursor: string;
@@ -110,6 +113,10 @@ export class PhoneV3UseCases {
   private syncActive: boolean = false;
   private syncCancelled: boolean = false;
   cancelSynchronize(): void { this.syncCancelled = true; }
+
+  async backupRecordings(): Promise<PhoneV3AudioBackupResult> {
+    return this.audioBackup === undefined ? new PhoneV3AudioBackupResult() : this.audioBackup.backup();
+  }
 
   private repository: PhoneV3ProjectionRepositoryPort;
   private localAudio: PhoneV3LocalAudioRepositoryPort;
@@ -168,6 +175,27 @@ export class PhoneV3UseCases {
       }
     }
     return false;
+  }
+
+  async refreshUtterances(snapshot: PhoneV3Snapshot, ids: Array<string>): Promise<PhoneV3Snapshot> {
+    const rows = await this.repository.projectionRows('utterance', ids);
+    const operations = await this.repository.annotationOperations(ids);
+    const status = await this.repository.v3Status();
+    const changed = new Set<string>(ids);
+    const sessions = snapshot.sessions.map((session: PhoneV3SessionCard): PhoneV3SessionCard => {
+      const fresh = sessionUtterances(rows, session.sessionId);
+      if (fresh.length === 0 && !session.utterances.some((row): boolean => changed.has(row.utteranceId))) { return session; }
+      const merged = session.utterances.filter((row): boolean => !changed.has(row.utteranceId)).concat(fresh);
+      merged.sort((a,b): number => a.startMs-b.startMs || a.utteranceId.localeCompare(b.utteranceId));
+      const index = new Map<string, PhoneV3Utterance>();
+      for (let row of fresh) { index.set(row.utteranceId,row); }
+      applyAnnotationRows(index, operations);
+      return new PhoneV3SessionCard(session.id,session.sessionId,session.sessionKey,session.localGroupKey,
+        session.capturedStart,session.startedAt,session.deviceName,session.state,session.statusCode,session.progress,
+        session.revision,session.updatedAt,session.localPaths,session.sizeBytes,session.durationMs,session.uploadStatus,
+        session.processingStatus,session.processingStage,session.processingProgress,merged);
+    });
+    return new PhoneV3Snapshot(sessions,snapshot.conflicts,status,snapshot.paired,snapshot.reminders,snapshot.reviewItems);
   }
 
   async queueUtteranceCorrection(utterance: PhoneV3Utterance,
@@ -334,16 +362,19 @@ export class PhoneV3UseCases {
   }
 
   async synchronize(onStatus: (message: string) => void = (): void => {},
-    pullOnly: boolean = false): Promise<PhoneV3SyncResult> {
+    pullOnly: boolean = false, maxBatches: number = 100): Promise<PhoneV3SyncResult> {
     if (this.syncActive || activeSyncRepositories.has(this.repository)) { throw new Error('同步正在进行'); }
     activeSyncRepositories.add(this.repository);
     this.syncActive = true;
     this.syncCancelled = false;
     let dispatched: Array<string> = [];
     try {
-      const backup = pullOnly || this.audioBackup === undefined ? new PhoneV3AudioBackupResult() :
-        await this.audioBackup.backup();
-      onStatus("录音备份已完成，正在连接电脑同步转写与处理状态…");
+      const backup = new PhoneV3AudioBackupResult();
+      let changed = false;
+      const utteranceIds = new Set<string>();
+      let requiresReload = false;
+      const pendingBefore = (await this.repository.v3Status()).pendingOperations;
+      onStatus('正在同步标注与电脑状态…');
       const session = await this.remote.connect();
       const status = await session.status();
       if (status.contract_version !== V3_CONTRACT_VERSION ||
@@ -356,7 +387,7 @@ export class PhoneV3UseCases {
       let submitted = 0;
       let stopped = '';
       const attempted: Array<string> = [];
-      while (!this.syncCancelled && batches < 100) {
+      while (!this.syncCancelled && batches < maxBatches) {
         const pending = pullOnly ? [] : await this.repository.pendingOperations(500, attempted);
         const candidates: Array<DeviceV3ClientOperation> = pending.filter((op): boolean =>
           attempted.indexOf(op.operation_id) < 0).map((op): DeviceV3ClientOperation => {
@@ -370,6 +401,12 @@ export class PhoneV3UseCases {
         dispatched = operations.map((operation): string => operation.operation_id);
         const response = await session.sync(request);
         await applySyncResponse(this.repository, response);
+        changed = changed || response.changes.length > 0 || response.receipts.length > 0;
+        for (let change of response.changes) {
+          if (change.resource_type === 'utterance') { utteranceIds.add(change.resource_id); }
+          else { requiresReload = true; }
+        }
+        if (response.receipts.some((receipt): boolean => receipt.status !== 'applied')) { requiresReload = true; }
         dispatched = [];
         for (let op of operations) { attempted.push(op.operation_id); }
         submitted += response.receipts.filter((receipt): boolean => receipt.status === 'applied' &&
@@ -381,20 +418,35 @@ export class PhoneV3UseCases {
         }
         cursor = response.next_cursor;
       }
+      if (!this.syncCancelled) {
       onStatus("正在获取最新审核结果…");
       const reviews = await session.reviews();
-      await this.repository.replaceReviewItems(reviews.items);
+      const oldReviews = await this.repository.projectionRows('review_item');
+      const oldPayloads = oldReviews.map((row): string => row.payloadJson).sort();
+      const newPayloads = reviews.items.map((row): string => JSON.stringify(row)).sort();
+      if (!this.syncCancelled && JSON.stringify(oldPayloads) !== JSON.stringify(newPayloads)) {
+        await this.repository.replaceReviewItems(reviews.items); changed = true; requiresReload = true;
+      }
       try {
         const people = await session.annotations({ action: 'people' });
-        await this.cacheRemotePeople(people.people ?? []);
+        if (!this.syncCancelled) { await this.cacheRemotePeople(people.people ?? []); }
       } catch (error) { /* Cached people remain usable while the computer is unavailable. */ }
+      }
       const result = new PhoneV3SyncResult(batches, submitted, cursor, backup);
       const statusAfter = await this.repository.v3Status();
+      // An empty pull can retire an already-applied overlay once its projection is visible.
+      // This local change must invalidate the UI even without a new server change/receipt.
+      if (pendingBefore !== statusAfter.pendingOperations) {
+        changed = true;
+        if (utteranceIds.size === 0) { requiresReload = true; }
+      }
+      result.changed = changed;
+      result.utteranceIds = Array.from(utteranceIds); result.requiresReload = requiresReload;
       const conflicts = await this.repository.conflictRows();
       result.remainingOperations = statusAfter.pendingOperations + conflicts.length;
       result.pullPending = hasMore;
       result.completion = this.syncCancelled ? 'cancelled' : stopped ||
-        (batches >= 100 ? 'budget_exhausted' : hasMore || result.remainingOperations > 0 ? 'waiting' : 'complete');
+        (batches >= maxBatches ? 'budget_exhausted' : hasMore || result.remainingOperations > 0 ? 'waiting' : 'complete');
       onStatus(result.summary());
       return result;
     } catch (error) {

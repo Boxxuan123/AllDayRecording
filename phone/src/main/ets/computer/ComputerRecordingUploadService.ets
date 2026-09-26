@@ -11,7 +11,8 @@ import {
   ComputerUploadMetadata,
   ComputerUploadRecord
 } from './ComputerTransferProtocol';
-import { ComputerTransferConfig } from './ComputerTransferConfigStore';
+import { ComputerTransferConfig, ComputerTransferConfigStore } from './ComputerTransferConfigStore';
+import { verifyConfiguration } from './ComputerReceiverConnection';
 import { ComputerTransferHttpClient, sha256Hex } from './ComputerTransferHttpClient';
 import {
   PreparedComputerSession,
@@ -83,12 +84,15 @@ class PreparedManifestPayload {
 
 export class ComputerRecordingUploadService {
   private client: ComputerTransferHttpClient;
+  private config: ComputerTransferConfig;
+  private store: ComputerTransferConfigStore;
 
-  constructor(context: common.UIAbilityContext, config: ComputerTransferConfig) {
+  constructor(context: common.UIAbilityContext, config: ComputerTransferConfig, store?: ComputerTransferConfigStore) {
     if (!config.isPaired()) {
       throw new Error('尚未完成电脑 Passkey 配对');
     }
-    this.client = new ComputerTransferHttpClient(context, config.baseUrl, config.caPath, config.deviceId);
+    this.client = new ComputerTransferHttpClient(context, config.baseUrl, config.caPath, config.deviceId, '', config.signingKeyAlias);
+    this.config = config; this.store = store ?? new ComputerTransferConfigStore(context);
   }
 
   async upload(recordings: Array<ReceivedRecordingFile>, onProgress: ComputerUploadProgressHandler,
@@ -111,6 +115,7 @@ export class ComputerRecordingUploadService {
     const concurrency = new ComputerUploadConcurrency();
 
     for (let sessionIndex = 0; sessionIndex < sessions.length; sessionIndex += 1) {
+      await verifyConfiguration(this.store, this.config);
       const session = sessions[sessionIndex];
       const activeFiles = new Map<number, string>();
       const report = (progress: ComputerUploadProgress): void => {
@@ -192,6 +197,7 @@ export class ComputerRecordingUploadService {
       sha256: digest,
       kind: 'recording'
     };
+    await verifyConfiguration(this.store, this.config);
     let remote = (await this.client.createUpload(metadata, onRetry)).upload;
     verifyRemoteUpload(remote, metadata);
     onOffset(remote.offset);
@@ -201,14 +207,14 @@ export class ComputerRecordingUploadService {
     let fd: number = -1;
     try {
       fd = (await fileIo.open(recording.path, fileIo.OpenMode.READ_ONLY)).fd;
-      let positioned = false;
       while (remote.offset < metadata.size) {
+        await verifyConfiguration(this.store, this.config);
         const sentOffset = remote.offset;
         const length = Math.min(chunkBytes, metadata.size - remote.offset);
         const buffer = new ArrayBuffer(length);
-        const read = positioned ? await fileIo.read(fd, buffer, { length: length }) :
-          await fileIo.read(fd, buffer, { offset: remote.offset, length: length });
-        positioned = true;
+        // Explicit-position reads need not advance the descriptor cursor. Every
+        // chunk must use the server-confirmed offset, including after resume.
+        const read = await fileIo.read(fd, buffer, { offset: remote.offset, length: length });
         if (read !== length) {
           throw new Error(`录音文件没有完整读取：${recording.fileName}`);
         }
@@ -242,6 +248,7 @@ export class ComputerRecordingUploadService {
       sha256: await sha256Hex(bytes),
       kind: kind
     };
+    await verifyConfiguration(this.store, this.config);
     let remote = (await this.client.createUpload(metadata)).upload;
     verifyRemoteUpload(remote, metadata);
     onOffset(remote.offset);
@@ -249,6 +256,7 @@ export class ComputerRecordingUploadService {
       return new ComputerFileUploadResult(remote, true);
     }
     while (remote.offset < metadata.size) {
+      await verifyConfiguration(this.store, this.config);
       const sentOffset = remote.offset;
       const end = Math.min(remote.offset + chunkBytes, metadata.size);
       const chunk = bytes.slice(remote.offset, end);

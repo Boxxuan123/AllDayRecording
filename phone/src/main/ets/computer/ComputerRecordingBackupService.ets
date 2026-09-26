@@ -1,6 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { ReceivedRecordingFile } from 'common';
-import { connectComputerReceiver } from './ComputerReceiverConnection';
+import { connectComputerReceiver, verifyConfiguration } from './ComputerReceiverConnection';
 import {
   ComputerRecordingUploadService,
   ComputerUploadProgressHandler,
@@ -80,9 +80,9 @@ export class ComputerRecordingBackupRuntime implements ComputerRecordingBackupRu
   private context: common.UIAbilityContext;
   private configStore: ComputerTransferConfigStore;
 
-  constructor(context: common.UIAbilityContext) {
+  constructor(context: common.UIAbilityContext, store?: ComputerTransferConfigStore) {
     this.context = context;
-    this.configStore = new ComputerTransferConfigStore(context);
+    this.configStore = store ?? new ComputerTransferConfigStore(context);
   }
 
   async connect(): Promise<ComputerTransferConfig> {
@@ -92,7 +92,11 @@ export class ComputerRecordingBackupRuntime implements ComputerRecordingBackupRu
   upload(config: ComputerTransferConfig, recordings: Array<ReceivedRecordingFile>,
     onProgress: ComputerUploadProgressHandler,
     onSessionCompleted?: (session: PreparedComputerSession) => Promise<void>): Promise<ComputerUploadResult> {
-    return new ComputerRecordingUploadService(this.context, config).upload(recordings, onProgress, onSessionCompleted);
+    return new ComputerRecordingUploadService(this.context, config, this.configStore).upload(recordings, onProgress,
+      async (session: PreparedComputerSession): Promise<void> => {
+        await verifyConfiguration(this.configStore, config);
+        if (onSessionCompleted !== undefined) { await onSessionCompleted(session); }
+      });
   }
 }
 

@@ -755,7 +755,7 @@ export default function phoneV3UseCasesTest() {
       expect(resolved.localPaths.length).assertEqual(1);
     });
 
-    it('backsUpAudioBeforePullingComputerProjection', 0, async () => {
+    it('syncsMetadataWithoutStartingBackupAndBacksUpIndependently', 0, async () => {
       const repository = new FakePhoneV3Repository();
       const remote = new FakePhoneV3Remote();
       const backup = new FakeAudioBackup();
@@ -764,10 +764,14 @@ export default function phoneV3UseCasesTest() {
 
       const result = await useCases.synchronize();
 
+      expect(backup.calls).assertEqual(0);
+      expect(remote.connectCount).assertEqual(1);
+      expect(result.backup.uploadedFiles).assertEqual(0);
+      const backedUp = await useCases.backupRecordings();
       expect(backup.calls).assertEqual(1);
       expect(remote.connectCount).assertEqual(1);
-      expect(result.backup.uploadedFiles).assertEqual(3);
-      expect(result.backup.skippedFiles).assertEqual(4);
+      expect(backedUp.uploadedFiles).assertEqual(3);
+      expect(backedUp.skippedFiles).assertEqual(4);
     });
   });
 }

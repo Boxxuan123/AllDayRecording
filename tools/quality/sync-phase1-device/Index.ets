@@ -78,6 +78,7 @@ struct Index {
   private nav: NavPathStack = new NavPathStack();
   private repository: PhoneProjectionRepository | undefined = undefined;
   private store: relationalStore.RdbStore | undefined = undefined;
+  private backup: SlowBackup | undefined = undefined;
   aboutToAppear(): void { this.initialize(); }
   private async initialize(): Promise<void> {
     try {
@@ -99,7 +100,8 @@ struct Index {
       const audio=`${context.cacheDir}/sync-phase1-tone.wav`;
       await writeSynthetic(ca,await context.resourceManager.getRawFileContent('sync-phase1-test-ca.pem'));
       await writeSynthetic(audio,decodeBase64Url(fixture.audio));
-      const useCases=new PhoneV3UseCases(repository,new Local(),new Offline(),undefined,new SlowBackup(ca));
+      this.backup = new SlowBackup(ca);
+      const useCases=new PhoneV3UseCases(repository,new Local(),new Offline(),undefined,this.backup);
       this.model=new PhoneV3ViewModel(useCases,undefined,new LocalBridge(audio,(message:string):void=>{this.playback=message;}));
       this.model.snapshot=await useCases.loadCached([]);
       this.model.snapshot.sessions[0].localPaths=[audio];
@@ -112,6 +114,12 @@ struct Index {
     if (!this.repository) { return; }
     const ops=await this.repository.annotationOperations();
     this.persisted=`持久化操作 ${ops.length}`;
+  }
+  private async startSyntheticBackup(): Promise<void> {
+    if (this.model.backupActive) { return; }
+    this.model.backupActive = true;
+    try { await this.backup?.backup(); }
+    finally { this.model.backupActive = false; }
   }
   private open(n: number): void {
     const editor=new PhoneV3AnnotationEditor();
@@ -141,9 +149,9 @@ struct Index {
       Column({space:16}) {
         Text(this.note).id('phase1-ready')
         Text(this.persisted).id('phase1-persisted')
-        Text(this.model.computerSyncActive ? '合成传输进行中' : '合成传输未运行').id('phase1-transfer')
+        Text(this.model.backupActive ? '合成传输进行中' : '合成传输未运行').id('phase1-transfer')
         Text(this.playback).id('phase1-playback')
-        Button('启动合成慢传输').id('phase1-transfer-start').enabled(this.ready).onClick(():void=>this.model.synchronize())
+        Button('启动合成慢传输').id('phase1-transfer-start').enabled(this.ready).onClick(():void=>{this.startSyntheticBackup();})
         Button('播放本地合成音频').id('phase1-play').enabled(this.ready).onClick(():void=>this.model.playUtterance(this.model.snapshot.sessions[0].utterances[0]))
         Button('打开合成片段一').id('phase1-open-one').enabled(this.ready).onClick(():void=>this.open(1))
         Button('打开合成片段二').id('phase1-open-two').enabled(this.ready).onClick(():void=>this.open(2))

@@ -38,8 +38,10 @@ export class PhoneV3ComputerBackup implements PhoneV3AudioBackupPort {
       return new PhoneV3AudioBackupResult();
     }
     const outcome = await createComputerRecordingBackupService(this.context, this.repository)
-      .backup(recordings, this.onProgress);
-    return backupResult(outcome.upload);
+      .backup(sessions[0].recordings, this.onProgress);
+    const result = backupResult(outcome.upload);
+    result.more = sessions.length > 1;
+    return result;
   }
 }
 

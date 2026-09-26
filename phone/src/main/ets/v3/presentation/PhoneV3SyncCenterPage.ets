@@ -175,12 +175,12 @@ export struct PhoneV3SyncCenterPage {
             .borderRadius(14)
             .backgroundColor($r('app.color.surface_progress'))
             Column({ space: 3 }) {
-              Text('备份到电脑')
+              Text('电脑同步与录音备份')
                 .fontSize(18)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.text_primary'))
               Text(this.viewModel.snapshot.paired ?
-                `${this.viewModel.snapshot.sync.pendingOperations} 项修改等待备份` :
+                `${this.viewModel.snapshot.sync.pendingOperations} 项修改等待同步` :
                 '连接电脑后可安全备份和同步转写')
                 .fontSize(13)
                 .fontColor($r('app.color.text_secondary'))
@@ -195,15 +195,29 @@ export struct PhoneV3SyncCenterPage {
 
           Text(this.viewModel.computerSyncError || this.viewModel.computerSyncMessage).id('computer-sync-status')
             .fontSize(13).width('100%')
-          Button(this.viewModel.computerSyncActive ? '正在备份…' : '立即备份更新', { type: ButtonType.Capsule })
+          Text(`标注与状态：${this.viewModel.computerSyncActive ? '同步中' : '等待更新'} · ${this.viewModel.snapshot.sync.pendingOperations} 项待同步`)
+            .id('light-sync-state').fontSize(13)
+          Text(this.viewModel.backupError || this.viewModel.backupMessage || '录音：等待备份')
+            .id('backup-sync-state').fontSize(13)
+          Text(`标注上次成功：${this.viewModel.lightSuccessAt > 0 ? new Date(this.viewModel.lightSuccessAt).toLocaleTimeString() : '暂无'}`)
+            .fontSize(12)
+          Text(`录音上次成功：${this.viewModel.backupSuccessAt > 0 ? new Date(this.viewModel.backupSuccessAt).toLocaleTimeString() : '暂无'}`)
+            .fontSize(12)
+          Button('立即同步与备份', { type: ButtonType.Capsule })
             .width('100%')
             .height(50)
-            .enabled(!this.viewModel.computerSyncActive && !this.viewModel.busy && this.viewModel.snapshot.paired)
+            .enabled(!this.viewModel.syncPaused && !this.viewModel.busy && this.viewModel.snapshot.paired)
             .buttonStyle(ButtonStyleMode.EMPHASIZED)
             .onClick((): void => this.viewModel.synchronize())
 
-          if (this.viewModel.computerSyncActive) {
-            Button('本批完成后停止同步').onClick((): void => this.viewModel.cancelSynchronize())
+          Button(this.viewModel.syncPaused ? '继续自动同步' : '暂停自动同步')
+            .id('sync-pause').onClick((): void => {
+              if (this.viewModel.syncPaused) { this.viewModel.resumeSynchronize(); }
+              else { this.viewModel.cancelSynchronize(); }
+            })
+          if (this.viewModel.syncPaused) {
+            Text(this.viewModel.backupActive ? '暂停中：当前录音会话完成后停止；不再派发新会话' :
+              this.viewModel.computerSyncActive ? '暂停中：等待在途请求收尾' : '已暂停，需手动继续').fontSize(12)
           }
 
           Button(this.viewModel.snapshot.paired ? '管理电脑连接' : '连接电脑',
@@ -245,7 +259,7 @@ export struct PhoneV3SyncCenterPage {
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.text_primary'))
           Row() {
-            Text('待备份修改')
+            Text('待同步修改')
               .fontSize(13)
               .fontColor($r('app.color.text_secondary'))
             Blank()
@@ -267,7 +281,7 @@ export struct PhoneV3SyncCenterPage {
           }
           .width('100%')
           Row() {
-            Text('上次备份')
+            Text('上次电脑响应')
               .fontSize(13)
               .fontColor($r('app.color.text_secondary'))
             Blank()
@@ -281,7 +295,7 @@ export struct PhoneV3SyncCenterPage {
           Button('重新获取电脑数据', { type: ButtonType.Capsule })
             .width('100%')
             .height(44)
-            .enabled(!this.viewModel.busy && this.viewModel.snapshot.paired)
+            .enabled(!this.viewModel.busy && this.viewModel.snapshot.paired && this.viewModel.syncPaused)
             .buttonStyle(ButtonStyleMode.TEXTUAL)
             .onClick((): void => this.viewModel.rebuild())
           if (this.viewModel.snapshot.conflicts.length > 0) {
@@ -292,7 +306,7 @@ export struct PhoneV3SyncCenterPage {
               .buttonStyle(ButtonStyleMode.NORMAL)
               .onClick((): void => this.onOpenConflicts())
           }
-          Text('只会重新获取电脑端数据，不会删除手机原始录音。')
+          Text('暂停自动同步后可重新获取电脑数据，保留手机原始录音。')
             .width('100%')
             .fontSize(12)
             .fontColor($r('app.color.text_secondary'))

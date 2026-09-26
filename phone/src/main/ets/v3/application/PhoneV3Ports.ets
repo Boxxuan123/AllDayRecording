@@ -49,6 +49,7 @@ export interface PhoneV3LocalAudioRepositoryPort {
 }
 
 export class PhoneV3AudioBackupResult {
+  more: boolean = false;
   sessions: number;
   uploadedFiles: number;
   skippedFiles: number;

@@ -1,0 +1,1 @@
+{"description":"隔离数据上的生产认证、分片备份及自动轻量同步","environment":[{"type":"device","label":"phone"}],"driver":{"type":"DeviceTest","py_file":["PhonePhase2Production.py"]}}

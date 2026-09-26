@@ -337,18 +337,18 @@ export struct PhoneV3AnnotationPage {
   }
 }
 
-@Component
-struct AnnotationSettingRow {
-  @Prop label: string = '';
-  @Prop value: string = '';
-  onSelect: () => void = (): void => {};
-  build() {
+interface AnnotationSettingOptions {
+  label: string;
+  value: string;
+  onSelect: () => void;
+}
+@Builder
+function AnnotationSettingRow(options: AnnotationSettingOptions) {
     Row({ space: 12 }) {
-      Text(this.label).fontSize(16).fontColor($r('app.color.text_primary'))
-      Text(this.value).fontSize(15).fontColor($r('app.color.text_secondary')).textAlign(TextAlign.End).layoutWeight(1)
+      Text(options.label).fontSize(16).fontColor($r('app.color.text_primary'))
+      Text(options.value).fontSize(15).fontColor($r('app.color.text_secondary')).textAlign(TextAlign.End).layoutWeight(1)
       SymbolGlyph($r('sys.symbol.chevron_right')).fontSize(14).fontColor([$r('app.color.text_secondary')])
-    }.id(`annotation-setting-${this.label}`).width('100%').constraintSize({ minHeight: 60 }).padding({ left: 16, right: 16, top: 12, bottom: 12 })
-      .backgroundColor($r('app.color.surface_primary')).onClick((): void => this.onSelect())
-      .accessibilityGroup(true).accessibilityText(`${this.label}，${this.value}`)
-  }
+    }.id(`annotation-setting-${options.label}`).width('100%').constraintSize({ minHeight: 60 }).padding({ left: 16, right: 16, top: 12, bottom: 12 })
+      .backgroundColor($r('app.color.surface_primary')).onClick((): void => options.onSelect())
+      .accessibilityGroup(true).accessibilityText(`${options.label}，${options.value}`)
 }

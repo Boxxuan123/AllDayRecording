@@ -1,0 +1,184 @@
+// Temporary isolated assembly. Never imported by the production entry.
+import { common } from '@kit.AbilityKit';
+import { relationalStore } from '@kit.ArkData';
+import { huks } from '@kit.UniversalKeystoreKit';
+import { util } from '@kit.ArkTS';
+import { fileIo } from '@kit.CoreFileKit';
+import { HdsNavigation } from '@kit.UIDesignKit';
+import { ReceivedRecordingFile, AudioPlaybackService, PCM_SAMPLE_RATE_HZ } from 'common';
+import { PhoneDeviceKeyClient } from '../computer/PhoneDeviceKeyClient';
+import { ComputerTransferConfig, ComputerTransferConfigStore } from '../computer/ComputerTransferConfigStore';
+import { ComputerRecordingBackupService, ComputerRecordingBackupRuntime } from '../computer/ComputerRecordingBackupService';
+import { ComputerUploadProgress } from '../computer/ComputerRecordingUploadService';
+import { PhoneV3DeviceRemote } from '../v3/data/PhoneV3DeviceRemote';
+import { PhoneProjectionRepository } from '../v3/data/PhoneProjectionRepository';
+import { PhoneV3UseCases } from '../v3/application/PhoneV3UseCases';
+import { PhoneV3AudioBackupPort, PhoneV3AudioBackupResult, PhoneV3LocalAudioRepositoryPort } from '../v3/application/PhoneV3Ports';
+import { PhoneV3LocalAudioFact } from '../v3/domain/PhoneV3Models';
+import { PhoneV3ViewModel } from '../v3/presentation/PhoneV3ViewModel';
+import { PhoneV3AnnotationEditor } from '../v3/domain/PhoneV3AnnotationEditor';
+import { PhoneV3AnnotationPage } from '../v3/presentation/PhoneV3AnnotationPage';
+
+const KEY: string = 'alldayrecording.phase2a.synthetic.20260926';
+const DB: string = 'sync-phase2a-isolated-20260926.db';
+interface Config { baseUrl: string; receiverId: string; deviceId: string; fingerprint: string; utteranceId: string; }
+class IsolatedConfig extends ComputerTransferConfigStore {
+  private config: ComputerTransferConfig;
+  constructor(context: common.UIAbilityContext, value: Config) {
+    super(context);
+    this.config = new ComputerTransferConfig(value.baseUrl, value.fingerprint, 'localhost',
+      context.cacheDir + '/sync-phase2a-ca.pem', value.receiverId, value.deviceId);
+    this.config.signingKeyAlias = KEY;
+  }
+  async load(): Promise<ComputerTransferConfig> { return this.config; }
+  async saveLastAddress(address: string): Promise<ComputerTransferConfig> { this.config.baseUrl = address; return this.config; }
+}
+class Local implements PhoneV3LocalAudioRepositoryPort { async list(): Promise<Array<PhoneV3LocalAudioFact>> { return []; } }
+class ProductionBackup implements PhoneV3AudioBackupPort {
+  private service: ComputerRecordingBackupService;
+  private recording: ReceivedRecordingFile;
+  private report: (progress: ComputerUploadProgress) => void;
+  constructor(context: common.UIAbilityContext, store: IsolatedConfig, repository: PhoneProjectionRepository,
+    recording: ReceivedRecordingFile, report: (progress: ComputerUploadProgress) => void) {
+    this.service = new ComputerRecordingBackupService(new ComputerRecordingBackupRuntime(context, store), repository);
+    this.recording = recording; this.report = report;
+  }
+  async backup(): Promise<PhoneV3AudioBackupResult> {
+    const result = await this.service.backup([this.recording], this.report);
+    return new PhoneV3AudioBackupResult(result.upload.sessions, result.upload.recordings, result.upload.skippedFiles);
+  }
+}
+class Route { editor: PhoneV3AnnotationEditor; constructor(editor: PhoneV3AnnotationEditor) { this.editor=editor; } }
+async function write(path: string, bytes: Uint8Array): Promise<void> {
+  const file = await fileIo.open(path, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+  try { await fileIo.write(file.fd, bytes.buffer); } finally { await fileIo.close(file); }
+}
+@Entry
+@Component
+struct Index {
+  @State private model: PhoneV3ViewModel = new PhoneV3ViewModel();
+  @State private revision: number = 0;
+  @State private note: string = '';
+  @State private migration: string = '';
+  @State private progress: string = '';
+  @State private playback: string = '';
+  @State private pending: number = -1;
+  @State private durable: string = '';
+  private nav: NavPathStack = new NavPathStack();
+  private uid: string = '';
+  private player: AudioPlaybackService | undefined = undefined;
+  private recordingPath: string = '';
+  private playbackPath: string = '';
+  aboutToAppear(): void { this.bootstrap(); }
+  aboutToDisappear(): void { this.model.stop(); this.player?.release(); }
+  private async bootstrap(): Promise<void> {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const publicKey = await new PhoneDeviceKeyClient(KEY).ensurePublicKey();
+      await write(context.cacheDir + '/sync-phase2a-public.txt', util.TextEncoder.create('utf-8').encodeInto(publicKey));
+      this.note = '隔离 HUKS 公钥已准备';
+    } catch (error) { this.note = String(error); }
+  }
+  private async prepare(): Promise<void> {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const value = JSON.parse(util.TextDecoder.create('utf-8').decodeToString(
+        await context.resourceManager.getRawFileContent('sync-phase2a-config.json'))) as Config;
+      await write(context.cacheDir + '/sync-phase2a-ca.pem', await context.resourceManager.getRawFileContent('sync-phase2a-ca.pem'));
+      this.uid = value.utteranceId;
+      const previous = await relationalStore.getRdbStore(context, {name:DB, securityLevel:relationalStore.SecurityLevel.S2});
+      await previous.close();
+      await relationalStore.deleteRdbStore(context, DB);
+      let repository = await PhoneProjectionRepository.open(context, DB);
+      const store = await relationalStore.getRdbStore(context, {name:DB, securityLevel:relationalStore.SecurityLevel.S2});
+      // Only this explicitly named synthetic DB is reconstructed as v10.
+      await store.executeSql('DROP TRIGGER IF EXISTS outbox_selection_insert');
+      await store.executeSql('DROP TRIGGER IF EXISTS outbox_selection_delete');
+      await store.executeSql('DROP TABLE IF EXISTS outbox_selections');
+      await store.executeSql("INSERT OR IGNORE INTO outbox(operation_id,kind,payload_json,created_at) VALUES('00000000000000000000999999','segment.classify','{\"selections\":[{\"utterance_id\":\"migration-target\",\"revision\":1}]}',0)");
+      store.version = 10;
+      repository = await PhoneProjectionRepository.open(context, DB);
+      const indexed = await store.querySql("SELECT COUNT(*) FROM outbox_selections WHERE resource_id='migration-target'");
+      indexed.goToFirstRow(); const count = indexed.getLong(0); indexed.close();
+      if (store.version !== 11 || count !== 1) { throw new Error('原生迁移校验失败'); }
+      await store.executeSql("DELETE FROM outbox WHERE operation_id='00000000000000000000999999'");
+      this.migration = '原生 RDB 10→11 通过';
+      this.recordingPath = context.cacheDir + '/sync-phase2a-recording.wav';
+      const bytes = new Uint8Array(8*1024*1024+44);
+      const header = new DataView(bytes.buffer);
+      bytes.set(util.TextEncoder.create('utf-8').encodeInto('RIFF'),0);
+      header.setUint32(4,bytes.length-8,true);bytes.set(util.TextEncoder.create('utf-8').encodeInto('WAVEfmt '),8);
+      header.setUint32(16,16,true);header.setUint16(20,1,true);header.setUint16(22,1,true);
+      header.setUint32(24,PCM_SAMPLE_RATE_HZ,true);header.setUint32(28,PCM_SAMPLE_RATE_HZ*2,true);
+      header.setUint16(32,2,true);header.setUint16(34,16,true);
+      bytes.set(util.TextEncoder.create('utf-8').encodeInto('data'),36);header.setUint32(40,bytes.length-44,true);
+      await write(this.recordingPath, bytes);
+      this.playbackPath = context.cacheDir + '/sync-phase2a-tone.wav';
+      const tone = bytes.slice(0,PCM_SAMPLE_RATE_HZ*4+44);
+      const toneHeader = new DataView(tone.buffer);
+      toneHeader.setUint32(4,tone.length-8,true); toneHeader.setUint32(40,tone.length-44,true);
+      await write(this.playbackPath,tone);
+      const name = 'segment_000001_first_000000000000.wav';
+      const recording: ReceivedRecordingFile = {fileName:name,path:this.recordingPath,size:bytes.length,
+        durationMs:8388608/2/PCM_SAMPLE_RATE_HZ*1000,requestId:'synthetic',receivedAt:1,
+        sourcePath:'pcm_gap_test_1790390000000/'+name};
+      const config = new IsolatedConfig(context,value);
+      const backup = new ProductionBackup(context,config,repository,recording,(p: ComputerUploadProgress):void=>{
+        this.progress = p.sessionCompleted ? '生产备份已完成' : '生产备份进行中 ' + p.transferredBytes;
+      });
+      const use = new PhoneV3UseCases(repository,new Local(),new PhoneV3DeviceRemote(context,config),undefined,backup);
+      await use.synchronize();
+      this.model = new PhoneV3ViewModel(use);
+      this.model.snapshot = await use.loadCached([]);
+      this.model.setStateChangeListener(():void=>{
+        this.revision+=1;
+        this.pending=this.model.snapshot.sync.pendingOperations;
+        repository.v3Status().then((status):void=>{
+          this.durable='原生持久化待同步 '+status.pendingOperations;
+          write(context.cacheDir+'/sync-phase2a-state.json',util.TextEncoder.create('utf-8').encodeInto(JSON.stringify({
+            pending:this.model.snapshot.sync.pendingOperations,durable:status.pendingOperations,
+            message:this.model.computerSyncMessage,error:this.model.computerSyncError,revision:this.revision,at:Date.now()
+          })));
+        });
+      });
+      this.player = new AudioPlaybackService((_playing:boolean,message:string):void=>{this.playback=message;});
+      await this.model.startForegroundSync(context,'sync_phase2a_isolated_settings');
+      this.note = '隔离生产链路已准备';
+    } catch (error) { this.note=String(error); }
+  }
+  private open(): void {
+    const row = this.model.snapshot.sessions.flatMap((s)=>s.utterances).find((r)=>r.utteranceId===this.uid);
+    if (!row) { this.note='找不到合成片段'; return; }
+    const editor = new PhoneV3AnnotationEditor();editor.open([row],this.model.snapshot.sessions);
+    this.nav.pushPath({name:'annotation',param:new Route(editor)});
+  }
+  @Builder private destination(name:string,param:Object) {
+    if(name==='annotation') { PhoneV3AnnotationPage({viewModel:this.model,navStack:this.nav,
+      editor:(param as Route).editor,stateRevision:this.revision,scopeTitle:'生产链路合成片段'}) }
+  }
+  build() {
+    HdsNavigation(this.nav) {
+      Scroll() {
+        Column({space:12}) {
+          Text(this.note).id('phase2-ready')
+          Text(this.migration).id('phase2-migration')
+          Text(this.progress).id('phase2-progress')
+          Text(this.model.backupError || this.model.backupMessage).id('phase2-backup')
+          Text(this.model.computerSyncError || this.model.computerSyncMessage).id('phase2-light')
+          Text('待同步 '+this.pending).id('phase2-pending')
+          Text(this.durable).id('phase2-durable')
+          Button('准备生产链路').id('phase2-prepare').onClick(():void=>{this.prepare();})
+          Button('打开合成标注').id('phase2-open').onClick(():void=>this.open())
+          Button('播放本地合成音频').id('phase2-play').onClick(():void=>{this.player?.play(this.playbackPath,2000,0);})
+          Button('清理隔离测试密钥').id('phase2-clean-key').onClick(():void=>{
+            this.model.stop();
+            huks.deleteKeyItem(KEY,{properties:[]}).then(():void=>{this.note='隔离测试密钥已清理';});
+          })
+          Text(this.playback).id('phase2-playback')
+          ForEach([1,2,3,4,5,6,7,8,9,10],(n:number)=>{Text('合成滚动行 '+n).height(70)})
+          Text('已滚动到底部').id('phase2-scroll-end')
+        }.padding(20).width('100%')
+      }.id('phase2-scroll')
+    }.navDestination(this.destination)
+  }
+}

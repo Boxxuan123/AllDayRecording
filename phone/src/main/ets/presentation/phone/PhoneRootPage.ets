@@ -113,7 +113,7 @@ export struct PhoneRootPage {
   }
 
   private foregroundChanged(): void {
-    if (!this.foreground) { this.v3ViewModel.stopPlayback(); }
+    this.v3ViewModel.setForeground(this.foreground);
   }
 
   aboutToAppear(): void {

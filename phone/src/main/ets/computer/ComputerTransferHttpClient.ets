@@ -112,7 +112,8 @@ export class ComputerTransferHttpClient {
   private diagnosticId: string;
   private lastDiagnosticAt: number = 0;
 
-  constructor(context: common.UIAbilityContext, baseUrl: string, caPath: string, deviceId: string = '', diagnosticId: string = '') {
+  constructor(context: common.UIAbilityContext, baseUrl: string, caPath: string, deviceId: string = '', diagnosticId: string = '',
+    signingKeyAlias: string = 'alldayrecording.computer-transfer.device-signing.v1') {
     this.diagnosticId=diagnosticId || connectionDiagnosticId();
     if (!canIUse('SystemCapability.Communication.NetStack') ||
       !canIUse('SystemCapability.Security.CryptoFramework')) {
@@ -124,7 +125,7 @@ export class ComputerTransferHttpClient {
     }
     this.caPath = caPath;
     this.passkeys = new PhonePasskeyClient(context);
-    this.deviceKeys = new PhoneDeviceKeyClient();
+    this.deviceKeys = new PhoneDeviceKeyClient(signingKeyAlias);
     this.deviceId = deviceId.length > 0 ? normalizeDeviceId(deviceId) : '';
   }
 
@@ -312,7 +313,7 @@ export class ComputerTransferHttpClient {
       (path !== DEVICE_AUTH_CHALLENGE_PATH || started - this.lastDiagnosticAt >= 1000);
     if (trace) { this.lastDiagnosticAt=started; }
     (headers as DiagnosticHeaders).XAllDayRequestId = requestId;
-    if (trace) { console.info(`[sync] id=${requestId} connection=${this.diagnosticId} op=${operationId} phase=request start method=${method} path=${path}`); }
+    if (trace) { console.debug(`[sync] id=${requestId} connection=${this.diagnosticId} op=${operationId} phase=request start method=${method} path=${path}`); }
     const request = http.createHttp();
     try {
       const options: http.HttpRequestOptions = {
@@ -328,7 +329,7 @@ export class ComputerTransferHttpClient {
         options.extraData = body;
       }
       const response = await request.request(`${this.baseUrl}${path}`, options);
-      if (trace) { console.info(`[sync] id=${requestId} phase=response status=${response.responseCode} ms=${Date.now() - started}`); }
+      if (trace) { console.debug(`[sync] id=${requestId} phase=response status=${response.responseCode} ms=${Date.now() - started}`); }
       const text = responseText(response.result);
       if (response.responseCode < 200 || response.responseCode >= 300) {
         const failure = new ComputerHttpError(response.responseCode, serverErrorMessage(response.responseCode, text));

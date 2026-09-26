@@ -24,6 +24,7 @@ const CA_FILE_NAME: string = 'receiver-ca.pem';
 const MAX_CA_BYTES: number = 8000;
 
 export class ComputerTransferConfig {
+  signingKeyAlias: string = 'alldayrecording.computer-transfer.device-signing.v1';
   baseUrl: string;
   caFingerprint: string;
   rpId: string;

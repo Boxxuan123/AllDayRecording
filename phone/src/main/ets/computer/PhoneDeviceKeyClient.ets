@@ -26,6 +26,8 @@ function keyProperties(purpose: huks.HuksKeyPurpose): Array<huks.HuksParam> {
 }
 
 export class PhoneDeviceKeyClient {
+  private alias: string;
+  constructor(alias: string = DEVICE_KEY_ALIAS) { this.alias = alias; }
   algorithm(): string {
     return DEVICE_KEY_ALGORITHM;
   }
@@ -48,7 +50,7 @@ export class PhoneDeviceKeyClient {
     const emptyOptions: huks.HuksOptions = { properties: [] };
     let keyExists = false;
     try {
-      keyExists = await huks.isKeyItemExist(DEVICE_KEY_ALIAS, emptyOptions);
+      keyExists = await huks.isKeyItemExist(this.alias, emptyOptions);
     } catch (error) {
       // The promise API rejects with 12000011 when an alias does not exist;
       // it does not consistently resolve to false on physical devices.
@@ -58,7 +60,7 @@ export class PhoneDeviceKeyClient {
     }
     if (!keyExists) {
       try {
-        await huks.generateKeyItem(DEVICE_KEY_ALIAS, {
+        await huks.generateKeyItem(this.alias, {
           properties: keyProperties(huks.HuksKeyPurpose.HUKS_KEY_PURPOSE_SIGN)
         });
       } catch (error) {
@@ -69,7 +71,7 @@ export class PhoneDeviceKeyClient {
         }
       }
     }
-    const exported = await huks.exportKeyItem(DEVICE_KEY_ALIAS, emptyOptions);
+    const exported = await huks.exportKeyItem(this.alias, emptyOptions);
     if (exported.outData === undefined || exported.outData.length === 0) {
       throw new Error('HUKS 没有返回设备公钥');
     }
@@ -83,7 +85,7 @@ export class PhoneDeviceKeyClient {
     }
     await this.ensurePublicKey();
     const properties = keyProperties(huks.HuksKeyPurpose.HUKS_KEY_PURPOSE_SIGN);
-    const session = await huks.initSession(DEVICE_KEY_ALIAS, { properties: properties });
+    const session = await huks.initSession(this.alias, { properties: properties });
     try {
       await huks.updateSession(session.handle, {
         properties: properties,

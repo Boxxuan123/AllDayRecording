@@ -32,7 +32,11 @@ const store = { load: async () => config, saveLastAddress: async url => { calls.
   calls = []; responses.new = { receiver_id: 'other' };
   await assert.rejects(exportsObject.connectComputerReceiver({}, store), /身份/);
   assert(!calls.some(c => c[0] === 'save'));
-  for (const category of ['authorization','http','tls','response_timeout','identity','transport']) {
+  calls = []; responses.saved = new errors.ComputerConnectionError('response_timeout','response','probe timeout'); responses.new = {receiver_id:'receiver'};
+  assert.equal((await exportsObject.connectComputerReceiver({},store)).baseUrl,'new');
+  assert.equal(calls.filter(c=>c[0]==='discover').length,1);
+  assert.equal(errors.mayRediscover(responses.saved),false, 'business timeout remains unsafe');
+  for (const category of ['authorization','http','tls','identity','transport']) {
     calls = []; const failure = new errors.ComputerConnectionError(category,'response','synthetic'); responses.saved = failure;
     await assert.rejects(exportsObject.connectComputerReceiver({},store), e=>e===failure);
     assert.equal(calls.filter(c=>c[0]==='discover').length,0);

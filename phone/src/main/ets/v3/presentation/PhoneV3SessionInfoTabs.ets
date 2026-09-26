@@ -20,13 +20,11 @@ class PhoneV3SessionSpeakerSummary {
   }
 }
 
-@Component
-export struct PhoneV3SessionOverviewTab {
-  session: PhoneV3SessionCard = new PhoneV3SessionCard('', '', '', '', '', 0, '', '', '', 0,
-    0, 0, [], 0, 0, '', '', '', 0, []);
+interface SessionTabOptions { session: PhoneV3SessionCard; }
+
 
   @Builder
-  private stage(label: string, value: string) {
+function PhoneV3SessionOverviewTabStage(options: SessionTabOptions, label: string, value: string) {
     Row({ space: 12 }) {
       Text(label)
         .width(106)
@@ -42,7 +40,7 @@ export struct PhoneV3SessionOverviewTab {
   }
 
   @Builder
-  private metric(label: string, value: string) {
+function PhoneV3SessionOverviewTabMetric(options: SessionTabOptions, label: string, value: string) {
     Column({ space: 4 }) {
       Text(value)
         .fontSize(19)
@@ -58,18 +56,19 @@ export struct PhoneV3SessionOverviewTab {
     .borderRadius(12)
   }
 
-  build() {
+@Builder
+export function PhoneV3SessionOverviewTab(options: SessionTabOptions) {
     Column({ space: 12 }) {
       Row({ space: 8 }) {
-        this.metric('时长', formatRecordingDuration(this.session.durationMs))
-        this.metric('转写', this.session.utterances.length.toString())
-        this.metric('版本', `r${this.session.revision}`)
+        PhoneV3SessionOverviewTabMetric(options, '时长', formatRecordingDuration(options.session.durationMs))
+        PhoneV3SessionOverviewTabMetric(options, '转写', options.session.utterances.length.toString())
+        PhoneV3SessionOverviewTabMetric(options, '版本', `r${options.session.revision}`)
       }
       .width('100%')
       Column({ space: 12 }) {
-        this.stage('手表录音', phoneV3WatchStage(this.session))
-        this.stage('电脑备份', phoneV3ComputerStage(this.session))
-        this.stage('转写处理', phoneV3ProcessingStage(this.session))
+        PhoneV3SessionOverviewTabStage(options, '手表录音', phoneV3WatchStage(options.session))
+        PhoneV3SessionOverviewTabStage(options, '电脑备份', phoneV3ComputerStage(options.session))
+        PhoneV3SessionOverviewTabStage(options, '转写处理', phoneV3ProcessingStage(options.session))
       }
       .width('100%')
       .padding(16)
@@ -83,18 +82,13 @@ export struct PhoneV3SessionOverviewTab {
     .width('100%')
     .alignItems(HorizontalAlign.Start)
   }
-}
 
-@Component
-export struct PhoneV3SessionSpeakersTab {
-  session: PhoneV3SessionCard = new PhoneV3SessionCard('', '', '', '', '', 0, '', '', '', 0,
-    0, 0, [], 0, 0, '', '', '', 0, []);
 
-  private summaries(): Array<PhoneV3SessionSpeakerSummary> {
+function PhoneV3SessionSpeakersTabSummaries(options: SessionTabOptions): Array<PhoneV3SessionSpeakerSummary> {
     const values: Map<string, PhoneV3SessionSpeakerSummary> =
       new Map<string, PhoneV3SessionSpeakerSummary>();
-    for (let index = 0; index < this.session.utterances.length; index += 1) {
-      const utterance = this.session.utterances[index];
+    for (let index = 0; index < options.session.utterances.length; index += 1) {
+      const utterance = options.session.utterances[index];
       const key = utterance.identity === 'self' ? 'self' :
         utterance.speakerTrackId ?? utterance.speakerLabel ?? 'unassigned';
       const label = utterance.identity === 'self' ? '本人' :
@@ -107,7 +101,7 @@ export struct PhoneV3SessionSpeakersTab {
     return Array.from(values.values());
   }
 
-  private identityLabel(value: string): string {
+function PhoneV3SessionSpeakersTabIdentityLabel(options: SessionTabOptions, value: string): string {
     if (value === 'self') {
       return '本人';
     }
@@ -118,7 +112,7 @@ export struct PhoneV3SessionSpeakersTab {
   }
 
   @Builder
-  private speakerRow(summary: PhoneV3SessionSpeakerSummary) {
+function PhoneV3SessionSpeakersTabSpeakerRow(options: SessionTabOptions, summary: PhoneV3SessionSpeakerSummary) {
     Row({ space: 12 }) {
       Stack() {
         Text(summary.label.slice(0, 1))
@@ -135,7 +129,7 @@ export struct PhoneV3SessionSpeakersTab {
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
-        Text(`${this.identityLabel(summary.identity)} · ${summary.count} 条发言`)
+        Text(`${PhoneV3SessionSpeakersTabIdentityLabel(options, summary.identity)} · ${summary.count} 条发言`)
           .fontSize(12)
           .fontColor($r('app.color.text_secondary'))
       }
@@ -148,9 +142,10 @@ export struct PhoneV3SessionSpeakersTab {
     .borderRadius(14)
   }
 
-  build() {
+@Builder
+export function PhoneV3SessionSpeakersTab(options: SessionTabOptions) {
     Column({ space: 10 }) {
-      if (this.summaries().length === 0) {
+      if (PhoneV3SessionSpeakersTabSummaries(options).length === 0) {
         Text('当前会话还没有可显示的说话人轨道。')
           .width('100%')
           .padding(16)
@@ -159,8 +154,8 @@ export struct PhoneV3SessionSpeakersTab {
           .backgroundColor($r('app.color.surface_primary'))
           .borderRadius(14)
       } else {
-        ForEach(this.summaries(), (summary: PhoneV3SessionSpeakerSummary) => {
-          this.speakerRow(summary)
+        ForEach(PhoneV3SessionSpeakersTabSummaries(options), (summary: PhoneV3SessionSpeakerSummary) => {
+          PhoneV3SessionSpeakersTabSpeakerRow(options, summary)
         }, (summary: PhoneV3SessionSpeakerSummary): string => summary.key)
       }
       Text('需要调整身份时，在时间线中打开对应发言并选择“编辑转写”。')
@@ -171,20 +166,15 @@ export struct PhoneV3SessionSpeakersTab {
     .width('100%')
     .alignItems(HorizontalAlign.Start)
   }
-}
 
-@Component
-export struct PhoneV3SessionEvidenceTab {
-  session: PhoneV3SessionCard = new PhoneV3SessionCard('', '', '', '', '', 0, '', '', '', 0,
-    0, 0, [], 0, 0, '', '', '', 0, []);
 
-  private correctedCount(): number {
-    return this.session.utterances.filter((utterance: PhoneV3Utterance): boolean =>
+function PhoneV3SessionEvidenceTabCorrectedCount(options: SessionTabOptions): number {
+    return options.session.utterances.filter((utterance: PhoneV3Utterance): boolean =>
       utterance.text !== utterance.originalText || utterance.status === 'corrected').length;
   }
 
   @Builder
-  private evidenceRow(label: string, value: string) {
+function PhoneV3SessionEvidenceTabEvidenceRow(options: SessionTabOptions, label: string, value: string) {
     Row({ space: 12 }) {
       Text(label)
         .fontSize(13)
@@ -200,15 +190,16 @@ export struct PhoneV3SessionEvidenceTab {
     .padding({ top: 9, bottom: 9 })
   }
 
-  build() {
+@Builder
+export function PhoneV3SessionEvidenceTab(options: SessionTabOptions) {
     Column({ space: 12 }) {
       Column({ space: 2 }) {
-        this.evidenceRow('手机原始录音', `${this.session.localPaths.length} 个文件`)
-        this.evidenceRow('原始录音大小', formatRecordingSize(this.session.sizeBytes))
-        this.evidenceRow('电脑记录', this.session.sessionId.length > 0 ? '已建立' : '尚未创建')
-        this.evidenceRow('当前版本', this.session.revision.toString())
-        this.evidenceRow('转写修订', `${this.correctedCount()} 条`)
-        this.evidenceRow('处理状态', phoneV3ProcessingStage(this.session))
+        PhoneV3SessionEvidenceTabEvidenceRow(options, '手机原始录音', `${options.session.localPaths.length} 个文件`)
+        PhoneV3SessionEvidenceTabEvidenceRow(options, '原始录音大小', formatRecordingSize(options.session.sizeBytes))
+        PhoneV3SessionEvidenceTabEvidenceRow(options, '电脑记录', options.session.sessionId.length > 0 ? '已建立' : '尚未创建')
+        PhoneV3SessionEvidenceTabEvidenceRow(options, '当前版本', options.session.revision.toString())
+        PhoneV3SessionEvidenceTabEvidenceRow(options, '转写修订', `${PhoneV3SessionEvidenceTabCorrectedCount(options)} 条`)
+        PhoneV3SessionEvidenceTabEvidenceRow(options, '处理状态', phoneV3ProcessingStage(options.session))
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 4, bottom: 4 })
@@ -222,4 +213,3 @@ export struct PhoneV3SessionEvidenceTab {
     .width('100%')
     .alignItems(HorizontalAlign.Start)
   }
-}

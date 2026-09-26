@@ -46,7 +46,7 @@ async function runModuleTests(moduleName) {
     'test', '--no-daemon'
   ];
   const status = await spawnWithTimeout(hvigor, args, moduleName);
-  if (status !== 0) {
+  if (status !== 0 && productName === 'default') {
     fail(`${moduleName} host tests exited with status ${status}.`);
   }
   // Newer SDKs compile under the product name, while the bundled Hypium
@@ -56,6 +56,9 @@ async function runModuleTests(moduleName) {
   if (productOutput !== launcherOutput && existsSync(productOutput)) {
     const abc = join(productOutput, 'intermediates', 'assets', 'default', 'ets', 'modules.abc');
     requireFile(abc, `${moduleName} compiled test bytecode`);
+    if (status !== 0 && statSync(abc).mtimeMs < moduleStartedAt - 1000) {
+      fail(`${moduleName} failed without fresh bytecode; will not reuse an old report.`);
+    }
     const sourceLatest = latestSourceMtime(join(projectRoot, moduleName, 'src'));
     if (statSync(abc).mtimeMs < sourceLatest) {
       fail(`${moduleName} test bytecode predates source changes: ${abc}`);

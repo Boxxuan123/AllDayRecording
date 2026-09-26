@@ -36,10 +36,11 @@ export function connectionFailure(error: Object, path: string, requestId: string
   return failure;
 }
 
-export function mayRediscover(error: Object): boolean {
+export function mayRediscover(error: Object, readOnlyProbe: boolean = false): boolean {
   // A generic SDK timeout cannot distinguish connect from response timeout.
   // Fail conservatively; an HTTP response, TLS failure or auth failure is final.
-  return error instanceof ComputerConnectionError && error.category === 'unreachable';
+  return error instanceof ComputerConnectionError && (error.category === 'unreachable' ||
+    (readOnlyProbe && error.category === 'response_timeout'));
 }
 
 let diagnosticSequence: number = 0;

@@ -4,12 +4,12 @@
 
 ## 版本与工作区
 
-|仓库|分支|起始与结束 HEAD（未提交）|
+|仓库|分支|实施基底 HEAD（撰写原记录时）|
 |---|---|---|
 |AllDayRecording|master|fe872618fe8ecd7d205dfe236767c91640985768|
 |AllDayRecording-ASR|master|04e2e7f994025c1df0e2f653dd83404c9e11582a|
 
-没有回退 checkout、提交或推送。开始时电脑仓库干净，手机仓库已有用户未跟踪的 tests/；原 PhoneMoreSmoke.py、main.py、配置保留，新增业务用例沿用它们。检查两仓库及上级路径未发现适用 AGENTS.md。结束时为当前 HEAD 上的未提交实现、测试及文档差异；以 git diff / git status 为准，不把 HEAD 当作包含本轮改动的提交。
+原实施记录写于提交前；后来第一阶段已经正常提交并推送：手机 `763f95a01bac7b0ff5e8ba5bc45bd0b8340e8a99`，电脑 `895c294f32480b7b34817e9dbab86b1a86ddf443`。上表是实施基底，不是交付版本。开始时电脑仓库干净，手机已有用户未跟踪 tests/；原 PhoneMoreSmoke.py、main.py、配置保留，新增业务用例沿用它们。检查两仓库及上级路径未发现适用 AGENTS.md。第二阶段变更和剩余问题见 [SYNC_PHASE2A_ACCEPTANCE.md](SYNC_PHASE2A_ACCEPTANCE.md)。
 
 ## 已确认问题与改法
 

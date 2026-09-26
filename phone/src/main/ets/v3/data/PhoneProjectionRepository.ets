@@ -142,14 +142,21 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
       throw new Error('Phone outbox 查询上限无效');
     }
     const result = await this.store.querySql(
-      `SELECT operation_id, kind, base_revision, payload_json, attempt_count
+      `SELECT operation_id, kind, base_revision, payload_json, attempt_count,
+        NOT EXISTS (SELECT 1 FROM json_each(outbox.payload_json, '$.selections') s
+          LEFT JOIN projection_utterances u ON u.resource_id=json_extract(s.value,'$.utterance_id')
+          WHERE u.resource_id IS NULL) AS resources_ready
        FROM outbox WHERE applied_revision IS NULL OR (
          kind IN ('speaker.assign','segment.classify') AND json_array_length(payload_json,'$.selections')>1
          AND NOT EXISTS (SELECT 1 FROM outbox_resource_receipts r WHERE r.operation_id=outbox.operation_id))
        ORDER BY created_at, rowid`);
     const operations: Array<PhonePendingOperation> = [];
+    const resourcesReady = new Set<string>();
     try {
       while (result.goToNextRow()) {
+        if (result.getLong(result.getColumnIndex('resources_ready')) === 1) {
+          resourcesReady.add(result.getString(result.getColumnIndex('operation_id')));
+        }
         const baseIndex = result.getColumnIndex('base_revision');
         operations.push({
           operation_id: result.getString(result.getColumnIndex('operation_id')),
@@ -166,7 +173,7 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
     for (let conflict of await this.conflictRows()) { blocked.add(conflict.operationId); }
     return operations.filter((op): boolean => {
       const payload = op.payload as OperationDependencies;
-      return excludedIds.indexOf(op.operation_id) < 0 &&
+      return resourcesReady.has(op.operation_id) && excludedIds.indexOf(op.operation_id) < 0 &&
         !(payload.depends_on ?? []).some((id: string): boolean => blocked.has(id));
     }).slice(0, limit);
   }
