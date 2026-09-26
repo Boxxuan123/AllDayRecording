@@ -55,9 +55,14 @@ export async function reviewAudioFileTask(root: string, action: string, namespac
     }
   }
   let result: string = '';
-  const md = cryptoFramework.createMd('SHA256');
-  await md.update({ data: new util.TextEncoder().encodeInto(namespace) });
-  const ns = Array.from((await md.digest()).data).map((b: number): string => b.toString(16).padStart(2, '0')).join('');
+  let ns: string = '';
+  // Initialization/clear have no identity to hash. Native CryptoFramework does
+  // not accept an empty update buffer on all supported devices.
+  if (namespace.length > 0) {
+    const md = cryptoFramework.createMd('SHA256');
+    await md.update({ data: new util.TextEncoder().encodeInto(namespace) });
+    ns = Array.from((await md.digest()).data).map((b: number): string => b.toString(16).padStart(2, '0')).join('');
+  }
   const entry = entries.find((e: AudioEntry): boolean => e.namespace === ns && e.key === key);
   if (action === 'read' && entry !== undefined) {
     try {
