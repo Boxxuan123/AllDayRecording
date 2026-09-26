@@ -41,7 +41,7 @@ class ControlledUse extends PhoneV3UseCases {
     return super.queueAnnotation(rows,personId,name,changed,kind);
   }
 }
-interface Resource { text:string; revision:number; }
+interface Resource { text:string; revision:number; utterance_id:string; }
 async function waitFor(check:()=>boolean):Promise<void> {
   const until=Date.now()+10000;
   while(!check()) { if(Date.now()>until) { throw new Error('native refresh deadline'); }
@@ -59,9 +59,16 @@ export async function nativeRefresh(context:common.UIAbilityContext, source:Phon
         operation:'upsert',resource:JSON.parse(row.payloadJson)});
     }
   }
+  // The concurrent save targets another row. Changing the very row being reviewed
+  // correctly rejects a stale annotation, and is not the refresh-loss scenario.
+  const deltaRow=(await repo.projectionRows('utterance'))[0];
+  const saveId='00000000000000000000000991';
+  const copy=JSON.parse(deltaRow.payloadJson) as Resource;copy.utterance_id=saveId;
+  await repo.applyChange({sequence:1,resource_type:'utterance',resource_id:saveId,
+    revision:copy.revision,operation:'upsert',resource:copy});
   const use=new ControlledUse(repo,new Local(),new Remote());
   const model=new PhoneV3ViewModel(use);model.snapshot=await use.loadCached([]);
-  const target=model.snapshot.sessions.flatMap((s)=>s.utterances)[0];
+  const target=model.snapshot.sessions.flatMap((s)=>s.utterances).find((r)=>r.utteranceId===saveId)!;
   try {
     await model.startForegroundSync(context,'sync_phase2a_refresh_settings');
     use.holdSave=true;
@@ -69,7 +76,7 @@ export async function nativeRefresh(context:common.UIAbilityContext, source:Phon
     await waitFor(()=>use.releaseSave!==undefined);
     // Two durable deltas while the save is suspended before entering its transaction.
     for(let text of ['NATIVE DELTA ONE','NATIVE DELTA FINAL']) {
-      const row=(await repo.projectionRows('utterance',[target.utteranceId]))[0];
+      const row=(await repo.projectionRows('utterance',[deltaRow.resourceId]))[0];
       const resource=JSON.parse(row.payloadJson) as Resource;resource.text=text;resource.revision=row.revision+1;
       await repo.applyChange({sequence:2,resource_type:'utterance',resource_id:row.resourceId,
         revision:resource.revision,operation:'upsert',resource:resource});
@@ -77,7 +84,7 @@ export async function nativeRefresh(context:common.UIAbilityContext, source:Phon
       await waitFor(()=>use.calls>calls&&!model.computerSyncActive);
     }
     const lastCalls=use.calls;use.releaseSave!();
-    await waitFor(()=>!model.annotationSaving&&model.snapshot.sessions.flatMap((s)=>s.utterances).find((r)=>r.utteranceId===target.utteranceId)!.text==='NATIVE DELTA FINAL');
+    await waitFor(()=>!model.annotationSaving&&model.snapshot.sessions.flatMap((s)=>s.utterances).find((r)=>r.utteranceId===deltaRow.resourceId)!.text==='NATIVE DELTA FINAL');
     check(use.calls===lastCalls,'visibility waited for network');
     check(model.snapshot.sessions.flatMap((s)=>s.utterances).find((r)=>r.utteranceId===target.utteranceId)!.soundKind==='media_speech','new save lost');
     // A snapshot read before the next save must not replace that save when it returns late.
