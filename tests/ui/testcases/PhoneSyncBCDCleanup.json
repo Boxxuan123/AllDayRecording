@@ -1,0 +1,1 @@
+{"description":"仅清理 B/C/D 隔离测试密钥","environment":[{"type":"device","label":"phone"}],"driver":{"type":"DeviceTest","py_file":["PhoneSyncBCDCleanup.py"]}}
