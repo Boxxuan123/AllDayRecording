@@ -42,8 +42,12 @@ export struct PhoneV3VoiceReviewPage {
   @State private expanded: boolean = false;
   @State private overflow: boolean = false;
   private scroller: Scroller = new Scroller();
+  private visible: boolean = false;
+  private audioGeneration: number = -1;
 
   aboutToAppear(): void {
+    this.visible = true;
+    this.audioGeneration = this.viewModel.playbackGeneration();
     this.queue.open(phoneV3VoiceTasks(this.viewModel.snapshot.reviewItems, this.history), this.reviewId);
     this.showCurrent();
     this.refreshPeople();
@@ -55,8 +59,13 @@ export struct PhoneV3VoiceReviewPage {
   private submissionState(): string {
     return this.task ? this.viewModel.reviewSubmissionState(this.task.item.reviewId, this.task.candidate.prototypeId) : '';
   }
-  aboutToDisappear(): void { this.viewModel.setReviewAudioWindow([], false); this.viewModel.stopPlayback(); }
+  aboutToDisappear(): void {
+    this.visible = false;
+    this.viewModel.setReviewAudioWindow([], false);
+    this.viewModel.stopPlayback(this.audioGeneration);
+  }
   private refreshState(): void {
+    if (!this.visible) { return; }
     this.evidenceIndex.update(this.viewModel.snapshot.sessions);
     const current = this.task;
     if (current === undefined) { return; }
@@ -245,6 +254,7 @@ export struct PhoneV3VoiceReviewPage {
                 .onClick((): void => {
                   if (this.viewModel.reviewPlaybackPrototype || this.viewModel.annotationPlaybackState() === '正在加载') { this.viewModel.stopPlayback(); }
                   else if (this.task) { this.viewModel.playReviewSample(this.task.item.reviewId, this.task.candidate.prototypeId); }
+                  this.audioGeneration = this.viewModel.playbackGeneration();
                 })
               Text(this.viewModel.reviewSampleWasPlayed(this.task.item.reviewId, this.task.candidate.prototypeId) ? '完整样本已播放完毕' :
                 this.viewModel.reviewPlaybackRange || (this.task.candidate.hasAudio ? this.history ? '重听为可选操作，不影响撤回授权' : this.editing() ? '可试听核对；人物保存不要求完整试听' : '确认和拒绝前需完整听完当前样本' : this.task.candidate.unavailableReason))

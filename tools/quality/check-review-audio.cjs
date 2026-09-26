@@ -55,6 +55,7 @@ const tick=()=>new Promise(r=>setImmediate(r));
  vm.useCases={loadReviewAudio:async()=>full,loadLocal:async()=>[],loadCached:async()=>snapshot,resolveReview:async r=>{submissions.push(r);return snapshot.reviewItems}};
  vm.playReviewSample('r','p');await tick();assert.equal(vm.reviewSampleWasPlayed('r','p'),false);
  vm.resolveReview('r','confirm','p');assert.equal(submissions.length,0);
+ const oldPageGeneration=vm.playbackGeneration()-1;vm.stopPlayback(oldPageGeneration);
  players.at(-1).emit('completed');await tick();assert.equal(vm.reviewSampleWasPlayed('r','p'),true);
  vm.resolveReview('r','confirm','p');await tick();assert.equal(submissions.length,1);
  vm.stopPlayback();assert.equal(vm.reviewSampleWasPlayed('r','p'),false);

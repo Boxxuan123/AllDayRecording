@@ -769,7 +769,10 @@ export class PhoneV3ViewModel {
     this.refreshDeviceState();
   }
 
-  stopPlayback(): void {
+  playbackGeneration(): number { return this.audioRequestGeneration; }
+
+  stopPlayback(expectedGeneration?: number): void {
+    if (expectedGeneration !== undefined && expectedGeneration !== this.audioRequestGeneration) { return; }
     this.annotationAudioSource = undefined;
     this.auditionReviewId = '';
     this.auditionReviewEvidence = '';
