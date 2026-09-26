@@ -77,16 +77,16 @@ export async function nativeRefresh(context:common.UIAbilityContext, source:Phon
       await waitFor(()=>use.calls>calls&&!model.computerSyncActive);
     }
     const lastCalls=use.calls;use.releaseSave!();
-    await waitFor(()=>!model.annotationSaving&&model.snapshot.sessions[0].utterances[0].text==='NATIVE DELTA FINAL');
+    await waitFor(()=>!model.annotationSaving&&model.snapshot.sessions.flatMap((s)=>s.utterances).find((r)=>r.utteranceId===target.utteranceId)!.text==='NATIVE DELTA FINAL');
     check(use.calls===lastCalls,'visibility waited for network');
-    check(model.snapshot.sessions[0].utterances[0].soundKind==='media_speech','new save lost');
+    check(model.snapshot.sessions.flatMap((s)=>s.utterances).find((r)=>r.utteranceId===target.utteranceId)!.soundKind==='media_speech','new save lost');
     // A snapshot read before the next save must not replace that save when it returns late.
     use.holdRead=true;model.reloadAnnotationResult(():void=>{});
     await waitFor(()=>use.releaseRead!==undefined);
-    model.saveAnnotation([model.snapshot.sessions[0].utterances[0]],'','',false,'non_speech',():void=>{});
+    model.saveAnnotation([model.snapshot.sessions.flatMap((s)=>s.utterances).find((r)=>r.utteranceId===target.utteranceId)!],'','',false,'non_speech',():void=>{});
     await waitFor(()=>!model.annotationSaving);use.releaseRead!();
     await new Promise<void>((resolve)=>setTimeout(resolve,30));
-    check(model.snapshot.sessions[0].utterances[0].soundKind==='non_speech','stale read replaced save');
+    check(model.snapshot.sessions.flatMap((s)=>s.utterances).find((r)=>r.utteranceId===target.utteranceId)!.soundKind==='non_speech','stale read replaced save');
     use.releaseRead=undefined;use.holdRead=true;model.reloadAnnotationResult(():void=>{});
     await waitFor(()=>use.releaseRead!==undefined);
     const snapshot=model.snapshot;model.stop();use.releaseRead!();
@@ -94,7 +94,7 @@ export async function nativeRefresh(context:common.UIAbilityContext, source:Phon
     check(model.snapshot===snapshot,'stopped request published');
     const reopened=await PhoneProjectionRepository.open(context,DB);
     const next=new PhoneV3UseCases(reopened,new Local(),new Remote());
-    check((await next.loadCached([])).sessions[0].utterances[0].soundKind==='non_speech','reentry lost save');
+    check((await next.loadCached([])).sessions.flatMap((s)=>s.utterances).find((r)=>r.utteranceId===target.utteranceId)!.soundKind==='non_speech','reentry lost save');
     return '原生刷新交错通过';
   } finally { model.stop(); }
 }
