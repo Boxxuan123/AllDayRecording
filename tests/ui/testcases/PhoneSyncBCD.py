@@ -174,6 +174,7 @@ class PhoneSyncBCD(TestCase):
         self.tap('phase2-batch')
         self.wait(BY.text('离线三次本地提交完成'))
         assert self.state()['durable'] == 3
+        offline_saves = self.state()['times'][-3:]
         self.restart()
         assert self.state()['durable'] == 3
         self.fault('500-once')
@@ -184,7 +185,8 @@ class PhoneSyncBCD(TestCase):
         self.fault('new-result')
         self.until(lambda: self.evidence().get('new-result'), 150)
         self.until(lambda: len(self.state()['tasks']) > count, 45)
-        self.results['T4'] = {'passed':True,'offline_count':3,'automatic_remote_result':True,'recoverable_500':True}
+        self.results['T4'] = {'passed':True,'offline_count':3,'automatic_remote_result':True,'recoverable_500':True,
+            'offline_save_times':offline_saves}
         self.results['final_state'] = self.state()
         (self.root/'native-results.json').write_text(json.dumps(self.results,indent=2),encoding='utf-8')
 

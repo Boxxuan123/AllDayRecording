@@ -81,6 +81,7 @@ export async function reviewAudioFileTask(root: string, action: string, namespac
       entry.response.local_worker_tid = process.tid;
       result = JSON.stringify(entry.response);
     } catch (_error) {
+      if (pins.indexOf(`${root}/${entry.name}`) >= 0) { throw new Error('试听缓存正在使用，请停止播放后重试'); }
       try { fileIo.unlinkSync(`${root}/${entry.name}`); } catch (_ignored) {}
       entries = entries.filter((e: AudioEntry): boolean => e.name !== entry.name);
     }

@@ -541,6 +541,9 @@ export class PhoneV3UseCases {
     }
     const response = await cache.prepare(namespace, candidate.audioContentKey, download, prefetch);
     response.review_id = reviewId; response.prototype_id = prototypeId;
+    // Content can be shared by different prototypes. Rebind only presentation
+    // metadata; ordered windows/content identity are still validated below.
+    response.audition_key = candidate.auditionKey;
     try {
       validateReviewSample(response, reviewId, candidate);
       if (await this.remote.audioNamespace() !== namespace) { throw new Error('电脑身份已变化'); }
