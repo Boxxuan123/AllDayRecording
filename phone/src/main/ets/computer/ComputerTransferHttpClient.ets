@@ -1,4 +1,5 @@
 import { ComputerReviewNotSentError } from './ComputerReviewNotSentError';
+import { ComputerConnectionError, connectionFailure, connectionDiagnosticId } from './ComputerConnectionError';
 import { common } from '@kit.AbilityKit';
 import { util } from '@kit.ArkTS';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
@@ -34,7 +35,6 @@ import {
   DEVICE_KEY_ALGORITHM,
   PASSKEY_REGISTER_OPTIONS_PATH,
   PASSKEY_REGISTER_VERIFY_PATH,
-  computerTransferError,
   buildDeviceSignaturePayload,
   normalizeDeviceId,
   normalizeComputerBaseUrl,
@@ -45,15 +45,16 @@ import {
 const CONNECT_TIMEOUT_MS: number = 20000;
 const READ_TIMEOUT_MS: number = 120000;
 
-export class ComputerHttpError extends Error {
-  statusCode: number;
+export class ComputerHttpError extends ComputerConnectionError {
   constructor(statusCode: number, message: string) {
-    super(message);
+    super(statusCode === 401 || statusCode === 403 ? 'authorization' : 'http', 'response', message);
     this.statusCode = statusCode;
   }
 }
 
 interface ComputerErrorResponse {
+  code?: string;
+  request_id?: string;
   error?: string;
   message?: string;
 }
@@ -66,6 +67,8 @@ interface PairingHeaders {
 interface JsonHeaders {
   'Content-Type': string;
 }
+
+interface DiagnosticHeaders { XAllDayRequestId?: string; }
 
 interface DeviceRegistrationRequest {
   algorithm: string;
@@ -106,8 +109,11 @@ export class ComputerTransferHttpClient {
   private passkeys: PhonePasskeyClient;
   private deviceKeys: PhoneDeviceKeyClient;
   private deviceId: string;
+  private diagnosticId: string;
+  private lastDiagnosticAt: number = 0;
 
-  constructor(context: common.UIAbilityContext, baseUrl: string, caPath: string, deviceId: string = '') {
+  constructor(context: common.UIAbilityContext, baseUrl: string, caPath: string, deviceId: string = '', diagnosticId: string = '') {
+    this.diagnosticId=diagnosticId || connectionDiagnosticId();
     if (!canIUse('SystemCapability.Communication.NetStack') ||
       !canIUse('SystemCapability.Security.CryptoFramework')) {
       throw new Error('本机系统不支持 HTTPS 或 SHA-256 电脑传输');
@@ -177,7 +183,7 @@ export class ComputerTransferHttpClient {
           body, 'application/json; charset=utf-8', undefined);
       } catch (error) {
         const failure = error as Error;
-        if (attempt >= 2 || (failure instanceof ComputerHttpError && failure.statusCode < 500)) {
+        if (attempt >= 2 || isTrustFailure(failure) || (failure instanceof ComputerHttpError && failure.statusCode < 500)) {
           throw failure;
         }
         onRetry();
@@ -202,7 +208,7 @@ export class ComputerTransferHttpClient {
           'application/octet-stream', offset);
       } catch (error) {
         const failure = error as Error;
-        if (attempt >= 2 || (failure instanceof ComputerHttpError &&
+        if (attempt >= 2 || isTrustFailure(failure) || (failure instanceof ComputerHttpError &&
           failure.statusCode < 500 && failure.statusCode !== 409)) {
           throw failure;
         }
@@ -253,7 +259,7 @@ export class ComputerTransferHttpClient {
       return await this.authenticatedJson<DeviceV3ReviewActionResponse>('POST', DEVICE_V3_REVIEW_ACTION_PATH,
         body, 'application/json; charset=utf-8', undefined, (): void => { mayHaveSent = true; });
     } catch (error) {
-      if (!mayHaveSent) { throw new ComputerReviewNotSentError(error instanceof Error ? error.message : '认证失败，审核请求尚未发送'); }
+      if (!mayHaveSent) { throw new ComputerReviewNotSentError(error instanceof Error ? error.message : '认证失败，审核请求尚未发送', error as Object); }
       throw error as Error;
     }
   }
@@ -266,6 +272,7 @@ export class ComputerTransferHttpClient {
 
   private async authenticatedJson<T>(method: string, path: string, body: Uint8Array,
     contentType: string | undefined, uploadOffset: number | undefined, onDispatch: () => void = (): void => {}): Promise<T> {
+    const operationId=connectionDiagnosticId();
     const binding: ComputerRequestBinding = {
       method: method,
       path: path,
@@ -277,7 +284,7 @@ export class ComputerTransferHttpClient {
     const optionsBody = JSON.stringify({ device_id: this.requireDeviceId(), request: binding });
     const optionsHeaders: JsonHeaders = { 'Content-Type': 'application/json; charset=utf-8' };
     const challenge = await this.requestJson<ComputerDeviceChallengeResponse>(
-      'POST', DEVICE_AUTH_CHALLENGE_PATH, optionsBody, optionsHeaders);
+      'POST', DEVICE_AUTH_CHALLENGE_PATH, optionsBody, optionsHeaders, operationId);
     if (challenge.version !== 1 || challenge.challenge_id.length === 0 || challenge.nonce.length === 0 ||
       !Number.isSafeInteger(challenge.expires_in_ms) || challenge.expires_in_ms <= 0) {
       throw new Error('电脑返回了无效的设备认证 challenge');
@@ -287,7 +294,7 @@ export class ComputerTransferHttpClient {
     const headers: Object = authenticatedHeaders(this.deviceId, challenge.challenge_id,
       signature, contentType, uploadOffset);
     onDispatch();
-    return this.requestJson<T>(method, path, body.length === 0 ? undefined : body.buffer, headers);
+    return this.requestJson<T>(method, path, body.length === 0 ? undefined : body.buffer, headers, operationId);
   }
 
   private requireDeviceId(): string {
@@ -298,7 +305,14 @@ export class ComputerTransferHttpClient {
   }
 
   private async requestJson<T>(method: string, path: string, body: string | ArrayBuffer | undefined,
-    headers: Object): Promise<T> {
+    headers: Object, operationId: string = ''): Promise<T> {
+    const requestId = connectionDiagnosticId();
+    const started = Date.now();
+    const trace = !path.startsWith(COMPUTER_TRANSFER_UPLOADS_PATH) &&
+      (path !== DEVICE_AUTH_CHALLENGE_PATH || started - this.lastDiagnosticAt >= 1000);
+    if (trace) { this.lastDiagnosticAt=started; }
+    (headers as DiagnosticHeaders).XAllDayRequestId = requestId;
+    if (trace) { console.info(`[sync] id=${requestId} connection=${this.diagnosticId} op=${operationId} phase=request start method=${method} path=${path}`); }
     const request = http.createHttp();
     try {
       const options: http.HttpRequestOptions = {
@@ -314,9 +328,18 @@ export class ComputerTransferHttpClient {
         options.extraData = body;
       }
       const response = await request.request(`${this.baseUrl}${path}`, options);
+      if (trace) { console.info(`[sync] id=${requestId} phase=response status=${response.responseCode} ms=${Date.now() - started}`); }
       const text = responseText(response.result);
       if (response.responseCode < 200 || response.responseCode >= 300) {
-        throw new ComputerHttpError(response.responseCode, serverErrorMessage(response.responseCode, text));
+        const failure = new ComputerHttpError(response.responseCode, serverErrorMessage(response.responseCode, text));
+        failure.path = path; failure.requestId = requestId; failure.mayHaveSent = true;
+        try {
+          const payload = JSON.parse(text) as ComputerErrorResponse;
+          failure.serverCode = payload.code ?? '';
+          failure.requestId = payload.request_id ?? requestId;
+        } catch (error) { /* Preserve HTTP status even when the body is not JSON. */ }
+        failure.message += `（${path}，诊断 ${failure.requestId}）`;
+        throw failure;
       }
       try {
         return JSON.parse(text) as T;
@@ -324,7 +347,9 @@ export class ComputerTransferHttpClient {
         throw new Error(`电脑返回了无效的 JSON（HTTP ${response.responseCode}）`);
       }
     } catch (error) {
-      throw computerTransferError(error as Object);
+      const failure = connectionFailure(error as Object, path, requestId);
+      console.warn(`[sync] id=${requestId} connection=${this.diagnosticId} op=${operationId} path=${path} phase=${failure.phase} category=${failure.category} status=${failure.statusCode} code=${failure.nativeCode} sent=${failure.mayHaveSent} ms=${Date.now() - started}`);
+      throw failure;
     } finally {
       request.destroy();
     }
@@ -407,4 +432,8 @@ function retryPause(attempt: number): Promise<void> {
   return new Promise<void>((resolve: () => void): void => {
     setTimeout(resolve, 500 * (attempt + 1));
   });
+}
+
+function isTrustFailure(error: Error): boolean {
+  return error instanceof ComputerConnectionError && ['tls', 'identity', 'authorization', 'unpaired'].indexOf(error.category) >= 0;
 }

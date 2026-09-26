@@ -20,7 +20,7 @@ import {
 import { PhoneV3ProjectionRepositoryPort } from '../application/PhoneV3Ports';
 
 const DATABASE_NAME: string = 'phone_v3_projection.db';
-const SCHEMA_VERSION: number = 10;
+const SCHEMA_VERSION: number = 11;
 const TABLES: Array<string> = [
   'projection_recordings', 'projection_audio_assets', 'projection_processing_runs',
   'projection_utterances', 'projection_review_items', 'projection_reminders'
@@ -171,9 +171,22 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
     }).slice(0, limit);
   }
 
-  async annotationOperations(): Promise<Array<PhonePendingOperation>> {
+  async annotationOperations(resourceIds?: Array<string>): Promise<Array<PhonePendingOperation>> {
+    if (resourceIds !== undefined && resourceIds.length === 0) { return []; }
+    if (resourceIds !== undefined && resourceIds.length > 400) {
+      const all = new Map<string, PhonePendingOperation>();
+      for (let offset = 0; offset < resourceIds.length; offset += 400) {
+        for (let op of await this.annotationOperations(resourceIds.slice(offset, offset + 400))) { all.set(op.operation_id, op); }
+      }
+      return Array.from(all.values());
+    }
+    const filter = resourceIds === undefined ? '' :
+      ` AND o.operation_id IN (SELECT operation_id FROM outbox_selections WHERE resource_id IN (${resourceIds.map((): string => '?').join(',')}))`;
     const result = await this.store.querySql(
-      "SELECT operation_id, payload_json, kind, applied_revision, last_error FROM outbox WHERE kind IN ('speaker.assign', 'segment.classify') ORDER BY created_at, rowid");
+      `SELECT o.operation_id, o.payload_json, o.kind, o.applied_revision, o.last_error,
+       COALESCE((SELECT json_group_array(resource_id) FROM outbox_resource_receipts r
+       WHERE r.operation_id=o.operation_id AND projected=1),'[]') AS projected
+       FROM outbox o WHERE o.kind IN ('speaker.assign', 'segment.classify')${filter} ORDER BY o.created_at, o.rowid`, resourceIds ?? []);
     const operations: Array<PhonePendingOperation> = [];
     try {
       while (result.goToNextRow()) {
@@ -181,14 +194,15 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
           base_revision: null, payload: JSON.parse(result.getString(1)) as Object, attempt_count: 0,
           last_error: result.getString(4),
           applied_revision: result.isColumnNull(3) ? undefined : result.getLong(3),
-          projected_resource_ids: await this.projectedResourceIds(result.getString(0)) });
+          projected_resource_ids: JSON.parse(result.getString(5)) as Array<string> });
       }
     } finally { result.close(); }
     return operations;
   }
 
-  async cachedPeople(): Promise<Array<DeviceV3PersonChoice>> {
-    const result = await this.store.querySql('SELECT payload_json FROM annotation_people ORDER BY rowid');
+  async cachedPeople(personId?: string): Promise<Array<DeviceV3PersonChoice>> {
+    const result = await this.store.querySql('SELECT payload_json FROM annotation_people' +
+      (personId === undefined ? ' ORDER BY rowid' : ' WHERE person_id=?'), personId === undefined ? [] : [personId]);
     const people: Array<DeviceV3PersonChoice> = [];
     try {
       while (result.goToNextRow()) { people.push(JSON.parse(result.getString(0)) as DeviceV3PersonChoice); }
@@ -248,11 +262,20 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
       value.pending_operations, value.retry_count);
   }
 
-  async projectionRows(resourceType: string): Promise<Array<PhoneV3ProjectionRow>> {
+  async projectionRows(resourceType: string, resourceIds?: Array<string>): Promise<Array<PhoneV3ProjectionRow>> {
+    if (resourceIds !== undefined && resourceIds.length === 0) { return []; }
+    if (resourceIds !== undefined && resourceIds.length > 400) {
+      let rows: Array<PhoneV3ProjectionRow> = [];
+      for (let offset = 0; offset < resourceIds.length; offset += 400) {
+        rows = rows.concat(await this.projectionRows(resourceType, resourceIds.slice(offset, offset + 400)));
+      }
+      return rows;
+    }
     const table = projectionTable(resourceType);
+    const filter = resourceIds === undefined ? '' : ` WHERE resource_id IN (${resourceIds.map((): string => '?').join(',')})`;
     const result = await this.store.querySql(
-      `SELECT resource_id, revision, payload_json, updated_at FROM ${table}
-       ORDER BY updated_at DESC, resource_id`);
+      `SELECT resource_id, revision, payload_json, updated_at FROM ${table}${filter}
+       ORDER BY updated_at DESC, resource_id`, resourceIds ?? []);
     const values: Array<PhoneV3ProjectionRow> = [];
     try {
       while (result.goToNextRow()) {
@@ -339,12 +362,16 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
 
   async linkLocalAudio(sessionKey: string, localPath: string, sha256: string,
     uploadStatus: string): Promise<void> {
+    await this.beginTransaction();
+    try {
     await this.store.executeSql(
       `INSERT INTO local_audio_links (session_key, local_path, sha256, upload_status, updated_at)
        VALUES (?, ?, ?, ?, ?) ON CONFLICT(session_key, local_path) DO UPDATE SET
        sha256 = excluded.sha256,
        upload_status = excluded.upload_status, updated_at = excluded.updated_at`,
       [sessionKey, localPath, sha256, uploadStatus, Date.now()]);
+      await this.commit();
+    } catch (error) { await this.rollback(); throw repositoryError(error as Object); }
   }
 
   async replaceReviewItems(items: Array<Object>): Promise<void> {
@@ -372,12 +399,21 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
     }
   }
 
-  async markSyncFailure(message: string): Promise<void> {
+  async markSyncFailure(message: string, operationIds?: Array<string>): Promise<void> {
     const text = message.substring(0, 1000);
     await this.beginTransaction();
     try {
-      await this.store.executeSql(
-        'UPDATE outbox SET attempt_count = attempt_count + 1, last_error = ?', [text]);
+      if (operationIds === undefined) {
+        await this.store.executeSql('UPDATE outbox SET attempt_count = attempt_count + 1, last_error = ?', [text]);
+      } else {
+        for (let offset=0; offset<operationIds.length; offset+=400) {
+          const ids=operationIds.slice(offset,offset+400);
+          const args: Array<relationalStore.ValueType> = [text];
+          for (let id of ids) { args.push(id); }
+          await this.store.executeSql(`UPDATE outbox SET attempt_count = attempt_count + 1, last_error = ?
+            WHERE operation_id IN (${ids.map(():string=>'?').join(',')})`,args);
+        }
+      }
       await this.store.executeSql(
         `UPDATE sync_state SET last_error = ?, last_attempt_at = ?,
          retry_count = retry_count + 1 WHERE singleton_id = 1`,
@@ -395,6 +431,15 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
 
   async applyChange(change: DeviceV3Change): Promise<void> {
     const table = projectionTable(change.resource_type);
+    const current = await this.store.querySql(`SELECT revision, 0 AS deleted FROM ${table} WHERE resource_id=?
+      UNION ALL SELECT revision, 1 AS deleted FROM projection_tombstones WHERE resource_type=? AND resource_id=?`,
+      [change.resource_id,change.resource_type,change.resource_id]);
+    try {
+      while (current.goToNextRow()) {
+        if (current.getLong(0)>change.revision ||
+          (current.getLong(0)===change.revision && current.getLong(1)===1 && change.operation!=='tombstone')) { return; }
+      }
+    } finally { current.close(); }
     if (change.operation === 'tombstone') {
       if (change.resource_type === 'recording_session') {
         await this.rebindCanonicalSession(change.resource_id, change.resource);
@@ -619,6 +664,22 @@ async function migrate(store: relationalStore.RdbStore): Promise<void> {
         FROM outbox o,json_each(o.payload_json,'$.selections') j
         WHERE o.applied_revision IS NOT NULL AND json_array_length(o.payload_json,'$.selections')=1`);
       store.version = 10;
+    }
+    if (store.version < 11) {
+      // Membership index keeps normal saves independent of unrelated outbox/history.
+      // Triggers also cover receipt deletion, rollback and legacy multi-selection rows.
+      await store.executeSql(`CREATE TABLE IF NOT EXISTS outbox_selections (operation_id TEXT NOT NULL,
+        resource_id TEXT NOT NULL, PRIMARY KEY(resource_id, operation_id))`);
+      await store.executeSql('CREATE INDEX IF NOT EXISTS outbox_selections_operation ON outbox_selections(operation_id)');
+      await store.executeSql(`INSERT OR IGNORE INTO outbox_selections
+        SELECT o.operation_id,json_extract(j.value,'$.utterance_id')
+        FROM outbox o,json_each(o.payload_json,'$.selections') j`);
+      await store.executeSql(`CREATE TRIGGER IF NOT EXISTS outbox_selection_insert AFTER INSERT ON outbox BEGIN
+        INSERT OR IGNORE INTO outbox_selections SELECT NEW.operation_id,json_extract(value,'$.utterance_id')
+        FROM json_each(NEW.payload_json,'$.selections'); END`);
+      await store.executeSql(`CREATE TRIGGER IF NOT EXISTS outbox_selection_delete AFTER DELETE ON outbox BEGIN
+        DELETE FROM outbox_selections WHERE operation_id=OLD.operation_id; END`);
+      store.version = 11;
     }
     store.commit();
   } catch (error) {

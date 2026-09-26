@@ -193,14 +193,16 @@ export struct PhoneV3SyncCenterPage {
           }
           .width('100%')
 
-          Button(this.viewModel.busy ? '正在备份…' : '立即备份更新', { type: ButtonType.Capsule })
+          Text(this.viewModel.computerSyncError || this.viewModel.computerSyncMessage).id('computer-sync-status')
+            .fontSize(13).width('100%')
+          Button(this.viewModel.computerSyncActive ? '正在备份…' : '立即备份更新', { type: ButtonType.Capsule })
             .width('100%')
             .height(50)
-            .enabled(!this.viewModel.busy && this.viewModel.snapshot.paired)
+            .enabled(!this.viewModel.computerSyncActive && !this.viewModel.busy && this.viewModel.snapshot.paired)
             .buttonStyle(ButtonStyleMode.EMPHASIZED)
             .onClick((): void => this.viewModel.synchronize())
 
-          if (this.viewModel.busy) {
+          if (this.viewModel.computerSyncActive) {
             Button('本批完成后停止同步').onClick((): void => this.viewModel.cancelSynchronize())
           }
 

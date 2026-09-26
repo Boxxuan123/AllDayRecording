@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<user_config>
+  <environment>
+    <device type="usb-hdc" label="ohos">
+      <info ip="" port="" sn="" alias="" />
+    </device>
+  </environment>
+  <testcases>
+    <dir>testcases</dir>
+  </testcases>
+  <resource>
+    <dir>resource</dir>
+  </resource>
+  <devicelog>
+    <enable>ON</enable>
+    <loglevel>INFO</loglevel>
+  </devicelog>
+  <loglevel>INFO</loglevel>
+</user_config>

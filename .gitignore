@@ -18,3 +18,7 @@
 /.clang-tidy
 **/.test
 /.appanalyzer
+/tests/ui/reports/
+/tests/ui/tmp_hypium/
+/tests/ui/resource/baseline/
+**/__pycache__/

@@ -26,18 +26,18 @@ import {
 
 export interface PhoneV3ProjectionRepositoryPort extends PhoneProjectionStorage,
   ComputerRecordingBackupReceiptPort {
-  annotationOperations(): Promise<Array<PhonePendingOperation>>;
-  cachedPeople(): Promise<Array<DeviceV3PersonChoice>>;
+  annotationOperations(resourceIds?: Array<string>): Promise<Array<PhonePendingOperation>>;
+  cachedPeople(personId?: string): Promise<Array<DeviceV3PersonChoice>>;
   cachePeople(people: Array<DeviceV3PersonChoice>): Promise<void>;
   removeConflict(operationId: string): Promise<void>;
   enqueue(operation: DeviceV3ClientOperation): Promise<void>;
   pendingOperations(limit?: number, excludedIds?: Array<string>): Promise<Array<PhonePendingOperation>>;
   currentCursor(): Promise<string>;
-  projectionRows(resourceType: string): Promise<Array<PhoneV3ProjectionRow>>;
+  projectionRows(resourceType: string, resourceIds?: Array<string>): Promise<Array<PhoneV3ProjectionRow>>;
   localAudioLinks(): Promise<Array<PhoneV3LocalAudioLink>>;
   conflictRows(): Promise<Array<PhoneV3Conflict>>;
   v3Status(): Promise<PhoneV3SyncStatus>;
-  markSyncFailure(message: string): Promise<void>;
+  markSyncFailure(message: string, operationIds?: Array<string>): Promise<void>;
   rebuildFromComputer(): Promise<void>;
   linkLocalAudio(sessionKey: string, localPath: string, sha256: string,
     uploadStatus: string): Promise<void>;

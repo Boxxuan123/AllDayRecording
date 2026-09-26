@@ -1,0 +1,5 @@
+{
+  "description": "独立 TLS 合成慢传输期间的生产标注页面和本地音频",
+  "environment": [{"type": "device", "label": "phone"}],
+  "driver": {"type": "DeviceTest", "py_file": ["PhoneSyncInteraction.py"]}
+}

@@ -133,6 +133,7 @@ const tick=()=>new Promise(r=>setImmediate(r));
  saveVm.useCases = { queueAnnotation: async (rows, personId, name, personChanged, sound) => {
    queueCalls++; assert.equal(rows[0].revision, 7); assert.equal(name, 'Alice');
    await new Promise(resolve => { releaseSave = resolve; });
+   return [];
  }, loadLocal: async () => [], loadCached: async () => new PhoneV3Snapshot() };
  const submit = () => saveVm.saveAnnotation([target], '', 'Alice', true, '', fresh => saved.push(fresh));
  submit(); submit(); assert.equal(queueCalls, 1); assert.equal(saveVm.annotationSaving, true);
@@ -140,10 +141,14 @@ const tick=()=>new Promise(r=>setImmediate(r));
  assert.deepEqual(saved, [true]); assert.equal(saveVm.annotationSaving, false);
  saveVm.useCases.queueAnnotation = async () => { queueCalls++; throw Error('disk full'); };
  submit(); await tick(); assert.deepEqual(saved, [true]); assert.match(saveVm.error, /数据库保存失败/);
- saveVm.useCases.queueAnnotation = async () => { queueCalls++; };
- saveVm.useCases.loadCached = async () => { throw Error('read failed'); };
+ saveVm.useCases.queueAnnotation = async () => { queueCalls++; return []; };
+ // A post-commit display failure must not be reported as a failed transaction.
+ const clearSavedError = saveVm.clearError.bind(saveVm);
+ saveVm.clearError = () => { throw Error('display failed'); };
+ saveVm.useCases.loadCached = async () => { throw Error('save must not read'); };
  submit(); await tick(); await tick(); assert.deepEqual(saved, [true, false]);
  assert.match(saveVm.error, /已在手机保存/);
+ saveVm.clearError = clearSavedError;
  const submitted = queueCalls;
  saveVm.useCases.loadCached = async () => new PhoneV3Snapshot();
  let reloaded = 0; saveVm.reloadAnnotationResult(() => reloaded++); await tick();

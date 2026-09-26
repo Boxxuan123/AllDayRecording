@@ -1,4 +1,5 @@
 import { syncRequestBatch } from '../data/PhoneSyncBatch';
+import { PhonePendingOperation } from '../data/PhoneSyncProjection';
 import { PHONE_V3_SOUND_KINDS, phoneV3SoundKindLabel } from '../domain/PhoneV3SoundKind';
 import { PhoneV3LocalAnnotation, PhoneV3AnnotationSentence, applyLocalAnnotations, applyAnnotationConflicts, annotationRows } from '../domain/PhoneV3LocalAnnotation';
 import {
@@ -194,7 +195,9 @@ export class PhoneV3UseCases {
       base_revision: utterance.revision,
       payload: payload
     };
-    await this.repository.enqueue(operation);
+    await this.repository.beginTransaction();
+    try { await this.repository.enqueue(operation); await this.repository.commit(); }
+    catch (error) { await this.repository.rollback(); throw error as Error; }
   }
 
   async localPeople(): Promise<Array<DeviceV3PersonChoice>> {
@@ -212,7 +215,7 @@ export class PhoneV3UseCases {
 
   // One transaction for both dimensions. Helpers below never start nested transactions.
   async queueAnnotation(utterances: Array<PhoneV3Utterance>, personId: string, name: string,
-    personChanged: boolean, soundKind: string): Promise<void> {
+    personChanged: boolean, soundKind: string): Promise<Array<PhonePendingOperation>> {
     if (utterances.length === 0 || utterances.length > 2000 ||
       (!personChanged && soundKind.length === 0) ||
       (soundKind.length > 0 && PHONE_V3_SOUND_KINDS.indexOf(soundKind) < 0)) {
@@ -227,9 +230,10 @@ export class PhoneV3UseCases {
         speaker_label: value.speakerLabel ?? '未知说话人', sound_kind: value.soundKind,
         session_id: value.sessionId, start_ms: value.startMs, end_ms: value.endMs };
     });
+    const committed: Array<PhonePendingOperation> = [];
     await this.repository.beginTransaction();
     try {
-      const projections = await this.repository.projectionRows('utterance');
+      const projections = await this.repository.projectionRows('utterance', Array.from(ids));
       const current = new Map<string, PhoneV3ProjectionRow>();
       for (let projection of projections) { if (ids.has(projection.resourceId)) { current.set(projection.resourceId, projection); } }
       for (let reviewed of utterances) {
@@ -240,7 +244,7 @@ export class PhoneV3UseCases {
         }
       }
       if (personChanged) {
-        const people = await this.repository.cachedPeople();
+        const people = personId.length > 0 ? await this.repository.cachedPeople(personId) : [];
         const person = people.find((value: DeviceV3PersonChoice): boolean => value.person_id === personId);
         if (personId.length > 0 && person === undefined) { throw new Error('请重新选择人物'); }
         const label = person === undefined ? name.trim() : person.display_name;
@@ -250,21 +254,23 @@ export class PhoneV3UseCases {
         if (choice.local) { payload.new_person_id = choice.person_id; payload.display_name = label; }
         else { payload.person_id = choice.person_id; }
         await this.repository.cachePeople([choice]);
-        await this.enqueueAnnotationItems('speaker.assign', payload);
+        committed.push(...await this.enqueueAnnotationItems('speaker.assign', payload));
       }
       if (soundKind.length > 0) {
-        await this.enqueueAnnotationItems('segment.classify', { selections: selections,
-          person_name: phoneV3SoundKindLabel(soundKind), sound_kind: soundKind });
+        committed.push(...await this.enqueueAnnotationItems('segment.classify', { selections: selections,
+          person_name: phoneV3SoundKindLabel(soundKind), sound_kind: soundKind }));
       }
       await this.repository.commit();
+      return committed;
     } catch (error) {
       await this.repository.rollback();
       throw error instanceof Error ? error : new Error(JSON.stringify(error));
     }
   }
 
-  private async enqueueAnnotationItems(kind: string, payload: PhoneV3LocalAnnotation): Promise<void> {
-    const predecessors = await this.repository.annotationOperations();
+  private async enqueueAnnotationItems(kind: string, payload: PhoneV3LocalAnnotation): Promise<Array<PhonePendingOperation>> {
+    const predecessors = await this.repository.annotationOperations(payload.selections.map((row): string => row.utterance_id));
+    const committed: Array<PhonePendingOperation> = [];
     for (let selection of payload.selections) {
       const dependencies: Array<string> = [];
       for (let operation of predecessors) {
@@ -276,9 +282,12 @@ export class PhoneV3UseCases {
       const item: PhoneV3LocalAnnotation = { selections: [selection], person_name: payload.person_name,
         person_id: payload.person_id, new_person_id: payload.new_person_id,
         display_name: payload.display_name, sound_kind: payload.sound_kind, depends_on: dependencies };
-      await this.repository.enqueue({ operation_id: newOperationId(), kind: kind,
-        base_revision: null, payload: item });
+      const operation: PhonePendingOperation = { operation_id: newOperationId(), kind: kind,
+        base_revision: null, payload: item, attempt_count: 0 };
+      await this.repository.enqueue(operation);
+      committed.push(operation);
     }
+    return committed;
   }
 
   async annotationConflictRows(payload: PhoneV3LocalAnnotation): Promise<Array<PhoneV3Utterance>> {
@@ -330,6 +339,7 @@ export class PhoneV3UseCases {
     activeSyncRepositories.add(this.repository);
     this.syncActive = true;
     this.syncCancelled = false;
+    let dispatched: Array<string> = [];
     try {
       const backup = pullOnly || this.audioBackup === undefined ? new PhoneV3AudioBackupResult() :
         await this.audioBackup.backup();
@@ -357,8 +367,10 @@ export class PhoneV3UseCases {
         const request = syncRequestBatch(cursor, candidates);
         const operations = request.client_operations;
         onStatus(`正在同步转写与处理状态：第 ${batches + 1} 批`);
+        dispatched = operations.map((operation): string => operation.operation_id);
         const response = await session.sync(request);
         await applySyncResponse(this.repository, response);
+        dispatched = [];
         for (let op of operations) { attempted.push(op.operation_id); }
         submitted += response.receipts.filter((receipt): boolean => receipt.status === 'applied' &&
           operations.some((op): boolean => op.operation_id === receipt.operation_id)).length;
@@ -374,7 +386,7 @@ export class PhoneV3UseCases {
       await this.repository.replaceReviewItems(reviews.items);
       try {
         const people = await session.annotations({ action: 'people' });
-        await this.repository.cachePeople(people.people ?? []);
+        await this.cacheRemotePeople(people.people ?? []);
       } catch (error) { /* Cached people remain usable while the computer is unavailable. */ }
       const result = new PhoneV3SyncResult(batches, submitted, cursor, backup);
       const statusAfter = await this.repository.v3Status();
@@ -387,8 +399,8 @@ export class PhoneV3UseCases {
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : JSON.stringify(error);
-      await this.repository.markSyncFailure(message);
-      throw new Error(message);
+      await this.repository.markSyncFailure(message, dispatched);
+      throw error instanceof Error ? error : new Error(message);
     } finally { this.syncActive = false; activeSyncRepositories.delete(this.repository); }
   }
 
@@ -422,7 +434,7 @@ export class PhoneV3UseCases {
   async annotations(request: DeviceV3AnnotationRequest): Promise<DeviceV3AnnotationResponse> {
     const session = await this.remote.connect();
     const response = await session.annotations(request);
-    if (response.people !== undefined) { await this.repository.cachePeople(response.people); }
+    if (response.people !== undefined) { await this.cacheRemotePeople(response.people); }
     if (response.utterances !== undefined) {
       await this.repository.beginTransaction();
       try {
@@ -447,6 +459,12 @@ export class PhoneV3UseCases {
   async loadReviewAudio(reviewId: string, prototypeId: string): Promise<DeviceV3ReviewAudioResponse> {
     const session = await this.remote.connect();
     return session.reviewAudio({ review_id: reviewId, prototype_id: prototypeId });
+  }
+
+  private async cacheRemotePeople(people: Array<DeviceV3PersonChoice>): Promise<void> {
+    await this.repository.beginTransaction();
+    try { await this.repository.cachePeople(people); await this.repository.commit(); }
+    catch (error) { await this.repository.rollback(); throw error as Error; }
   }
 
   private async reconcileReminders(reminders: Array<PhoneV3Reminder>): Promise<void> {

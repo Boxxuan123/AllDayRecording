@@ -40,7 +40,7 @@ export struct PhoneV3AnnotationPage {
   private conflictsById: Map<string, Array<PhoneV3Conflict>> = new Map<string, Array<PhoneV3Conflict>>();
 
   aboutToAppear(): void { this.open(); }
-  aboutToDisappear(): void { this.viewModel.stopPlayback(); }
+  aboutToDisappear(): void { this.opened = false; this.viewModel.stopPlayback(); }
 
   private open(): void {
     this.editor.update(this.viewModel.snapshot.sessions);
@@ -116,6 +116,7 @@ export struct PhoneV3AnnotationPage {
     const ids = targets.map((row: PhoneV3Utterance): string => row.utteranceId);
     this.viewModel.saveAnnotation(targets, this.creating ? '' : this.personId, this.name,
       this.personChanged, this.soundKind, (refreshed: boolean): void => {
+        if (!this.opened) { return; }
         this.lastSavedIds = ids;
         this.feedback = '已保存 · 待同步';
         this.reloadNeeded = !refreshed;
@@ -287,7 +288,7 @@ export struct PhoneV3AnnotationPage {
               .fontSize(20).width('100%').padding({ top: 24 })
             if (this.editor.pending > 0) { this.quiet('回去处理', (): void => { this.editor.restartPending(); this.resetForm(); }) }
           }
-          if (this.feedback) { Text(this.feedback).fontSize(13).fontColor($r('app.color.brand_success')).width('100%') }
+          if (this.feedback) { Text(this.feedback).id('annotation-feedback').fontSize(13).fontColor($r('app.color.brand_success')).width('100%') }
           if (this.reloadNeeded) {
             Button('重试读取结果').onClick((): void => this.viewModel.reloadAnnotationResult((): void => this.afterRead()))
           }
@@ -299,7 +300,7 @@ export struct PhoneV3AnnotationPage {
               else { this.editor.focus(this.editor.rows.find((row: PhoneV3Utterance): boolean => row.utteranceId === id)); }
             }))
           }
-          if (this.error) { Text(this.error).fontSize(13).fontColor($r('app.color.brand_warning')).width('100%') }
+          if (this.error) { Text(this.error).id('annotation-error').fontSize(13).fontColor($r('app.color.brand_warning')).width('100%') }
         }.width('100%').alignItems(HorizontalAlign.Start).padding({ bottom: 16 })
       }.width('100%').layoutWeight(1).align(Alignment.TopStart)
       if (this.resultMode) {
@@ -313,6 +314,7 @@ export struct PhoneV3AnnotationPage {
             this.quiet('暂时跳过', (): void => this.navigate((): void => this.editor.move(1)))
           }
           Button(this.busy ? '正在保存…' : this.editor.batch ? `保存 ${this.editor.selectedCount} 条` : this.editor.doneMode ? '保存修改' : '保存并继续')
+            .id('annotation-save')
             .layoutWeight(1).constraintSize({ minHeight: 48 }).enabled(!this.busy && !this.disabledReason()).onClick((): void => this.save())
         }.width('100%')
       } else if (!this.reloadNeeded) {
@@ -345,7 +347,7 @@ struct AnnotationSettingRow {
       Text(this.label).fontSize(16).fontColor($r('app.color.text_primary'))
       Text(this.value).fontSize(15).fontColor($r('app.color.text_secondary')).textAlign(TextAlign.End).layoutWeight(1)
       SymbolGlyph($r('sys.symbol.chevron_right')).fontSize(14).fontColor([$r('app.color.text_secondary')])
-    }.width('100%').constraintSize({ minHeight: 60 }).padding({ left: 16, right: 16, top: 12, bottom: 12 })
+    }.id(`annotation-setting-${this.label}`).width('100%').constraintSize({ minHeight: 60 }).padding({ left: 16, right: 16, top: 12, bottom: 12 })
       .backgroundColor($r('app.color.surface_primary')).onClick((): void => this.onSelect())
       .accessibilityGroup(true).accessibilityText(`${this.label}，${this.value}`)
   }

@@ -1,0 +1,13 @@
+{
+  "description": "手机首页进入更多页面并验证设备与数据分区",
+  "environment": [
+    {
+      "type": "device",
+      "label": "phone"
+    }
+  ],
+  "driver": {
+    "type": "DeviceTest",
+    "py_file": ["PhoneMoreSmoke.py"]
+  }
+}

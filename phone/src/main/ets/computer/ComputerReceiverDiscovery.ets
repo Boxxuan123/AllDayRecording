@@ -1,4 +1,5 @@
 import { common } from '@kit.AbilityKit';
+import { ComputerConnectionError, connectionDiagnosticId } from './ComputerConnectionError';
 import { util } from '@kit.ArkTS';
 import { mdns } from '@kit.NetworkKit';
 import {
@@ -13,12 +14,16 @@ const DISCOVERY_TIMEOUT_MS: number = 12000;
 
 export class ComputerReceiverDiscovery {
   private context: common.UIAbilityContext;
+  private cancelPending: () => void = (): void => {};
+
+  cancel(): void { this.cancelPending(); }
 
   constructor(context: common.UIAbilityContext) {
     this.context = context;
   }
 
   discover(receiverId: string): Promise<string> {
+    this.cancel();
     const expectedReceiverId = normalizeReceiverId(receiverId);
     return new Promise<string>((resolve: (value: string) => void, reject: (error: Error) => void) => {
       if (!canIUse('SystemCapability.Communication.NetManager.MDNS')) {
@@ -35,9 +40,17 @@ export class ComputerReceiverDiscovery {
         }
         try {
           discovery.off('serviceFound', foundCallback);
+        } catch (error) {}
+        try {
           discovery.stopSearchingMDNS();
         } catch (error) {
         }
+      };
+      this.cancelPending = (): void => {
+        if (settled) { return; }
+        settled = true;
+        cleanup();
+        reject(new ComputerConnectionError('cancelled', 'discover', '已取消电脑发现') as Error);
       };
 
       const foundCallback = (serviceInfo: mdns.LocalServiceInfo): void => {
@@ -56,6 +69,7 @@ export class ComputerReceiverDiscovery {
         });
       };
 
+      try {
       discovery.on('serviceFound', foundCallback);
       timeoutId = setTimeout((): void => {
         if (settled) {
@@ -63,9 +77,11 @@ export class ComputerReceiverDiscovery {
         }
         settled = true;
         cleanup();
-        reject(new Error('12 秒内未发现已配对电脑；请确认电脑接收服务已启动且两端连接同一 Wi-Fi'));
+        const failure = new ComputerConnectionError('discovery_timeout', 'discover',
+          '12 秒内未发现已配对电脑；请确认电脑接收服务已启动且两端连接同一 Wi-Fi');
+        failure.requestId = connectionDiagnosticId();
+        reject(failure as Error);
       }, DISCOVERY_TIMEOUT_MS);
-      try {
         discovery.startSearchingMDNS();
       } catch (error) {
         settled = true;

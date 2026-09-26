@@ -200,14 +200,14 @@ export class ComputerRecordingUploadService {
     }
     let fd: number = -1;
     try {
-      fd = fileIo.openSync(recording.path, fileIo.OpenMode.READ_ONLY).fd;
+      fd = (await fileIo.open(recording.path, fileIo.OpenMode.READ_ONLY)).fd;
       let positioned = false;
       while (remote.offset < metadata.size) {
         const sentOffset = remote.offset;
         const length = Math.min(chunkBytes, metadata.size - remote.offset);
         const buffer = new ArrayBuffer(length);
-        const read = positioned ? fileIo.readSync(fd, buffer, { length: length }) :
-          fileIo.readSync(fd, buffer, { offset: remote.offset, length: length });
+        const read = positioned ? await fileIo.read(fd, buffer, { length: length }) :
+          await fileIo.read(fd, buffer, { offset: remote.offset, length: length });
         positioned = true;
         if (read !== length) {
           throw new Error(`录音文件没有完整读取：${recording.fileName}`);
@@ -227,7 +227,7 @@ export class ComputerRecordingUploadService {
     } finally {
       if (fd >= 0) {
         try {
-          fileIo.closeSync(fd);
+          await fileIo.close(fd);
         } catch (error) {
         }
       }

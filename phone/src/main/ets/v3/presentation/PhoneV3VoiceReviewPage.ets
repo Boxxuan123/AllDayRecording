@@ -110,6 +110,7 @@ export struct PhoneV3VoiceReviewPage {
     this.feedback = '';
     // Do not stop playback here: the VM checks the complete-audition credential first.
     this.viewModel.resolveReview(current.item.reviewId, action, current.candidate.prototypeId, '', (): void => {
+      if (this.task?.key !== current.key) { return; }
       this.feedback = action === 'uncertain' ? '上一条已提交不确定；电脑仍可能保留此候选' : action === 'retract' ? '上一条样本授权已撤回' : '上一条审核结果已提交';
       this.viewModel.stopPlayback(); this.next();
     });

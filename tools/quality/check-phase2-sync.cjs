@@ -14,11 +14,12 @@ async function setup(count, sync) {
   let repo = await Repository.open({ databasePath });
   for (let n = 1; n <= count; n++) await repo.enqueue({ operation_id: id(n), kind: 'segment.classify',
     base_revision: null, payload: { selections: [], sound_kind: 'speech' } });
-  // Reconstruct a synthetic v8 store and exercise the actual v8 -> v9 upgrade.
+  // Reconstruct a synthetic v8 store and exercise the actual upgrade to v11.
+  stores.at(-1).db.exec('DROP TRIGGER outbox_selection_insert; DROP TRIGGER outbox_selection_delete; DROP TABLE outbox_selections');
   stores.at(-1).db.exec('ALTER TABLE outbox DROP COLUMN applied_revision; PRAGMA user_version=8');
   // Reconstruct after a real database close/reopen, before synchronization.
   stores.at(-1).db.close(); repo = await Repository.open({ databasePath });
-  assert.equal(stores.at(-1).version,10);
+  assert.equal(stores.at(-1).version,11);
   const session = { status: async () => ({ contract_version: contract.V3_CONTRACT_VERSION,
     projection_version: contract.V3_PROJECTION_VERSION }), sync, reviews: async () => ({ items: [] }),
     annotations: async () => ({ people: [] }) };

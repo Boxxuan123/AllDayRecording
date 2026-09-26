@@ -132,7 +132,7 @@ export struct PhoneV3RecordingListPage {
   @Builder
   private moreButton(session: PhoneV3SessionCard) {
     Button({ type: ButtonType.Circle, stateEffect: true }) {
-      if (this.currentUiState().busy && this.viewModel.computerSyncActive &&
+      if (this.viewModel.computerSyncActive &&
         session.uploadStatus !== 'uploaded' &&
         this.viewModel.completedSessionKeys.indexOf(session.sessionKey) < 0) {
         LoadingProgress()
@@ -230,7 +230,7 @@ export struct PhoneV3RecordingListPage {
       .backgroundColor($r('app.color.surface_secondary'))
 
       if (this.viewModel.computerProgress.totalFiles > 0) {
-        Text(this.currentUiState().message)
+        Text(this.viewModel.computerSyncError || this.viewModel.computerSyncMessage)
           .width('100%').fontSize(12).maxLines(4)
         if (this.viewModel.computerProgress.activeFiles.length > 0) {
           Text('并行文件：\n' + this.viewModel.computerProgress.activeFiles.join('\n'))

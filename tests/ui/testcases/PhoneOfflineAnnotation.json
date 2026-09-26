@@ -1,0 +1,5 @@
+{
+  "description": "隔离数据库上的真实生产标注页面：离线保存、重启读回、写入失败",
+  "environment": [{"type": "device", "label": "phone"}],
+  "driver": {"type": "DeviceTest", "py_file": ["PhoneOfflineAnnotation.py"]}
+}

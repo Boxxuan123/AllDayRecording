@@ -77,7 +77,7 @@ export struct PhoneV3RootPage {
   @Builder
   private backupAction() {
     Button({ type: ButtonType.Circle, stateEffect: true }) {
-      if (this.viewModel.busy) {
+      if (this.viewModel.computerSyncActive) {
         LoadingProgress()
           .width(22)
           .height(22)
@@ -91,9 +91,9 @@ export struct PhoneV3RootPage {
     .width(PHONE_V3_BACKUP_ACTION_HEIGHT)
     .height(PHONE_V3_BACKUP_ACTION_HEIGHT)
     .systemMaterial(phoneV3ImmersiveMaterial())
-    .enabled(!this.viewModel.busy && this.viewModel.snapshot.paired)
+    .enabled(!this.viewModel.computerSyncActive && !this.viewModel.busy && this.viewModel.snapshot.paired)
     .opacity(this.viewModel.snapshot.paired ? 1 : 0.55)
-    .accessibilityText(this.viewModel.busy ? '正在备份到电脑' : '备份到电脑')
+    .accessibilityText(this.viewModel.computerSyncActive ? '正在备份到电脑' : '备份到电脑')
     .onClick((): void => this.viewModel.synchronize())
   }
 

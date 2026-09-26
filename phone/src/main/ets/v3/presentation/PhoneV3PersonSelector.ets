@@ -32,7 +32,7 @@ export struct PhoneV3PersonSelector {
                 Row({ space: 12 }) {
                   Text(p.display_name).fontSize(16).layoutWeight(1).fontColor($r('app.color.text_primary'))
                   if (this.selectedId === p.person_id) { SymbolGlyph($r('sys.symbol.checkmark')).fontSize(20).fontColor([$r('app.color.brand_primary')]) }
-                }.width('100%').constraintSize({ minHeight: 56 }).padding(16)
+                }.id(`annotation-person-${p.person_id}`).width('100%').constraintSize({ minHeight: 56 }).padding(16)
                   .onClick((): void => this.onSelect(p.person_id, p.display_name))
               }
             }, (p: DeviceV3PersonChoice): string => p.person_id)

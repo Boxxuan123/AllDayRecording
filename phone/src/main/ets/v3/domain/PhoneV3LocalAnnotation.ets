@@ -27,6 +27,10 @@ export function applyLocalAnnotations(sessions: Array<PhoneV3SessionCard>,
   for (let session of sessions) {
     for (let row of session.utterances) { rows.set(row.utteranceId, row); }
   }
+  applyAnnotationRows(rows, operations);
+}
+
+export function applyAnnotationRows(rows: Map<string, PhoneV3Utterance>, operations: Array<PhonePendingOperation>): void {
   for (let operation of operations) {
     const annotation = operation.payload as PhoneV3LocalAnnotation;
     for (let selection of annotation.selections) {
