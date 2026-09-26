@@ -14,10 +14,12 @@ import { PhoneV3DeviceRemote } from '../v3/data/PhoneV3DeviceRemote';
 import { PhoneProjectionRepository } from '../v3/data/PhoneProjectionRepository';
 import { PhoneV3UseCases } from '../v3/application/PhoneV3UseCases';
 import { PhoneV3AudioBackupPort, PhoneV3AudioBackupResult, PhoneV3LocalAudioRepositoryPort } from '../v3/application/PhoneV3Ports';
-import { PhoneV3LocalAudioFact } from '../v3/domain/PhoneV3Models';
+import { PhoneV3LocalAudioFact, PhoneV3Utterance } from '../v3/domain/PhoneV3Models';
+import { PhonePendingOperation } from '../v3/data/PhoneSyncProjection';
 import { PhoneV3ViewModel } from '../v3/presentation/PhoneV3ViewModel';
 import { PhoneV3AnnotationEditor } from '../v3/domain/PhoneV3AnnotationEditor';
 import { PhoneV3AnnotationPage } from '../v3/presentation/PhoneV3AnnotationPage';
+import { nativeRefresh } from './NativeRefresh';
 
 const KEY: string = 'alldayrecording.phase2a.synthetic.20260926';
 const DB: string = 'sync-phase2a-isolated-20260926.db';
@@ -49,6 +51,17 @@ class ProductionBackup implements PhoneV3AudioBackupPort {
   }
 }
 class Route { editor: PhoneV3AnnotationEditor; constructor(editor: PhoneV3AnnotationEditor) { this.editor=editor; } }
+interface SaveTime { started: number; committed: number; operationIds: Array<string>; }
+class TimedUseCases extends PhoneV3UseCases {
+  times: Array<SaveTime> = [];
+  async queueAnnotation(rows: Array<PhoneV3Utterance>, personId: string, name: string,
+    changed: boolean, kind: string): Promise<Array<PhonePendingOperation>> {
+    const started = Date.now();
+    const operations = await super.queueAnnotation(rows,personId,name,changed,kind);
+    this.times.push({started:started,committed:Date.now(),operationIds:operations.map((op)=>op.operation_id)});
+    return operations;
+  }
+}
 async function write(path: string, bytes: Uint8Array): Promise<void> {
   const file = await fileIo.open(path, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
   try { await fileIo.write(file.fd, bytes.buffer); } finally { await fileIo.close(file); }
@@ -69,6 +82,8 @@ struct Index {
   private player: AudioPlaybackService | undefined = undefined;
   private recordingPath: string = '';
   private playbackPath: string = '';
+  private use: TimedUseCases | undefined = undefined;
+  private repository: PhoneProjectionRepository | undefined = undefined;
   aboutToAppear(): void { this.bootstrap(); }
   aboutToDisappear(): void { this.model.stop(); this.player?.release(); }
   private async bootstrap(): Promise<void> {
@@ -77,19 +92,21 @@ struct Index {
       const publicKey = await new PhoneDeviceKeyClient(KEY).ensurePublicKey();
       await write(context.cacheDir + '/sync-phase2a-public.txt', util.TextEncoder.create('utf-8').encodeInto(publicKey));
       this.note = '隔离 HUKS 公钥已准备';
+      if (await fileIo.access(context.cacheDir+'/sync-phase2a-resume')) { await this.prepare(true); }
     } catch (error) { this.note = String(error); }
   }
-  private async prepare(): Promise<void> {
+  private async prepare(resume: boolean = false): Promise<void> {
     try {
       const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
       const value = JSON.parse(util.TextDecoder.create('utf-8').decodeToString(
         await context.resourceManager.getRawFileContent('sync-phase2a-config.json'))) as Config;
       await write(context.cacheDir + '/sync-phase2a-ca.pem', await context.resourceManager.getRawFileContent('sync-phase2a-ca.pem'));
       this.uid = value.utteranceId;
+      if (!resume) {
       const previous = await relationalStore.getRdbStore(context, {name:DB, securityLevel:relationalStore.SecurityLevel.S2});
       await previous.close();
       await relationalStore.deleteRdbStore(context, DB);
-      let repository = await PhoneProjectionRepository.open(context, DB);
+      await PhoneProjectionRepository.open(context, DB);
       const store = await relationalStore.getRdbStore(context, {name:DB, securityLevel:relationalStore.SecurityLevel.S2});
       // Only this explicitly named synthetic DB is reconstructed as v10.
       await store.executeSql('DROP TRIGGER IF EXISTS outbox_selection_insert');
@@ -97,12 +114,15 @@ struct Index {
       await store.executeSql('DROP TABLE IF EXISTS outbox_selections');
       await store.executeSql("INSERT OR IGNORE INTO outbox(operation_id,kind,payload_json,created_at) VALUES('00000000000000000000999999','segment.classify','{\"selections\":[{\"utterance_id\":\"migration-target\",\"revision\":1}]}',0)");
       store.version = 10;
-      repository = await PhoneProjectionRepository.open(context, DB);
+      await PhoneProjectionRepository.open(context, DB);
       const indexed = await store.querySql("SELECT COUNT(*) FROM outbox_selections WHERE resource_id='migration-target'");
       indexed.goToFirstRow(); const count = indexed.getLong(0); indexed.close();
       if (store.version !== 11 || count !== 1) { throw new Error('原生迁移校验失败'); }
       await store.executeSql("DELETE FROM outbox WHERE operation_id='00000000000000000000999999'");
       this.migration = '原生 RDB 10→11 通过';
+      }
+      const repository = await PhoneProjectionRepository.open(context, DB);
+      this.repository = repository;
       this.recordingPath = context.cacheDir + '/sync-phase2a-recording.wav';
       const bytes = new Uint8Array(8*1024*1024+44);
       const header = new DataView(bytes.buffer);
@@ -126,8 +146,9 @@ struct Index {
       const backup = new ProductionBackup(context,config,repository,recording,(p: ComputerUploadProgress):void=>{
         this.progress = p.sessionCompleted ? '生产备份已完成' : '生产备份进行中 ' + p.transferredBytes;
       });
-      const use = new PhoneV3UseCases(repository,new Local(),new PhoneV3DeviceRemote(context,config),undefined,backup);
-      await use.synchronize();
+      const use = new TimedUseCases(repository,new Local(),new PhoneV3DeviceRemote(context,config),undefined,backup);
+      this.use = use;
+      if (!resume) { await use.synchronize(); }
       this.model = new PhoneV3ViewModel(use);
       this.model.snapshot = await use.loadCached([]);
       this.model.setStateChangeListener(():void=>{
@@ -137,14 +158,32 @@ struct Index {
           this.durable='原生持久化待同步 '+status.pendingOperations;
           write(context.cacheDir+'/sync-phase2a-state.json',util.TextEncoder.create('utf-8').encodeInto(JSON.stringify({
             pending:this.model.snapshot.sync.pendingOperations,durable:status.pendingOperations,
-            message:this.model.computerSyncMessage,error:this.model.computerSyncError,revision:this.revision,at:Date.now()
+            message:this.model.computerSyncMessage,error:this.model.computerSyncError,revision:this.revision,at:Date.now(),times:use.times
           })));
         });
       });
       this.player = new AudioPlaybackService((_playing:boolean,message:string):void=>{this.playback=message;});
       await this.model.startForegroundSync(context,'sync_phase2a_isolated_settings');
+      await write(context.cacheDir+'/sync-phase2a-resume',new Uint8Array([1]));
       this.note = '隔离生产链路已准备';
     } catch (error) { this.note=String(error); }
+  }
+  private async saveOfflineBatch(): Promise<void> {
+    try {
+      for (let kind of ['media_speech','non_speech','unintelligible']) {
+        const row = this.model.snapshot.sessions.flatMap((s)=>s.utterances).find((r)=>r.utteranceId===this.uid);
+        if (row === undefined) { throw new Error('missing synthetic row'); }
+        await new Promise<void>((resolve,reject):void=>{
+          this.model.saveAnnotation([row],'','',false,kind,():void=>resolve());
+          setTimeout(():void=>reject(new Error('local save deadline')),5000);
+        });
+        while (this.model.annotationSaving) { await new Promise<void>((resolve)=>setTimeout(resolve,10)); }
+      }
+      const operations = await this.repository!.pendingOperations();
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      await write(context.cacheDir+'/sync-phase2a-queue.json',util.TextEncoder.create('utf-8').encodeInto(JSON.stringify(operations)));
+      this.note='离线三次本地提交完成';
+    } catch(error) { this.note=String(error); }
   }
   private open(): void {
     const row = this.model.snapshot.sessions.flatMap((s)=>s.utterances).find((r)=>r.utteranceId===this.uid);
@@ -170,6 +209,11 @@ struct Index {
           Button('准备生产链路').id('phase2-prepare').onClick(():void=>{this.prepare();})
           Button('打开合成标注').id('phase2-open').onClick(():void=>this.open())
           Button('播放本地合成音频').id('phase2-play').onClick(():void=>{this.player?.play(this.playbackPath,2000,0);})
+          Button('连续保存三条合成标注').id('phase2-batch').onClick(():void=>{this.saveOfflineBatch();})
+          Button('验证原生刷新交错').id('phase2-refresh').onClick(():void=>{
+            nativeRefresh(this.getUIContext().getHostContext() as common.UIAbilityContext,this.repository!)
+              .then((result:string):void=>{this.note=result;}).catch((error:Object):void=>{this.note=String(error);});
+          })
           Button('清理隔离测试密钥').id('phase2-clean-key').onClick(():void=>{
             this.model.stop();
             huks.deleteKeyItem(KEY,{properties:[]}).then(():void=>{this.note='隔离测试密钥已清理';});

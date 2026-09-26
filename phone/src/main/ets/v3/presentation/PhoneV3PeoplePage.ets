@@ -18,7 +18,7 @@ class PhoneV3SpeakerSummary {
 @Component
 export struct PhoneV3PeoplePage {
   onOpenAnnotation: (rows: Array<PhoneV3Utterance>, title: string) => void = (): void => {};
-  viewModel: PhoneV3ViewModel = new PhoneV3ViewModel();
+  @ObjectLink viewModel: PhoneV3ViewModel;
   @Prop stateRevision: number = 0;
   onOpenReviews: () => void = (): void => {};
   onOpenSession: (session: PhoneV3SessionCard) => void = (): void => {};

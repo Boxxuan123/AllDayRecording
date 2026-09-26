@@ -81,6 +81,7 @@ export class PhoneV3ViewModel {
   private foreground: boolean = true;
   private retirement: Promise<void> = Promise.resolve();
   private syncProjectionDirty: boolean = false;
+  private syncRefreshRunning: boolean = false;
   private snapshotGeneration: number = 0;
   private lifecycleGeneration: number = 0;
   private lastProgressAt: number = 0;
@@ -241,6 +242,7 @@ export class PhoneV3ViewModel {
   setForeground(value: boolean): void {
     this.foreground = value; this.coordinator?.setForeground(value);
     if (!value) { this.stopPlayback(); }
+    else { this.refreshCommittedSync().catch((error: Object): void => this.fail(error)); }
   }
 
   async startForegroundSync(context: common.UIAbilityContext, preferencesName: string = 'phone_foreground_sync'): Promise<void> {
@@ -265,20 +267,10 @@ export class PhoneV3ViewModel {
         const result = await useCases.synchronize((message: string): void => {
           if (generation === this.lifecycleGeneration) { this.computerSyncMessage = message; }
         }, false, 4);
-        if (generation !== this.lifecycleGeneration || !this.foreground) { return new PhoneSyncWorkResult(false, 0, false); }
+        if (generation !== this.lifecycleGeneration) { return new PhoneSyncWorkResult(false, 0, false); }
         const requiresReload = this.syncProjectionDirty || result.requiresReload;
         this.syncProjectionDirty = this.syncProjectionDirty || result.changed;
-        if (this.syncProjectionDirty && !this.annotationSaving) {
-          const revision = this.snapshotGeneration;
-          if (result.changed && !requiresReload && result.utteranceIds.length > 0) {
-            const revision = ++this.snapshotGeneration;
-            const fresh = await useCases.refreshUtterances(this.snapshot,result.utteranceIds);
-            if (revision === this.snapshotGeneration && !this.annotationSaving) {
-              this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SNAPSHOT_READY,fresh));
-            }
-          } else { await this.refreshSnapshot(false); }
-          this.syncProjectionDirty = this.snapshotGeneration !== revision + 1 || this.annotationSaving;
-        }
+        await this.refreshCommittedSync(requiresReload ? [] : result.utteranceIds);
         this.computerSyncMessage = result.summary();
         const processing = this.snapshot.sessions.some((session): boolean =>
           ['queued', 'running', 'pending'].indexOf(session.processingStatus) >= 0);
@@ -512,6 +504,9 @@ export class PhoneV3ViewModel {
       .finally((): void => {
         this.annotationSaving = false;
         this.stateChangeListener();
+        if (lifecycle === this.lifecycleGeneration) {
+          this.refreshCommittedSync().catch((error: Object): void => this.fail(error));
+        }
       });
   }
 
@@ -870,6 +865,33 @@ export class PhoneV3ViewModel {
     } catch (error) {
       this.fail(error as Object);
     }
+  }
+
+  // A committed projection is local work, even when the next network request fails.
+  // Keep one reader and retain invalidated work until the conflicting save finishes.
+  private async refreshCommittedSync(ids: Array<string> = []): Promise<void> {
+    const useCases = this.useCases;
+    if (useCases === undefined || this.syncRefreshRunning) { return; }
+    const lifecycle = this.lifecycleGeneration;
+    this.syncRefreshRunning = true;
+    try {
+      while (this.syncProjectionDirty && !this.annotationSaving && this.foreground && lifecycle === this.lifecycleGeneration) {
+        this.syncProjectionDirty = false;
+        const revision = this.snapshotGeneration;
+        if (ids.length > 0) {
+          this.snapshotGeneration += 1;
+          const fresh = await useCases.refreshUtterances(this.snapshot, ids);
+          if (this.snapshotGeneration === revision + 1 && !this.annotationSaving && lifecycle === this.lifecycleGeneration && this.foreground) {
+            this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SNAPSHOT_READY, fresh));
+          }
+        } else { await this.refreshSnapshot(false); }
+        this.syncProjectionDirty = this.syncProjectionDirty || this.snapshotGeneration !== revision + 1 || this.annotationSaving || !this.foreground;
+        ids = [];
+      }
+    } catch (error) {
+      this.syncProjectionDirty = true;
+      throw error as Error;
+    } finally { this.syncRefreshRunning = false; }
   }
 
   private async refreshSnapshot(scanLocal: boolean = true): Promise<void> {

@@ -12,7 +12,7 @@ import { PHONE_V3_FLOATING_TAB_BAR_CONTENT_END_OFFSET } from './PhoneV3NativeUi'
 
 @Component
 export struct PhoneV3HomePage {
-  viewModel: PhoneV3ViewModel = new PhoneV3ViewModel();
+  @ObjectLink viewModel: PhoneV3ViewModel;
   @Prop stateRevision: number = 0;
   onOpenSession: (session: PhoneV3SessionCard) => void = (_session: PhoneV3SessionCard): void => {};
   onOpenReviews: () => void = (): void => {};

@@ -48,7 +48,21 @@ const wait=async check=>{const end=Date.now()+5000;while(!check()){assert(Date.n
  extraChanges.push(change({...row(2),revision:3,text:'UPDATE TWO'},10));model.coordinator.trigger();
  await wait(()=>model.snapshot.sessions[0].utterances.find(r=>r.utteranceId===id(2)).text==='UPDATE TWO');
  assert.equal(model.snapshot.sessions[0].utterances.find(r=>r.utteranceId===id(1)).text,'UPDATE ONE');
- model.stop();await model.retirement;
  console.log('PASS a deferred refresh retains previous changed rows when the next batch changes other rows');
+ // A real local save is held before its commit; the last remote delta is already durable.
+ // No successful network event follows it. Local visibility must not depend on another poll.
+ let releaseSave;const queue=model.useCases.queueAnnotation.bind(model.useCases);
+ model.useCases.queueAnnotation=async(...args)=>{await new Promise(r=>releaseSave=r);return queue(...args);};
+ model.saveAnnotation([model.snapshot.sessions[0].utterances[2]],'','',false,'media_speech',()=>{});
+ await wait(()=>releaseSave);
+ extraChanges.push(change({...row(1),revision:4,text:'LAST DURABLE DELTA'},11));
+ const last=syncCalls;model.coordinator.trigger();await wait(()=>syncCalls>last&&!model.coordinator.light.running);
+ online=false;const callsAtDisconnect=syncCalls;releaseSave();
+ await wait(()=>!model.annotationSaving);
+ await wait(()=>model.snapshot.sessions[0].utterances.find(r=>r.utteranceId===id(1)).text==='LAST DURABLE DELTA');
+ assert.equal(syncCalls,callsAtDisconnect,'visibility must not need another successful network response');
+ assert.equal(model.snapshot.sessions[0].utterances[2].soundKind,'media_speech');
+ model.stop();await model.retirement;
+ console.log('PASS last deferred delta becomes visible after local commit with no later network event');
  for(const s of stores){try{s.db.close();}catch{}}
-})().catch(e=>{console.error(e);process.exitCode=1;});
+})().catch(e=>{console.error(e);process.exit(1);});
