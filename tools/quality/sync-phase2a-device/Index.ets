@@ -179,7 +179,7 @@ struct Index {
         });
         while (this.model.annotationSaving) { await new Promise<void>((resolve)=>setTimeout(resolve,10)); }
       }
-      const operations = await this.repository!.pendingOperations();
+      const operations = await this.repository!.annotationOperations();
       const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
       await write(context.cacheDir+'/sync-phase2a-queue.json',util.TextEncoder.create('utf-8').encodeInto(JSON.stringify(operations)));
       this.note='离线三次本地提交完成';

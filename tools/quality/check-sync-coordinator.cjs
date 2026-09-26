@@ -35,6 +35,16 @@ async function advance(ms){now+=ms;const ready=[...timers].filter(([,v])=>v.at<=
  terminal.setForeground(true);await advance(250);terminal.trigger();await advance(500000);assert.equal(blocked,1);
  terminal.trigger(false,true);await advance(250);assert.equal(blocked,2);terminal.stop();
  console.log('PASS capped retry schedule survives network/save bursts; authorization needs explicit retry');
+ for(const [category,status,retryable] of [['http',400,false],['authorization',403,false],['tls',0,false],['identity',0,false],['http',500,true],['response_timeout',0,true]]) {
+  let count=0;const failure=new errors.ComputerConnectionError(category,'response','synthetic matrix');failure.statusCode=status;
+  const lane=new Coordinator({light:async()=>{count++;if(count===1)throw failure;return new Result();},backup:async()=>new Result(),cancelLight(){},changed(){}});
+  lane.setForeground(true);await advance(250);
+  for(let n=0;n<100;n++)lane.trigger();await advance(250);assert.equal(count,1);
+  await advance(6000);assert.equal(count,retryable?2:1,`${category}/${status}`);
+  if(!retryable){lane.trigger(false,true);await advance(250);assert.equal(count,2);}
+  lane.stop();assert.equal(timers.size,0);
+ }
+ console.log('PASS 400/403/TLS/identity require action; 500/timeout recover with bounded backoff and no trigger storm');
  let lightOK=0;
  const separated=new Coordinator({light:async()=>{lightOK++;return new Result();},backup:async()=>{throw denied;},cancelLight(){},changed(){}});
  separated.setForeground(true);separated.trigger(true);await advance(250);await advance(250);
