@@ -1,3 +1,4 @@
+import { PhoneV3PeopleLoader } from './PhoneV3PeopleLoader';
 import { HdsNavDestination, HdsNavDestinationTitleMode } from '@kit.UIDesignKit';
 import { DeviceV3PersonChoice } from '../../computer/ComputerTransferProtocol';
 import { PhoneV3Utterance, PhoneV3SessionCard, PhoneV3ReviewItem } from '../domain/PhoneV3Models';
@@ -18,6 +19,8 @@ export struct PhoneV3VoiceReviewPage {
   onOpenAnnotation: (rows: Array<PhoneV3Utterance>, title: string) => void = (): void => {};
   onOpenSession: (session: PhoneV3SessionCard) => void = (): void => {};
   onConnect: () => void = (): void => {};
+  private peopleLoader: PhoneV3PeopleLoader = new PhoneV3PeopleLoader();
+  @State private unavailable: boolean = false;
   private queue: PhoneV3VoiceQueue = new PhoneV3VoiceQueue();
   private evidenceIndex: PhoneV3VoiceEvidenceIndex = new PhoneV3VoiceEvidenceIndex();
   private reviewSource: Array<PhoneV3ReviewItem> | undefined = undefined;
@@ -43,7 +46,14 @@ export struct PhoneV3VoiceReviewPage {
   aboutToAppear(): void {
     this.queue.open(phoneV3VoiceTasks(this.viewModel.snapshot.reviewItems, this.history), this.reviewId);
     this.showCurrent();
-    this.viewModel.loadPeople((values: Array<DeviceV3PersonChoice>): void => { this.people = values; });
+    this.refreshPeople();
+  }
+  private refreshPeople(): void {
+    this.peopleLoader.refresh((accept): void => this.viewModel.loadPeople(accept),
+      (values: Array<DeviceV3PersonChoice>): void => { this.people = values; });
+  }
+  private submissionState(): string {
+    return this.task ? this.viewModel.reviewSubmissionState(this.task.item.reviewId, this.task.candidate.prototypeId) : '';
   }
   aboutToDisappear(): void { this.viewModel.stopPlayback(); }
   private refreshState(): void {
@@ -63,6 +73,7 @@ export struct PhoneV3VoiceReviewPage {
       this.viewModel.reviewSampleWasPlayed(current.item.reviewId, current.candidate.prototypeId))) { this.viewModel.stopPlayback(); }
   }
   private showCurrent(): void {
+    this.unavailable = this.queue.unavailable;
     this.task = this.queue.current(); this.queuePosition = this.queue.index;
     this.selected = []; this.personId = ''; this.personName = ''; this.correction = false; this.expanded = false;
     this.reloadLocal = false; this.refreshState(); this.scroller.scrollTo({ xOffset: 0, yOffset: 0 });
@@ -79,7 +90,7 @@ export struct PhoneV3VoiceReviewPage {
   private next(skip: boolean = false): void { this.queue.next(skip); this.showCurrent(); }
   private discovery(): boolean { return this.task !== undefined && phoneV3VoiceMode(this.task.item) === 'speaker_discovery'; }
   private editing(): boolean { return this.discovery() || this.correction; }
-  private openLayer(value: string): void { this.layer = value; this.layerVisible = true; }
+  private openLayer(value: string): void { if (value === 'person') { this.refreshPeople(); } this.layer = value; this.layerVisible = true; }
   private validSelection(): boolean {
     return this.selected.length > 0 && this.selected.every((row: PhoneV3Utterance): boolean =>
       this.rows.some((fresh: PhoneV3Utterance): boolean => fresh.utteranceId === row.utteranceId && fresh.revision === row.revision && fresh.status === 'active'));
@@ -87,6 +98,7 @@ export struct PhoneV3VoiceReviewPage {
   private savePerson(): void {
     if (!this.validSelection() || !this.personName || this.reloadLocal || this.viewModel.annotationSaving) { return; }
     this.viewModel.saveAnnotation(this.selected, this.personId, this.personId ? '' : this.personName, true, '', (read: boolean): void => {
+      this.refreshPeople();
       this.feedback = '所选片段已标注，待同步；未采纳声纹，发现任务仍由电脑判定';
       this.reloadLocal = !read;
       if (read) { this.selected = []; this.personId = ''; this.personName = ''; this.refreshState(); }
@@ -103,9 +115,13 @@ export struct PhoneV3VoiceReviewPage {
     });
   }
   private refreshRemote(): void {
-    const committed = this.viewModel.reviewSubmissionState === 'committed' && this.viewModel.reviewSubmissionKey === this.task?.key;
+    const committed = this.submissionState() === 'committed';
     this.viewModel.refreshVoiceReviews((): void => {
-      if (committed && !this.viewModel.reviewSubmissionState) { this.feedback = '上一条结果已提交，状态已更新'; this.next(); return; }
+      if (committed && !this.submissionState()) { this.feedback = '上一条结果已提交，状态已更新'; this.next(); return; }
+      if (this.unavailable) {
+        this.queue.open(phoneV3VoiceTasks(this.viewModel.snapshot.reviewItems, this.history), this.reviewId);
+        this.showCurrent();
+      }
       this.refreshState();
       this.feedback = this.stale ? '当前对象已变化或不在此队列，请重新核对或继续下一条' : '已读取电脑当前状态';
     });
@@ -234,6 +250,10 @@ export struct PhoneV3VoiceReviewPage {
                 this.quiet('载入当前版本 / 继续下一条', (): void => this.acceptFresh())
               }
               if (this.feedback) { Text(this.feedback).fontSize(13).fontColor($r('app.color.brand_success')).width('100%') }
+              if (this.submissionState()) {
+                Text(this.viewModel.reviewSubmissionMessage(this.task.item.reviewId, this.task.candidate.prototypeId)).fontSize(13).fontColor($r('app.color.brand_warning'))
+                Button('核对此项审核结果').buttonStyle(ButtonStyleMode.TEXTUAL).enabled(!this.viewModel.busy).onClick((): void => this.refreshRemote())
+              }
               if (this.viewModel.error) {
                 Text(this.viewModel.error).fontSize(13).fontColor($r('app.color.brand_warning')).width('100%')
                 this.quiet('核对状态 / 重试读取', (): void => this.refreshRemote())
@@ -246,7 +266,7 @@ export struct PhoneV3VoiceReviewPage {
           }.layoutWeight(1).width('100%').align(Alignment.TopStart)
           if (this.history) {
             Button('撤回此样本授权').buttonStyle(ButtonStyleMode.NORMAL).width('100%').constraintSize({ minHeight: 48 })
-              .enabled(!this.viewModel.busy && !this.stale && !this.viewModel.reviewSubmissionState)
+              .enabled(!this.viewModel.busy && !this.stale && !this.submissionState())
               .onClick((): void => AlertDialog.show({ title: '撤回此样本授权？', message: '仅停止此样本授权，不删除录音、人物人工事实或其他样本。电脑会重新匹配。',
                 primaryButton: { value: '取消', action: (): void => {} }, secondaryButton: { value: '撤回', action: (): void => this.decide('retract') } }))
             this.quiet('下一个授权', (): void => this.navigate((): void => this.next()))
@@ -258,16 +278,23 @@ export struct PhoneV3VoiceReviewPage {
           } else {
             Row({ space: 12 }) {
               Button('不是他').buttonStyle(ButtonStyleMode.NORMAL).layoutWeight(1).constraintSize({ minHeight: 48 })
-                .enabled(this.viewModel.reviewSampleWasPlayed(this.task.item.reviewId, this.task.candidate.prototypeId) && !this.stale && !this.pendingEvidence && !this.viewModel.busy && !this.viewModel.reviewSubmissionState)
+                .enabled(this.viewModel.reviewSampleWasPlayed(this.task.item.reviewId, this.task.candidate.prototypeId) && !this.stale && !this.pendingEvidence && !this.viewModel.busy && !this.submissionState())
                 .onClick((): void => this.decide('reject'))
               Button('是他，采纳样本').layoutWeight(2).constraintSize({ minHeight: 48 })
-                .enabled(this.viewModel.reviewSampleWasPlayed(this.task.item.reviewId, this.task.candidate.prototypeId) && !this.stale && !this.pendingEvidence && !this.viewModel.busy && !this.viewModel.reviewSubmissionState)
+                .enabled(this.viewModel.reviewSampleWasPlayed(this.task.item.reviewId, this.task.candidate.prototypeId) && !this.stale && !this.pendingEvidence && !this.viewModel.busy && !this.submissionState())
                 .onClick((): void => this.decide('confirm'))
             }.width('100%')
             Button(this.task.candidate.reviewStatus === 'uncertain' ? '此前已提交不确定' : '暂不确定').buttonStyle(ButtonStyleMode.TEXTUAL).fontColor($r('app.color.text_secondary'))
-              .enabled(!this.stale && !this.pendingEvidence && !this.viewModel.busy && !this.viewModel.reviewSubmissionState && this.task.candidate.reviewStatus !== 'uncertain')
+              .enabled(!this.stale && !this.pendingEvidence && !this.viewModel.busy && !this.submissionState() && this.task.candidate.reviewStatus !== 'uncertain')
               .onClick((): void => this.decide('uncertain'))
           }
+        } else if (this.unavailable) {
+          Text('指定审核项已失效或暂无可用样本').fontSize(21).width('100%')
+          Text('未打开其他任务，请刷新此项或返回列表。').fontSize(14)
+          if (this.viewModel.error) { Text(this.viewModel.error).fontSize(13) }
+          Button('刷新此项').enabled(!this.viewModel.busy).onClick((): void => this.refreshRemote())
+          Button('返回审核列表').buttonStyle(ButtonStyleMode.TEXTUAL).onClick((): void => { this.navStack.pop(); })
+          Blank()
         } else {
           Text(this.history ? '已浏览完当前缓存的样本授权' : '本轮可用样本已处理到末尾').fontSize(21).width('100%')
           Text(this.feedback || '此处不是全库完成状态，连接电脑可读取更多任务。').fontSize(14).width('100%')

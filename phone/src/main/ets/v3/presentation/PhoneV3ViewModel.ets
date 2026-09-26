@@ -39,11 +39,19 @@ enum PhoneV3RetryAction {
   PLAYBACK
 }
 
+class PhoneV3PendingReview {
+  reviewId: string;
+  prototypeId: string;
+  action: string;
+  state: string;
+  constructor(reviewId: string, prototypeId: string, action: string, state: string) {
+    this.reviewId = reviewId; this.prototypeId = prototypeId; this.action = action; this.state = state;
+  }
+}
+
 @Observed
 export class PhoneV3ViewModel {
-  reviewSubmissionKey: string = '';
-  reviewSubmissionAction: string = '';
-  reviewSubmissionState: string = '';
+  private reviewSubmissions: Map<string, PhoneV3PendingReview> = new Map<string, PhoneV3PendingReview>();
   snapshot: PhoneV3Snapshot = new PhoneV3Snapshot();
   device: PhoneV3DeviceState = new PhoneV3DeviceState();
   selectedSessionId: string = '';
@@ -213,11 +221,28 @@ export class PhoneV3ViewModel {
     }).catch((error: Object): void => this.fail(error));
   }
 
+  private reviewObjectKey(reviewId: string, prototypeId: string): string {
+    return prototypeId ? `prototype:${prototypeId}` : `review:${reviewId}`;
+  }
+
+  reviewSubmissionState(reviewId: string, prototypeId: string = ''): string {
+    return this.reviewSubmissions.get(this.reviewObjectKey(reviewId, prototypeId))?.state ?? '';
+  }
+
+  reviewSubmissionMessage(reviewId: string, prototypeId: string = ''): string {
+    const state = this.reviewSubmissionState(reviewId, prototypeId);
+    return state === 'committed' ? '此项结果已提交，状态待更新；请核对结果' :
+      state === 'unknown' ? '此项结果尚未确认，请先核对结果；不会重复提交' : '';
+  }
+
   resolveReview(reviewId: string, action: string, prototypeId: string = '',
     displayName: string = '', onResolved: () => void = (): void => {}): void {
     const useCases = this.useCases;
-    if (useCases === undefined || this.busy || this.reviewSubmissionState.length > 0) {
+    if (useCases === undefined || this.busy) {
       return;
+    }
+    if (this.reviewSubmissionState(reviewId, prototypeId)) {
+      this.fail(new Error(this.reviewSubmissionMessage(reviewId, prototypeId))); return;
     }
     if (prototypeId.length > 0 && (action === 'confirm' || action === 'reject') &&
       !this.reviewSampleWasPlayed(reviewId, prototypeId)) { return; }
@@ -243,8 +268,7 @@ export class PhoneV3ViewModel {
     this.lastRetryAction = PhoneV3RetryAction.NONE;
     this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.BUSY,
       undefined, undefined, '正在提交审核判断…'));
-    this.reviewSubmissionKey = `${reviewId}:${prototypeId}`;
-    this.reviewSubmissionAction = action;
+    const objectKey = this.reviewObjectKey(reviewId, prototypeId);
     useCases.resolveReview(request).then((reviewItems): void => {
       const current = this.snapshot;
       const snapshot = new PhoneV3Snapshot(
@@ -255,7 +279,7 @@ export class PhoneV3ViewModel {
       onResolved();
     }).catch((error: Object): void => {
       if (error instanceof PhoneV3ReviewSubmissionError) {
-        this.reviewSubmissionState = error.committed ? 'committed' : 'unknown';
+        this.reviewSubmissions.set(objectKey, new PhoneV3PendingReview(reviewId, prototypeId, action, error.committed ? 'committed' : 'unknown'));
       }
       this.fail(error);
     });
@@ -268,15 +292,14 @@ export class PhoneV3ViewModel {
       const current = this.snapshot;
       this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SNAPSHOT_READY,
         new PhoneV3Snapshot(current.sessions, current.conflicts, current.sync, current.paired, current.reminders, items)));
-      if (this.reviewSubmissionState === 'committed') { this.reviewSubmissionState = ''; }
-      else if (this.reviewSubmissionState === 'unknown') {
-        const all = phoneV3VoiceTasks(items).concat(phoneV3VoiceTasks(items, true));
-        const task = all.find((value): boolean => value.key === this.reviewSubmissionKey);
-        const expected = this.reviewSubmissionAction === 'confirm' ? 'confirmed' :
-          this.reviewSubmissionAction === 'reject' ? 'rejected' : this.reviewSubmissionAction;
-        if (task === undefined || task.candidate.reviewStatus === expected) { this.reviewSubmissionState = ''; }
-        else { this.error = '结果尚未确认，请稍后再次核对；不会重复提交'; }
-      }
+      const all = phoneV3VoiceTasks(items).concat(phoneV3VoiceTasks(items, true));
+      this.reviewSubmissions.forEach((pending: PhoneV3PendingReview, key: string): void => {
+        const task = all.find((value): boolean => value.candidate.prototypeId === pending.prototypeId);
+        const expected = pending.action === 'confirm' ? 'confirmed' : pending.action === 'reject' ? 'rejected' : pending.action;
+        const resolved = pending.prototypeId ? task === undefined || task.candidate.reviewStatus === expected :
+          !items.some((item): boolean => item.reviewId === pending.reviewId);
+        if (pending.state === 'committed' || resolved) { this.reviewSubmissions.delete(key); }
+      });
       onLoaded(); this.stateChangeListener();
     }).catch((error: Object): void => this.fail(error));
   }

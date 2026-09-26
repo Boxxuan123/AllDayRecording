@@ -27,8 +27,11 @@ export class PhoneV3VoiceQueue {
   tasks: Array<PhoneV3VoiceTask> = [];
   index: number = 0;
   skipped: Array<string> = [];
+  unavailable: boolean = false;
   open(tasks: Array<PhoneV3VoiceTask>, reviewId: string): void {
-    const start = Math.max(0, tasks.findIndex((t: PhoneV3VoiceTask): boolean => t.item.reviewId === reviewId));
+    const start = reviewId ? tasks.findIndex((t: PhoneV3VoiceTask): boolean => t.item.reviewId === reviewId) : 0;
+    this.unavailable = start < 0;
+    if (this.unavailable) { this.tasks = []; this.index = 0; this.skipped = []; return; }
     this.tasks = tasks.slice(start).concat(tasks.slice(0, start)); this.index = 0;
     this.skipped = [];
   }

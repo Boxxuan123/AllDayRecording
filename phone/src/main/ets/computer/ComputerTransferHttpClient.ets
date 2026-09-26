@@ -1,3 +1,4 @@
+import { ComputerReviewNotSentError } from './ComputerReviewNotSentError';
 import { common } from '@kit.AbilityKit';
 import { util } from '@kit.ArkTS';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
@@ -246,9 +247,15 @@ export class ComputerTransferHttpClient {
   }
 
   async v3ReviewAction(request: DeviceV3ReviewActionRequest): Promise<DeviceV3ReviewActionResponse> {
-    const body = util.TextEncoder.create('utf-8').encodeInto(JSON.stringify(request));
-    return this.authenticatedJson<DeviceV3ReviewActionResponse>('POST', DEVICE_V3_REVIEW_ACTION_PATH,
-      body, 'application/json; charset=utf-8', undefined);
+    let mayHaveSent = false;
+    try {
+      const body = util.TextEncoder.create('utf-8').encodeInto(JSON.stringify(request));
+      return await this.authenticatedJson<DeviceV3ReviewActionResponse>('POST', DEVICE_V3_REVIEW_ACTION_PATH,
+        body, 'application/json; charset=utf-8', undefined, (): void => { mayHaveSent = true; });
+    } catch (error) {
+      if (!mayHaveSent) { throw new ComputerReviewNotSentError(error instanceof Error ? error.message : '认证失败，审核请求尚未发送'); }
+      throw error as Error;
+    }
   }
 
   async v3ReviewAudio(request: DeviceV3ReviewAudioRequest): Promise<DeviceV3ReviewAudioResponse> {
@@ -258,7 +265,7 @@ export class ComputerTransferHttpClient {
   }
 
   private async authenticatedJson<T>(method: string, path: string, body: Uint8Array,
-    contentType: string | undefined, uploadOffset: number | undefined): Promise<T> {
+    contentType: string | undefined, uploadOffset: number | undefined, onDispatch: () => void = (): void => {}): Promise<T> {
     const binding: ComputerRequestBinding = {
       method: method,
       path: path,
@@ -279,6 +286,7 @@ export class ComputerTransferHttpClient {
       buildDeviceSignaturePayload(challenge.challenge_id, challenge.nonce, binding));
     const headers: Object = authenticatedHeaders(this.deviceId, challenge.challenge_id,
       signature, contentType, uploadOffset);
+    onDispatch();
     return this.requestJson<T>(method, path, body.length === 0 ? undefined : body.buffer, headers);
   }
 

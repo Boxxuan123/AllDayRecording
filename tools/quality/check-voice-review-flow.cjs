@@ -23,6 +23,13 @@ assert.equal(histories.length,3); assert.equal(phoneV3PendingReviews(histories).
 assert.equal(phoneV3PendingReviews(parse([{...dtoReview('x','known_person'),context:{review_lane:'history'}}])).length,0);
 const taskRows=parse([dtoReview('r','known_person',[candidate('a'),candidate('b'),candidate('c')])]);
 const tasks=phoneV3VoiceTasks(taskRows); const queue=new PhoneV3VoiceQueue();queue.open(tasks,'r');queue.next(true);assert.equal(queue.current().candidate.prototypeId,'b');queue.next();assert.equal(queue.current().candidate.prototypeId,'c');queue.next();assert.equal(queue.current(),undefined);assert.deepEqual(queue.skipped,['r:a']);queue.revisit(taskRows,false);assert.equal(queue.current().candidate.prototypeId,'a');
+for(const rows of [tasks,[],phoneV3VoiceTasks(parse([dtoReview('empty','known_person',[]),dtoReview('b','known_person')]))]) {
+ queue.open(rows,'missing');assert.equal(queue.current(),undefined);assert.equal(queue.unavailable,true);
+}
+queue.open(phoneV3VoiceTasks(parse([dtoReview('empty','known_person',[]),dtoReview('b','known_person')])),'empty');assert.equal(queue.current(),undefined);assert.equal(queue.unavailable,true);
+queue.open(tasks,'');assert.equal(queue.current().candidate.prototypeId,'a');assert.equal(queue.unavailable,false);
+queue.open([],'');assert.equal(queue.current(),undefined);assert.equal(queue.unavailable,false);
+console.log('PASS explicit missing/empty target never falls back; generic entry can start or be empty');
 console.log('PASS history-only queue/counts, exact candidate tasks, A skip/B success/C next without wrap');
 (async()=>{
  const databasePath=path.join(fs.mkdtempSync(path.join(os.tmpdir(),'voice-flow-')),'synthetic.sqlite');
@@ -50,11 +57,25 @@ console.log('PASS history-only queue/counts, exact candidate tasks, A skip/B suc
  stores.at(-1).db.close();repo=await Repository.open({databasePath});use=new UseCases(repo,{list:async()=>[]},remote);
  assert.equal((await use.loadCached([])).sessions[0].utterances.filter(r=>r.annotationFacts.person==='pending').length,2);
  console.log('PASS 5 windows vs 81 sentences; disjoint candidates; missing/version mismatch fail closed; only 2 of 3 mapped sentences persist offline');
+ const {PhoneV3PeopleLoader}=require(path.join(root,'presentation/PhoneV3PeopleLoader.ets'));
+ const loader=new PhoneV3PeopleLoader();let choices=[],oldAccept;
+ loader.refresh(accept=>{oldAccept=accept},value=>{choices=value});
+ await new Promise(resolve=>loader.refresh(accept=>{use.localPeople().then(p=>{accept(p);resolve()})},value=>{choices=value}));
+ const created=choices.find(p=>p.display_name==='合成人物乙');assert(created?.person_id);
+ oldAccept([]);assert.equal(choices[0].person_id,created.person_id);
+ const third=index.resolve(unknown)[2];await use.queueAnnotation([third],created.person_id,'',true,'');
+ assert.equal((await use.localPeople()).filter(p=>p.display_name==='合成人物乙').length,1);
+ const thirdRow=(await use.loadCached([])).sessions[0].utterances.find(r=>r.utteranceId===third.utteranceId);
+ const operations=await repo.annotationOperations();assert(operations.some(o=>JSON.stringify(o.payload).includes(created.person_id)&&JSON.stringify(o.payload).includes(third.utteranceId)));
+ assert.equal(writes,0);
+ console.log('PASS production page people loader ignores stale callbacks; offline A-created person ID selected for B with no duplicate');
  const replace=repo.replaceReviewItems.bind(repo);repo.replaceReviewItems=async()=>{throw Error('disk full')};
  await assert.rejects(use.resolveReview({review_id:'r',prototype_id:'a',action:'confirm'}),e=>e instanceof PhoneV3ReviewSubmissionError&&e.committed);
  assert.equal(writes,1);repo.replaceReviewItems=replace;await use.refreshReviews();assert.equal(writes,1);
  session.resolveReview=async()=>{writes++;throw Error('timeout')};
  await assert.rejects(use.resolveReview({review_id:'r',action:'reject'}),e=>e instanceof PhoneV3ReviewSubmissionError&&!e.committed);
+ session.resolveReview=async()=>{const e=Error('auth failed');e.reviewRequestNotSent=true;throw e};
+ await assert.rejects(use.resolveReview({review_id:'r',action:'reject'}),e=>!(e instanceof PhoneV3ReviewSubmissionError)&&e.reviewRequestNotSent);
  session.resolveReview=async()=>{const e=Error('stale');e.statusCode=409;throw e};
  await assert.rejects(use.resolveReview({review_id:'r',action:'reject'}),/stale/);
  remote.connect=async()=>{throw Error('computer offline')};

@@ -39,7 +39,7 @@ import {
 } from './PhoneV3Ports';
 
 interface AnnotationTargetPayload { status: string; }
-interface ReviewRemoteError { statusCode?: number; }
+interface ReviewRemoteError { statusCode?: number; reviewRequestNotSent?: boolean; }
 
 export class PhoneV3ReviewSubmissionError extends Error {
   committed: boolean;
@@ -402,6 +402,7 @@ export class PhoneV3UseCases {
     let response: DeviceV3ReviewActionResponse;
     try { response = await session.resolveReview(request); }
     catch (error) {
+      if ((error as ReviewRemoteError).reviewRequestNotSent === true) { throw error as Error; }
       const status = (error as ReviewRemoteError).statusCode;
       if (status !== undefined && status >= 400 && status < 500) { throw error as Error; }
       throw new PhoneV3ReviewSubmissionError(false);

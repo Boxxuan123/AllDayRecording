@@ -174,7 +174,7 @@ export struct PhoneV3ReviewInboxPage {
         Text(phoneV3VoiceMode(item) === 'speaker_discovery' ? '这是谁的声音？' : '核对声音样本').fontSize(13).fontColor($r('app.color.text_secondary'))
         Text(item.title).fontSize(17).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
         Text(`${this.reviewGroupLabel(item)} · ${phoneV3VoiceCandidates(item).length} 个待核对样本`).fontSize(13).fontColor($r('app.color.text_secondary'))
-        Button('进入核对').buttonStyle(ButtonStyleMode.NORMAL).width('100%')
+        Button(phoneV3VoiceCandidates(item).length > 0 ? '进入核对' : '暂无可用样本 · 查看状态').buttonStyle(ButtonStyleMode.NORMAL).width('100%')
           .onClick((): void => this.onOpenVoice(item.reviewId, false))
       }.width('100%').padding(16).alignItems(HorizontalAlign.Start).borderRadius(16).backgroundColor($r('app.color.surface_primary'))
     } else {
@@ -208,7 +208,11 @@ export struct PhoneV3ReviewInboxPage {
         .fontSize(12)
         .fontColor($r('app.color.brand_warning'))
 
-      this.standardActions(item)
+      if (this.viewModel.reviewSubmissionState(item.reviewId)) {
+        Text(this.viewModel.reviewSubmissionMessage(item.reviewId)).fontSize(13).fontColor($r('app.color.brand_warning'))
+        Button('核对此项审核结果').buttonStyle(ButtonStyleMode.TEXTUAL).enabled(!this.currentUiState().busy)
+          .onClick((): void => this.viewModel.refreshVoiceReviews())
+      } else { this.standardActions(item) }
       if (this.matchingSession(item.sessionId) !== undefined) {
         Button('查看原录音', { type: ButtonType.Capsule })
           .width('100%')
@@ -290,11 +294,11 @@ export struct PhoneV3ReviewInboxPage {
                 .width('100%')
                 ForEach(group.items, (item: PhoneV3ReviewItem) => {
                   this.reviewCard(item)
-                }, (item: PhoneV3ReviewItem): string => JSON.stringify(item))
+                }, (item: PhoneV3ReviewItem): string => `${JSON.stringify(item)}:${this.viewModel.reviewSubmissionState(item.reviewId)}`)
               }
               .width('100%')
               .alignItems(HorizontalAlign.Start)
-            }, (group: PhoneV3ReviewGroup): string => `${group.key}:${JSON.stringify(group.items)}`)
+            }, (group: PhoneV3ReviewGroup): string => `${group.key}:${JSON.stringify(group.items)}:${group.items.map((item: PhoneV3ReviewItem): string => this.viewModel.reviewSubmissionState(item.reviewId)).join()}`)
           }
         }
         .width('100%')
