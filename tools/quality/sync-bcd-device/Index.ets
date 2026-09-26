@@ -70,6 +70,8 @@ class TimedUseCases extends PhoneV3UseCases {
   }
 }
 interface PlayTime { clicked: number; started: number; worker: number; main: number; key: string; }
+interface CacheState { hits: number; downloads: number; joins: number; }
+interface TaskState { key: string; fingerprint: string; content: string; played: boolean; }
 class TimedPlayer extends PhoneV3ReviewAudioPlayer {
   clicked: number = 0;
   times: Array<PlayTime> = [];
@@ -188,8 +190,8 @@ struct Index {
           write(context.cacheDir+'/sync-bcd-state.json',util.TextEncoder.create('utf-8').encodeInto(JSON.stringify({
             pending:this.model.snapshot.sync.pendingOperations,durable:status.pendingOperations,
             message:this.model.computerSyncMessage,error:this.model.computerSyncError,revision:this.revision,at:Date.now(),times:use.times,
-            cache:{hits:cache.hits,downloads:cache.downloads,joins:cache.joins},plays:this.reviewPlayer?.times,
-            tasks:phoneV3VoiceTasks(this.model.snapshot.reviewItems).map((t)=>({key:t.key,fingerprint:t.fingerprint,
+            cache:{hits:cache.hits,downloads:cache.downloads,joins:cache.joins} as CacheState,plays:this.reviewPlayer?.times,
+            tasks:phoneV3VoiceTasks(this.model.snapshot.reviewItems).map((t): TaskState=>({key:t.key,fingerprint:t.fingerprint,
               content:t.candidate.audioContentKey,played:this.model.reviewSampleWasPlayed(t.item.reviewId,t.candidate.prototypeId)})),
             audioLoading:this.model.annotationPlaybackState(),audioError:this.model.error
           })));
