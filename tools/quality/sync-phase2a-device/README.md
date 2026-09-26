@@ -1,5 +1,13 @@
 # 第二阶段 A 独立真机生产链路
 
+收尾新增：`TimedUseCases` 记录合成标注本地提交边界；`NativeRefresh.ets` 在独立原生库控制读取/提交顺序，验证不同片段的并发刷新、没有后续成功网络时的最终显示、旧快照和停止后回调。此部分网络完成由夹具控制，不能称为真实远端协议验证。
+
+完整 `PhonePhase2Production` 用例先执行真实上传 A，再通过电脑输出目录内 `fault.json` 注入断连，连续保存3条有依赖的标注，停止/重启应用。隔离入口通过自己的 `sync-phase2a-resume` 标记自动恢复真实队列；恢复同一接收端后不点同步，等待持久化队列归零。随后丢弃已提交同步响应，确认原 operation_id 重试，最后执行原生刷新交错。
+
+故障配置仅由本地测试脚本写入，`mode` 支持 `offline`、`500-once`、`drop-once` 或空串。每轮完整验收使用全新接收端输出目录，保留之前失败报告。重新开始完整流程前，只清理本夹具的 cache/sync-phase2a-resume 标记；不要清理正式配对或数据。
+
+每次安装前记录 `Get-FileHash <实际HAP> -Algorithm SHA256` 和 `git rev-parse HEAD`，不要拿重建后的同名文件代替实际安装包哈希。后续原生结果和未完成项以 [收尾报告](../../../doc/SYNC_PHASE2A_CLOSEOUT.md) 为准。
+
 `Index.ets` 是临时入口，不被生产页面 import。沿用 `tests/ui/main.py` 的 DevEco Testing/Hypium、设备配置和报告；用稳定 ID/文字和有截止时间的条件等待。真实结果见 `doc/SYNC_PHASE2A_ACCEPTANCE.md`，不能仅凭脚本存在判断通过。
 
 ## 范围
@@ -46,3 +54,5 @@
 4. `tools/quality/build-sync-device.ps1 production` 执行正式 `product=phone clean assembleApp`；脚本会拒绝残留的上述 rawfile。检查 HAP 不含测试文件后 `install -r`，不自动启动业务同步。
 5. 再导出三目录到 after，用 `tools/quality/verify-phase1-exports.py before after` 比较完整 SHA-256 清单。发现差异先调查，不能用备份覆盖。
 6. 停止本轮独立 receiver，`hdc -t <phone> fport ls` 核实后仅 `fport rm tcp:19100 tcp:19100`；不影响其他映射或 HDC 网络。保留私有备份和报告。
+
+收尾新增清理范围：明确命名的 `sync-phase2a-refresh-isolated.db` 及其实际存在的 SQLite sidecar；cache 下 `sync-phase2a-resume`、`sync-phase2a-queue.json`。仍须先列出、逐路径删除，不删除整个数据库或 cache 目录。

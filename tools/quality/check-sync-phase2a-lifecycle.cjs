@@ -52,6 +52,7 @@ const wait=async check=>{const end=Date.now()+5000;while(!check()){assert(Date.n
  // A real local save is held before its commit; the last remote delta is already durable.
  // No successful network event follows it. Local visibility must not depend on another poll.
  let releaseSave;const queue=model.useCases.queueAnnotation.bind(model.useCases);
+ const staleTarget=model.snapshot.sessions[0].utterances.find(r=>r.utteranceId===id(1));
  model.useCases.queueAnnotation=async(...args)=>{await new Promise(r=>releaseSave=r);return queue(...args);};
  model.saveAnnotation([model.snapshot.sessions[0].utterances[2]],'','',false,'media_speech',()=>{});
  await wait(()=>releaseSave);
@@ -62,7 +63,9 @@ const wait=async check=>{const end=Date.now()+5000;while(!check()){assert(Date.n
  await wait(()=>model.snapshot.sessions[0].utterances.find(r=>r.utteranceId===id(1)).text==='LAST DURABLE DELTA');
  assert.equal(syncCalls,callsAtDisconnect,'visibility must not need another successful network response');
  assert.equal(model.snapshot.sessions[0].utterances[2].soundKind,'media_speech');
+ await assert.rejects(queue([staleTarget],'','',false,'non_speech'),/片段已变化/);
  model.stop();await model.retirement;
  console.log('PASS last deferred delta becomes visible after local commit with no later network event');
+ console.log('PASS a stale selection of the changed row is rejected instead of bypassing revision safety');
  for(const s of stores){try{s.db.close();}catch{}}
 })().catch(e=>{console.error(e);process.exit(1);});
