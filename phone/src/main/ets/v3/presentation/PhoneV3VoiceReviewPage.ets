@@ -55,7 +55,7 @@ export struct PhoneV3VoiceReviewPage {
   private submissionState(): string {
     return this.task ? this.viewModel.reviewSubmissionState(this.task.item.reviewId, this.task.candidate.prototypeId) : '';
   }
-  aboutToDisappear(): void { this.viewModel.stopPlayback(); }
+  aboutToDisappear(): void { this.viewModel.setReviewAudioWindow([], false); this.viewModel.stopPlayback(); }
   private refreshState(): void {
     this.evidenceIndex.update(this.viewModel.snapshot.sessions);
     const current = this.task;
@@ -63,6 +63,7 @@ export struct PhoneV3VoiceReviewPage {
     if (this.reviewSource !== this.viewModel.snapshot.reviewItems) {
       this.reviewSource = this.viewModel.snapshot.reviewItems; this.taskIndex.clear();
       for (let task of phoneV3VoiceTasks(this.reviewSource, this.history)) { this.taskIndex.set(task.key, task); }
+      this.updateAudioWindow();
     }
     const fresh = this.taskIndex.get(current.key);
     this.stale = fresh === undefined || fresh.fingerprint !== current.fingerprint || (!this.history && this.evidenceIndex.sourceChanged(current.candidate));
@@ -77,6 +78,13 @@ export struct PhoneV3VoiceReviewPage {
     this.task = this.queue.current(); this.queuePosition = this.queue.index;
     this.selected = []; this.personId = ''; this.personName = ''; this.correction = false; this.expanded = false;
     this.reloadLocal = false; this.refreshState(); this.scroller.scrollTo({ xOffset: 0, yOffset: 0 });
+    this.updateAudioWindow();
+  }
+  private updateAudioWindow(): void {
+    const upcoming = this.queue.tasks.slice(this.queue.index, this.queue.index + 3)
+      .map((task: PhoneV3VoiceTask): PhoneV3VoiceTask => this.taskIndex.get(task.key) ?? task)
+      .filter((task: PhoneV3VoiceTask): boolean => this.taskIndex.has(task.key));
+    this.viewModel.setReviewAudioWindow(upcoming);
   }
   private dirty(): boolean { return this.selected.length > 0 || this.personName.length > 0; }
   private navigate(action: () => void): void {
@@ -229,6 +237,8 @@ export struct PhoneV3VoiceReviewPage {
                   this.overflow = Number(size.height) > this.getUIContext().fp2px(25) * 4 + 1;
                 })
               if (this.overflow) { Button(this.expanded ? '收起摘要' : '展开摘要').buttonStyle(ButtonStyleMode.TEXTUAL).onClick((): void => { this.expanded = !this.expanded; }) }
+              Text(this.viewModel.reviewAudioState(this.task.key)).fontSize(12).fontColor($r('app.color.text_secondary'))
+              Text('离线试听依据本机已知证据；审核提交仍需电脑确认').fontSize(12).fontColor($r('app.color.text_secondary'))
               Button(this.viewModel.annotationPlaybackState() === '正在加载' ? '取消加载' : this.viewModel.reviewPlaybackPrototype === this.task.candidate.prototypeId ? '停止试听' : this.viewModel.reviewSampleWasPlayed(this.task.item.reviewId, this.task.candidate.prototypeId) ? '重新播放完整样本' : '▶ 播放完整样本')
                 .buttonStyle(ButtonStyleMode.NORMAL).width('100%').constraintSize({ minHeight: 48 })
                 .enabled(this.task.candidate.hasAudio && !this.stale && (!this.viewModel.busy || this.viewModel.annotationPlaybackState() === '正在加载'))

@@ -1,20 +1,23 @@
 import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
+import { taskpool } from '@kit.ArkTS';
+import { prepareTransientReviewAudio } from './PhoneV3ReviewAudioWorker';
+import { PhoneV3ReviewAudioCachePort } from '../application/PhoneV3Ports';
 import { AudioPlaybackService } from 'common';
-import { decodeBase64Url, DeviceV3ReviewAudioResponse } from '../../computer/ComputerTransferProtocol';
+import { DeviceV3ReviewAudioResponse } from '../../computer/ComputerTransferProtocol';
 
 const REVIEW_AUDIO_DIRECTORY: string = 'review-audio';
-const MAX_REVIEW_AUDIO_BYTES: number = 16 * 1024 * 1024;
 
 export class PhoneV3ReviewAudioPlayer {
   private directory: string;
   private player: AudioPlaybackService | undefined = undefined;
   private generation: number = 0;
   private currentPath: string = '';
+  private cache?: PhoneV3ReviewAudioCachePort;
 
-  constructor(context: common.UIAbilityContext) {
+  constructor(context: common.UIAbilityContext, cache?: PhoneV3ReviewAudioCachePort) {
+    this.cache = cache;
     this.directory = `${context.cacheDir}/${REVIEW_AUDIO_DIRECTORY}`;
-    ensureDirectory(this.directory);
   }
 
   async play(response: DeviceV3ReviewAudioResponse, onStarted: () => void,
@@ -24,13 +27,12 @@ export class PhoneV3ReviewAudioPlayer {
     const generation = this.generation + 1;
     await this.release();
     if (generation !== this.generation) { return; }
-    validateReviewAudio(response);
-    const bytes = decodeBase64Url(response.data_base64url);
-    if (bytes.length === 0 || bytes.length > MAX_REVIEW_AUDIO_BYTES) {
-      throw new Error('声纹审核音频大小无效');
-    }
-    const path = `${this.directory}/${safeFileName(response.prototype_id)}-${generation}.${safeAudioExtension(response.format)}`;
-    writeBytes(path, bytes);
+    const local = response.local_audio_path ?? '';
+    const leased = this.cache?.hasLease(local) === true;
+    validateReviewAudio(response, leased);
+    const path = leased ? local : await taskpool.execute(prepareTransientReviewAudio,
+      this.directory, `${Date.now()}-${generation}`, response.data_base64url) as string;
+    if (generation !== this.generation) { this.removeFile(path); return; }
     this.currentPath = path;
     let started: boolean = false;
     const player = new AudioPlaybackService((playing: boolean, message: string): void => {
@@ -38,7 +40,8 @@ export class PhoneV3ReviewAudioPlayer {
       if (playing && !started) { started = true; onStarted(); }
       if (message === '播放完成') {
         this.generation += 1;
-        this.removeFile(path);
+        this.currentPath = '';
+        player.release().then((): void => this.removeFile(path), (): void => this.removeFile(path));
         onCompleted();
       } else if (message.startsWith('播放失败') || message === '播放已暂停') {
         this.release().then((): void => {}, (): void => {});
@@ -68,46 +71,16 @@ export class PhoneV3ReviewAudioPlayer {
 
   private removeFile(path: string): void {
     if (path.length === 0) { return; }
-    try { fileIo.unlinkSync(path); } catch (_error) {}
+    if (!path.startsWith(`${this.directory}/`)) { this.cache?.release(path); return; }
+    fileIo.unlink(path).catch((): void => {});
   }
 }
 
-function validateReviewAudio(response: DeviceV3ReviewAudioResponse): void {
+function validateReviewAudio(response: DeviceV3ReviewAudioResponse, leased: boolean): void {
   if (response.review_id.length === 0 || response.prototype_id.length === 0 ||
-    response.data_base64url.length === 0 || !Number.isSafeInteger(response.start_ms) ||
+    (!leased && response.data_base64url.length === 0) || !Number.isSafeInteger(response.start_ms) ||
     !Number.isSafeInteger(response.end_ms) || response.start_ms < 0 ||
     response.end_ms <= response.start_ms) {
     throw new Error('电脑返回的声纹审核音频无效');
   }
-}
-
-function ensureDirectory(path: string): void {
-  try {
-    fileIo.mkdirSync(path);
-  } catch (_error) {
-    try {
-      fileIo.statSync(path);
-    } catch (error) {
-      throw new Error('无法创建声纹审核音频缓存');
-    }
-  }
-}
-
-function writeBytes(path: string, bytes: Uint8Array): void {
-  const file = fileIo.openSync(path,
-    fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-  try {
-    fileIo.writeSync(file.fd, bytes.buffer);
-  } finally {
-    fileIo.closeSync(file.fd);
-  }
-}
-
-function safeFileName(value: string): string {
-  return value.replace(/[^A-Za-z0-9_-]/g, '_').substring(0, 120);
-}
-
-function safeAudioExtension(value: string): string {
-  const normalized = value.toLowerCase();
-  return ['wav', 'm4a', 'aac', 'mp3', 'flac', 'ogg'].indexOf(normalized) >= 0 ? normalized : 'audio';
 }

@@ -7,6 +7,7 @@ export interface VoiceClipPayload {
 }
 
 interface VoiceCandidatePayload {
+  audio_content_key?: string;
   review_key?: string;
   evidence_utterances?: Array<PhoneV3VoiceEvidence>;
   prototype_id?: string;
@@ -31,6 +32,7 @@ interface VoiceReviewContextPayload {
 }
 
 export class PhoneV3VoiceCandidate {
+  audioContentKey: string = '';
   reviewKey: string = '';
   clips: Array<VoiceClipPayload> = [];
   evidence: Array<PhoneV3VoiceEvidence> = [];
@@ -113,6 +115,7 @@ export function phoneV3VoiceCandidates(item: PhoneV3ReviewItem): Array<PhoneV3Vo
     result.evidence = candidate.evidence_utterances ?? [];
     result.reviewKey = candidate.review_key ?? '';
     result.auditionKey = candidate.audition_key ?? '';
+    result.audioContentKey = candidate.audio_content_key ?? '';
     result.unavailableReason = candidate.audio_unavailable_reason ?? '请更新电脑端以提供完整试听';
     for (const window of clips) {
       if (validOffset(window.start_ms) && validOffset(window.end_ms)) {

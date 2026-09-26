@@ -64,6 +64,8 @@ class PhoneV3HttpRemoteSession implements PhoneV3RemoteSession {
   async reviewAudio(request: DeviceV3ReviewAudioRequest): Promise<DeviceV3ReviewAudioResponse> {
     await verifyConfiguration(this.store, this.config);
     const response = await this.client.v3ReviewAudio(request);
+    response.local_audio_path = undefined;
+    response.local_worker_tid = undefined;
     await verifyConfiguration(this.store, this.config);
     return response;
   }
@@ -87,5 +89,11 @@ export class PhoneV3DeviceRemote implements PhoneV3RemotePort {
     const updated = await connectComputerReceiver(this.context, this.configStore);
     return new PhoneV3HttpRemoteSession(new ComputerTransferHttpClient(
       this.context, updated.baseUrl, updated.caPath, updated.deviceId, '', updated.signingKeyAlias), this.configStore, updated);
+  }
+
+  async audioNamespace(): Promise<string> {
+    const config = await this.configStore.load();
+    if (!config.isPaired()) { return ''; }
+    return JSON.stringify([config.receiverId, config.caFingerprint, config.deviceId, config.rpId, config.signingKeyAlias]);
   }
 }

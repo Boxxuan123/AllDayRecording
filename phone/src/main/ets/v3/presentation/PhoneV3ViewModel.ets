@@ -1,4 +1,7 @@
 import { phoneV3VoiceCandidates } from '../domain/PhoneV3ReviewModels';
+import { validateReviewSample } from '../domain/PhoneV3ReviewAudioValidation';
+import { PhoneV3ReviewAudioCache } from '../data/PhoneV3ReviewAudioCache';
+import { PhoneV3VoiceTask } from '../domain/PhoneV3VoiceReviewTask';
 import { PhoneV3LocalAnnotation, applyAnnotationRows } from '../domain/PhoneV3LocalAnnotation';
 import { indexedUtterances, retainAnnotationIndex } from '../domain/PhoneV3AnnotationIndex';
 import { ComputerUploadProgress } from '../../computer/ComputerRecordingUploadService';
@@ -89,6 +92,11 @@ export class PhoneV3ViewModel {
   error: string = '';
   private useCases: PhoneV3UseCases | undefined = undefined;
   private reviewAudioPlayer: PhoneV3ReviewAudioPlayer | undefined = undefined;
+  private reviewPageActive: boolean = false;
+  private reviewWindow: Array<PhoneV3VoiceTask> = [];
+  private prefetchIdentity: string = '';
+  private prefetchGeneration: number = 0;
+  private reviewAudioStates: Map<string, string> = new Map<string, string>();
   private audioLoading: boolean = false;
   private annotationAudioPlaying: boolean = false;
   private annotationAudioSource: PhoneV3Utterance | undefined = undefined;
@@ -241,6 +249,8 @@ export class PhoneV3ViewModel {
 
   setForeground(value: boolean): void {
     this.foreground = value; this.coordinator?.setForeground(value);
+    if (this.reviewPageActive) { this.setReviewAudioWindow(this.reviewWindow); }
+    if (!value) { this.stopPlayback(); }
     if (!value) { this.stopPlayback(); }
     else { this.refreshCommittedSync().catch((error: Object): void => this.fail(error)); }
   }
@@ -275,7 +285,7 @@ export class PhoneV3ViewModel {
         const processing = this.snapshot.sessions.some((session): boolean =>
           ['queued', 'running', 'pending'].indexOf(session.processingStatus) >= 0);
         return new PhoneSyncWorkResult(result.completion === 'budget_exhausted',
-          result.remainingOperations > 0 || processing || this.backupActive ? 15000 : 120000);
+          result.remainingOperations > 0 || processing || this.backupActive || this.reviewPageActive ? 15000 : 120000);
       },
       backup: async (): Promise<PhoneSyncWorkResult> => {
         if (!this.snapshot.paired) { return new PhoneSyncWorkResult(false, 0, false); }
@@ -594,6 +604,39 @@ export class PhoneV3ViewModel {
     });
   }
 
+  setReviewAudioWindow(tasks: Array<PhoneV3VoiceTask>, active: boolean = true): void {
+    this.reviewWindow = tasks;
+    const becameActive = active && !this.reviewPageActive;
+    this.reviewPageActive = active;
+    if (becameActive) { this.coordinator?.trigger(false); }
+    const selected = active && this.foreground ? tasks.slice(0, 3) : [];
+    const identity = selected.map((task: PhoneV3VoiceTask): string => `${task.key}:${task.fingerprint}`).join('|');
+    if (identity === this.prefetchIdentity) { return; }
+    this.prefetchIdentity = identity;
+    const generation = ++this.prefetchGeneration;
+    const useCases = this.useCases;
+    useCases?.cancelReviewPrefetch();
+    this.reviewAudioStates.clear();
+    let next: Promise<void> = Promise.resolve();
+    for (const task of selected) {
+      if (!task.candidate.hasAudio || !task.candidate.audioContentKey) { continue; }
+      next = next.then(async (): Promise<void> => {
+        if (generation !== this.prefetchGeneration || useCases === undefined) { return; }
+        this.reviewAudioStates.set(task.key, '正在准备试听');
+        this.stateChangeListener();
+        try {
+          await useCases.loadReviewAudio(task.item.reviewId, task.candidate.prototypeId, true);
+          if (generation === this.prefetchGeneration) { this.reviewAudioStates.set(task.key, '已缓存，可离线试听'); }
+        } catch (_error) {
+          if (generation === this.prefetchGeneration) { this.reviewAudioStates.set(task.key, '点击准备试听'); }
+        }
+        if (generation === this.prefetchGeneration) { this.stateChangeListener(); }
+      });
+    }
+  }
+
+  reviewAudioState(key: string): string { return this.reviewAudioStates.get(key) ?? '点击准备试听'; }
+
   playReviewSample(reviewId: string, prototypeId: string,
     onCompleted: () => void = (): void => {}): void {
     const useCases = this.useCases;
@@ -615,21 +658,16 @@ export class PhoneV3ViewModel {
     this.stateChangeListener();
     useCases.loadReviewAudio(reviewId, prototypeId).then(async (response): Promise<void> => {
       if (generation !== this.audioRequestGeneration) {
+        useCases.releaseReviewAudio?.(response);
         return;
       }
       const item = this.snapshot.reviewItems.find((value): boolean => value.reviewId === reviewId);
       const candidate = item === undefined ? undefined : phoneV3VoiceCandidates(item).find(
         (value): boolean => value.prototypeId === prototypeId);
-      if (response.complete_sample !== true || response.review_id !== reviewId || response.prototype_id !== prototypeId ||
-        candidate === undefined || candidate.auditionKey.length === 0 || response.audition_key !== candidate.auditionKey ||
-        response.end_ms - response.start_ms !== candidate.totalMs || response.windows === undefined ||
-        response.windows.length !== candidate.windowCount || response.windows.some((window, index: number): boolean => {
-          const clip = candidate.clips[index];
-          return clip === undefined || window.media_id !== clip.media_id || window.start_ms !== clip.start_ms || window.end_ms !== clip.end_ms ||
-            window.playback_start_ms !== candidate.clips.slice(0, index).reduce((total: number, previous): number => total + (previous.end_ms ?? 0) - (previous.start_ms ?? 0), 0);
-        })) {
-        throw new Error('样本已变化或电脑未提供完整试听，请刷新后重试');
-      }
+      try {
+        if (candidate === undefined) { throw new Error('当前样本已变化，请刷新后重新完整试听'); }
+        validateReviewSample(response, reviewId, candidate);
+      } catch (error) { useCases.releaseReviewAudio?.(response); throw error as Error; }
       await player.play(response, (): void => {
         if (generation !== this.audioRequestGeneration) { return; }
         this.audioLoading = false;
@@ -778,10 +816,12 @@ export class PhoneV3ViewModel {
     this.lastRetryAction = PhoneV3RetryAction.NONE;
     this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.BUSY,
       undefined, undefined, '正在确认录音尚未同步到电脑…'));
-    useCases.localAudioIsProtected(session.sessionKey).then((protectedAudio: boolean): Promise<void> => {
+    useCases.localAudioIsProtected(session.sessionKey).then(async (protectedAudio: boolean): Promise<void> => {
       if (protectedAudio) {
         throw new Error('该录音已经同步到电脑，禁止删除手机本地音频');
       }
+      await this.reviewAudioPlayer?.release();
+      await useCases.clearReviewAudio();
       return bridge.deleteLocalSession(session.localGroupKey);
     }).then((): void => {
       this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SUCCESS,
@@ -835,7 +875,8 @@ export class PhoneV3ViewModel {
     try {
       await this.retirement;
       if (lifecycle !== this.lifecycleGeneration) { return; }
-      this.reviewAudioPlayer = new PhoneV3ReviewAudioPlayer(context);
+      const audioCache = new PhoneV3ReviewAudioCache(context);
+      this.reviewAudioPlayer = new PhoneV3ReviewAudioPlayer(context, audioCache);
       const local = new PhoneV3LocalAudioRepository(context.filesDir);
       this.localFacts = await local.list();
       this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.LOCAL_READY,
@@ -854,7 +895,7 @@ export class PhoneV3ViewModel {
           }
           this.backupMessage = `${progress.message} · 文件 ${progress.completedFiles}/${progress.totalFiles} · ${progress.percent()}%`;
           this.stateChangeListener();
-        }));
+        }), audioCache);
       await this.refreshSnapshot();
       if (lifecycle !== this.lifecycleGeneration) { return; }
       await this.startForegroundSync(context);

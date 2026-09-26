@@ -79,8 +79,17 @@ export interface PhoneV3RemoteSession {
 }
 
 export interface PhoneV3RemotePort {
+  audioNamespace?(): Promise<string>;
   isPaired(): Promise<boolean>;
   connect(): Promise<PhoneV3RemoteSession>;
+}
+
+export interface PhoneV3ReviewAudioCachePort {
+  prepare(namespace: string, key: string, download: () => Promise<DeviceV3ReviewAudioResponse>, prefetch: boolean): Promise<DeviceV3ReviewAudioResponse>;
+  release(path: string): void;
+  hasLease(path: string): boolean;
+  cancelPrefetch(): void;
+  clear(): Promise<void>;
 }
 
 export interface PhoneV3DeviceBridgePort {

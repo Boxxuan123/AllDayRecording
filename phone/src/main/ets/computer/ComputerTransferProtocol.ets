@@ -222,6 +222,9 @@ export interface DeviceV3ReviewActionResponse {
 export interface DeviceV3ReviewAudioRequest {
   review_id: string;
   prototype_id: string;
+  audition_key?: string;
+  audio_content_key?: string;
+  prefetch?: boolean;
 }
 
 export interface DeviceV3ReviewAudioWindow {
@@ -232,6 +235,13 @@ export interface DeviceV3ReviewAudioWindow {
 }
 
 export interface DeviceV3ReviewAudioResponse {
+  audio_content_key?: string;
+  sha256?: string;
+  byte_length?: number;
+  cache_hit?: boolean;
+  // Local-only prepared file; never sent to the computer.
+  local_audio_path?: string;
+  local_worker_tid?: number;
   complete_sample?: boolean;
   audition_key?: string;
   windows?: Array<DeviceV3ReviewAudioWindow>;

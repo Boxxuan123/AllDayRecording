@@ -1,0 +1,1 @@
+{"description":"B/C/D 四条集中隔离真机流程","environment":[{"type":"device","label":"phone"}],"driver":{"type":"DeviceTest","py_file":["PhoneSyncBCD.py"]}}

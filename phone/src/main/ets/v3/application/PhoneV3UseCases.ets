@@ -20,6 +20,8 @@ import {
 } from '../contracts/V3ContractModels';
 import { applySyncResponse } from '../data/PhoneSyncProjection';
 import { phoneV3ReviewItems, phoneV3ReviewSnapshotItems } from '../data/PhoneV3ReviewProjection';
+import { phoneV3VoiceCandidates } from '../domain/PhoneV3ReviewModels';
+import { validateReviewSample } from '../domain/PhoneV3ReviewAudioValidation';
 import {
   PhoneV3LocalAudioFact,
   PhoneV3LocalAudioLink,
@@ -38,6 +40,7 @@ import {
   PhoneV3ReminderSchedulerPort,
   PhoneV3RemotePort
 } from './PhoneV3Ports';
+import { PhoneV3ReviewAudioCachePort } from './PhoneV3Ports';
 
 interface AnnotationTargetPayload { status: string; }
 interface ReviewRemoteError { statusCode?: number; reviewRequestNotSent?: boolean; }
@@ -110,6 +113,7 @@ export class PhoneV3SyncResult {
 }
 
 export class PhoneV3UseCases {
+  private reviewAudioCache?: PhoneV3ReviewAudioCachePort;
   private syncActive: boolean = false;
   private syncCancelled: boolean = false;
   cancelSynchronize(): void { this.syncCancelled = true; }
@@ -127,7 +131,8 @@ export class PhoneV3UseCases {
   constructor(repository: PhoneV3ProjectionRepositoryPort,
     localAudio: PhoneV3LocalAudioRepositoryPort, remote: PhoneV3RemotePort,
     reminderScheduler?: PhoneV3ReminderSchedulerPort,
-    audioBackup?: PhoneV3AudioBackupPort) {
+    audioBackup?: PhoneV3AudioBackupPort, reviewAudioCache?: PhoneV3ReviewAudioCachePort) {
+    this.reviewAudioCache = reviewAudioCache;
     this.repository = repository;
     this.localAudio = localAudio;
     this.remote = remote;
@@ -377,7 +382,7 @@ export class PhoneV3UseCases {
       onStatus('正在同步标注与电脑状态…');
       const session = await this.remote.connect();
       const status = await session.status();
-      if (status.contract_version !== V3_CONTRACT_VERSION ||
+      if ((status.contract_version !== V3_CONTRACT_VERSION && status.contract_version !== '3.7.0') ||
         status.projection_version !== V3_PROJECTION_VERSION) {
         throw new Error('电脑 V3 Device API 版本与 Phone 投影不兼容');
       }
@@ -508,10 +513,44 @@ export class PhoneV3UseCases {
     return response;
   }
 
-  async loadReviewAudio(reviewId: string, prototypeId: string): Promise<DeviceV3ReviewAudioResponse> {
-    const session = await this.remote.connect();
-    return session.reviewAudio({ review_id: reviewId, prototype_id: prototypeId });
+  async loadReviewAudio(reviewId: string, prototypeId: string, prefetch: boolean = false): Promise<DeviceV3ReviewAudioResponse> {
+    const cache = this.reviewAudioCache;
+    if (cache === undefined || this.remote.audioNamespace === undefined) {
+      const session = await this.remote.connect();
+      return session.reviewAudio({ review_id: reviewId, prototype_id: prototypeId });
+    }
+    const namespace = await this.remote.audioNamespace();
+    if (!namespace) { await cache.clear(); throw new Error('请先连接受信任的电脑'); }
+    const items = phoneV3ReviewItems(await this.repository.projectionRows('review_item', [reviewId]));
+    const item = items.find((value): boolean => value.reviewId === reviewId);
+    const candidate = item === undefined ? undefined : phoneV3VoiceCandidates(item).find((value): boolean => value.prototypeId === prototypeId);
+    if (candidate === undefined || !candidate.hasAudio) { throw new Error('当前样本已不可用'); }
+    const download = async (): Promise<DeviceV3ReviewAudioResponse> => {
+      const session = await this.remote.connect();
+      const response = await session.reviewAudio({ review_id: reviewId, prototype_id: prototypeId,
+        audition_key: candidate.auditionKey, audio_content_key: candidate.audioContentKey, prefetch: prefetch });
+      validateReviewSample(response, reviewId, candidate);
+      if (await this.remote.audioNamespace!() !== namespace) { throw new Error('电脑身份已变化'); }
+      return response;
+    };
+    // Old metadata stays playable online, but cannot establish a persistent key.
+    if (!candidate.audioContentKey) {
+      if (prefetch) { throw new Error('旧版本不预取'); }
+      const session = await this.remote.connect();
+      return session.reviewAudio({ review_id: reviewId, prototype_id: prototypeId });
+    }
+    const response = await cache.prepare(namespace, candidate.audioContentKey, download, prefetch);
+    response.review_id = reviewId; response.prototype_id = prototypeId;
+    try {
+      validateReviewSample(response, reviewId, candidate);
+      if (await this.remote.audioNamespace() !== namespace) { throw new Error('电脑身份已变化'); }
+      return response;
+    } catch (error) { if (!prefetch) { cache.release(response.local_audio_path ?? ''); } throw error as Error; }
   }
+
+  releaseReviewAudio(response: DeviceV3ReviewAudioResponse): void { this.reviewAudioCache?.release(response.local_audio_path ?? ''); }
+  cancelReviewPrefetch(): void { this.reviewAudioCache?.cancelPrefetch(); }
+  async clearReviewAudio(): Promise<void> { await this.reviewAudioCache?.clear(); }
 
   private async cacheRemotePeople(people: Array<DeviceV3PersonChoice>): Promise<void> {
     await this.repository.beginTransaction();

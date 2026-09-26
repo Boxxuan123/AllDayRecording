@@ -19,9 +19,9 @@ const native={
  '@kit.CoreFileKit':{fileIo:{OpenMode:{CREATE:1,WRITE_ONLY:2,TRUNC:4,READ_ONLY:0},
   mkdirSync:fs.mkdirSync,statSync:fs.statSync,openSync:(p,mode)=>{if(mode) files.add(p);return {fd:fs.openSync(p,mode?'w':'r')}},
   writeSync:(fd,data)=>fs.writeSync(fd,Buffer.from(data)),closeSync:fs.closeSync,
-  unlinkSync:p=>{fs.unlinkSync(p);files.delete(p)}}},
+  unlink:async p=>{fs.unlinkSync(p);files.delete(p)},unlinkSync:p=>{fs.unlinkSync(p);files.delete(p)}}},
  '@kit.MediaKit':{media:{createAVPlayer:async()=>new NativePlayer(),SeekMode:{SEEK_CLOSEST:0}}},
- '@kit.ArkTS':{util:{}},
+ '@kit.ArkTS':{util:{},taskpool:{execute:async(fn,...args)=>fn(...args)}},
 };
 global.Observed=c=>c; const appValues=new Map();global.AppStorage={get:k=>appValues.get(k),setOrCreate:(k,v)=>appValues.set(k,v),set:(k,v)=>appValues.set(k,v)};
 const oldLoad=Module._load;
