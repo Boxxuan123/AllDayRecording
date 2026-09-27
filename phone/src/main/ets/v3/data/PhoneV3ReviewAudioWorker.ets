@@ -33,7 +33,7 @@ interface CacheFileError { code?: number; }
 function removeDerivedFile(path: string): void {
   try { fileIo.unlinkSync(path); }
   catch (error) {
-    if ((error as CacheFileError).code !== 13900002) { throw error; }
+    if ((error as CacheFileError).code !== 13900002) { throw error as Error; }
   }
 }
 
@@ -160,7 +160,7 @@ export async function reviewAudioFileTask(root: string, action: string, namespac
     const evict = obsolete || (item.holdUntil < Date.now() && (count > 48 || total > maxBytes));
     if (evict && !pinned) {
       try { removeDerivedFile(`${root}/${item.name}`); }
-      catch (error) { saveAudioIndex(indexPath, retained.concat(entries.slice(entries.indexOf(item)))); throw error; }
+      catch (error) { saveAudioIndex(indexPath, retained.concat(entries.slice(entries.indexOf(item)))); throw error as Error; }
       total -= item.bytes; count -= 1;
     } else { retained.push(item); }
   }
