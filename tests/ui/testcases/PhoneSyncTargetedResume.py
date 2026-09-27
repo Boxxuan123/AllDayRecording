@@ -10,7 +10,7 @@ class PhoneSyncTargetedResume(PhoneSyncBCD):
     def setup(self):
         self.fault('none')
         self.driver.start_app('AllDayRecording.huawei.com', 'EntryAbility')
-        self.wait(BY.text('隔离生产链路已准备'), 30)
+        self.wait(BY.id('phase2-scroll'), 30)
 
     def process(self):
         before = self.evidence()
