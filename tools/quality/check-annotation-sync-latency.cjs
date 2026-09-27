@@ -19,12 +19,13 @@ const wait=async f=>{const end=Date.now()+5000;while(!await f()){assert(Date.now
  reviews:async()=>{readStarted=true;return new Promise((res,rej)=>{release=()=>res({items:[]});rejectRead=()=>rej(new Failure('unreachable','response','synthetic reviews failure'));})},annotations:async()=>({people:[]})};
  const u=new UseCases(repo,{list:async()=>[]},{isPaired:async()=>true,connect:async()=>session});
  const model=new VM(u);model.snapshot=await u.loadCached([]);model.startCoordinator();
- const save=async n=>{let done=false;model.saveAnnotation([model.snapshot.sessions[0].utterances.find(x=>x.utteranceId===id(n))],'','',false,'non_speech',()=>done=true);await wait(()=>done&&!model.annotationSaving);};
+ const save=async n=>{let done=false;model.saveAnnotation([model.snapshot.sessions[0].utterances.find(x=>x.utteranceId===id(n))],'',n===1?'Synthetic Person':'',n===1,n===1?'':'non_speech',()=>done=true);await wait(()=>done&&!model.annotationSaving);};
  await save(1);await wait(()=>readStarted&&seen.length===1&&model.snapshot.sync.pendingOperations===0);
  assert.equal(model.snapshot.sync.confirmedOperations,1,'accepted overlay stays durable awaiting projection');
  assert.equal(model.snapshot.sessions[0].utterances.find(x=>x.utteranceId===id(1)).annotationPending,false);
  await save(2);await wait(()=>seen.length===2&&model.snapshot.sync.pendingOperations===0);
  assert.equal(model.snapshot.sync.confirmedOperations,2);assert.equal(maxActive,1);
+ assert.deepEqual(seen.map(op=>op.kind),['speaker.assign','segment.classify']);
  console.log('PASS blocked reviews does not hold single outbox lane; two commits visible before release; overlays retained');
  rejectRead();await wait(()=>model.supplementaryError.length>0);
  assert.equal(model.computerSyncError,'');assert.equal(model.snapshot.sync.pendingOperations,0);
