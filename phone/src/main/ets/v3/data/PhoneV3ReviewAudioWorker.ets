@@ -1,3 +1,4 @@
+import { AudioEntry, removeDerivedFile, saveAudioIndex } from './PhoneV3ReviewAudioFiles';
 import { fileIo } from '@kit.CoreFileKit';
 import { util, process } from '@kit.ArkTS';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
@@ -14,35 +15,6 @@ export function prepareTransientReviewAudio(directory: string, name: string, enc
   const file = fileIo.openSync(path, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
   try { fileIo.writeSync(file.fd, bytes.buffer); } finally { fileIo.closeSync(file.fd); }
   return path;
-}
-
-interface AudioEntry {
-  name: string;
-  namespace: string;
-  key: string;
-  bytes: number;
-  sha256: string;
-  touched: number;
-  holdUntil: number;
-  response: DeviceV3ReviewAudioResponse;
-}
-
-interface CacheFileError { code?: number; }
-
-// CoreFileKit BusinessError 13900002 is ENOENT in the installed SDK.
-function removeDerivedFile(path: string): void {
-  try { fileIo.unlinkSync(path); }
-  catch (error) {
-    if ((error as CacheFileError).code !== 13900002) { throw error as Error; }
-  }
-}
-
-function saveAudioIndex(indexPath: string, entries: Array<AudioEntry>): void {
-  const manifest = JSON.stringify(entries);
-  const index = fileIo.openSync(`${indexPath}.part`, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-  try { fileIo.writeSync(index.fd, manifest); fileIo.fsyncSync(index.fd); }
-  finally { fileIo.closeSync(index.fd); }
-  fileIo.renameSync(`${indexPath}.part`, indexPath);
 }
 
 // All directory scans, base64 conversion, hashes and IO execute in taskpool.
