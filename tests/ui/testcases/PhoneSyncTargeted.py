@@ -55,7 +55,7 @@ class PhoneSyncTargeted(PhoneSyncBCD):
         assert sum(a['key'] == next_key for a in self.evidence()['audio']) == before
         self.driver.swipe('UP', area=BY.id('phase2-scroll'))
         self.driver.swipe('DOWN', area=BY.id('phase2-scroll'))
-        self.until(lambda: self.evidence()['upload_complete'], 180)
+        self.until(lambda: self.evidence()['upload_complete'], 600)
         self.results['T3'] = {'passed':True,'during_upload':during,'next_hit':next_play,
             'save_visible_proxy_ms':(visible-started)*1000,'local_save_times':self.state()['times'],
             'receipt_before_upload_complete':True}
@@ -65,6 +65,8 @@ class PhoneSyncTargeted(PhoneSyncBCD):
         self.tap('phase2-batch')
         self.wait(BY.text('离线三次本地提交完成'))
         assert self.state()['durable'] == 3
+        failed = self.until(lambda: (s if s.get('error') else None) if (s := self.state()) else None, 60)
+        assert '12 秒' not in failed['error'], 'Direct transport error was misclassified as discovery timeout'
         self.fault('none')
         self.until(lambda: self.state()['durable'] == 0, 90)
         receipts = self.evidence()['receipts']

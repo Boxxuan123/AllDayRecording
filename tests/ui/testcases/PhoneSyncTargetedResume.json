@@ -1,0 +1,1 @@
+{"description":"同一 LAN 上传完成及实际断线错误恢复复核","environment":[{"type":"device","label":"phone"}],"driver":{"type":"DeviceTest","py_file":["PhoneSyncTargetedResume.py"]}}
