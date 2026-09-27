@@ -11,6 +11,7 @@ export class PhoneSyncWorkResult {
 export interface PhoneSyncCoordinatorPort {
   light: () => Promise<PhoneSyncWorkResult>;
   backup: () => Promise<PhoneSyncWorkResult>;
+  supplementary?: () => Promise<PhoneSyncWorkResult>;
   cancelLight: () => void;
   changed: () => void;
 }
@@ -27,6 +28,7 @@ export class PhoneSyncLane {
 export class PhoneSyncCoordinator {
   light: PhoneSyncLane = new PhoneSyncLane();
   backup: PhoneSyncLane = new PhoneSyncLane();
+  supplementary: PhoneSyncLane = new PhoneSyncLane();
   paused: boolean = false;
   private foreground: boolean = false;
   private stopped: boolean = false;
@@ -47,6 +49,7 @@ export class PhoneSyncCoordinator {
     if (backup && this.backup.failures === 0) { this.backup.due = 0; }
     if (manual) {
       this.light.blocked = false; this.light.due = 0;
+      this.supplementary.blocked = false; this.supplementary.due = 0;
       if (backup) { this.backup.blocked = false; this.backup.due = 0; }
     }
     this.schedule();
@@ -57,28 +60,31 @@ export class PhoneSyncCoordinator {
   resume(): void { this.paused = false; this.trigger(true, true); this.port.changed(); }
   stop(): void { this.stopped = true; this.foreground = false; this.clearTimer(); this.port.cancelLight(); }
   async whenIdle(): Promise<void> {
-    if (!this.light.running && !this.backup.running) { return; }
+    if (!this.light.running && !this.backup.running && !this.supplementary.running) { return; }
     await new Promise<void>((resolve): void => { this.idleWaiters.push(resolve); });
   }
   private clearTimer(): void { if (this.timer >= 0) { clearTimeout(this.timer); this.timer = -1; } }
   private schedule(): void {
     if (!this.foreground || this.stopped || this.paused) { return; }
     this.clearTimer();
-    const lanes = [this.light, this.backup].filter((lane): boolean => lane.pending && !lane.running && !lane.blocked);
+    const lanes = [this.light, this.backup, this.supplementary].filter((lane): boolean => lane.pending && !lane.running && !lane.blocked);
     if (lanes.length === 0) { return; }
     const due = Math.min(...lanes.map((lane): number => lane.due));
     this.timer = setTimeout((): void => {
       this.timer = -1;
       this.run(this.light, false); this.run(this.backup, true);
+      this.run(this.supplementary, false);
     }, Math.max(250, due - Date.now()));
   }
   private run(lane: PhoneSyncLane, backup: boolean): void {
     if (!this.foreground || this.stopped || this.paused || lane.running || lane.blocked || !lane.pending) { return; }
     if (lane.due > Date.now()) { this.schedule(); return; }
     lane.running = true; lane.pending = false; lane.error = ''; this.port.changed();
-    const work = backup ? this.port.backup() : this.port.light();
+    const work = lane === this.supplementary && this.port.supplementary !== undefined ?
+      this.port.supplementary() : backup ? this.port.backup() : this.port.light();
     work.then((result): void => {
       lane.failures = 0;
+      if (lane === this.light && this.port.supplementary !== undefined) { this.supplementary.pending = true; }
       if (result.completed) { lane.successAt = Date.now(); }
       const triggered = lane.pending;
       lane.pending = triggered || result.again || result.pollMs > 0;
@@ -90,12 +96,16 @@ export class PhoneSyncCoordinator {
       lane.blocked = ['unpaired', 'authorization', 'identity', 'tls'].indexOf(failure.category) >= 0 ||
         (failure.statusCode >= 400 && failure.statusCode < 500 && failure.statusCode !== 408 && failure.statusCode !== 429) ||
         !(error instanceof ComputerConnectionError);
+      if (['unpaired', 'authorization', 'identity', 'tls'].indexOf(failure.category) >= 0) {
+        this.light.blocked = true; this.backup.blocked = true; this.supplementary.blocked = true;
+        this.port.cancelLight();
+      }
       lane.pending = true;
       lane.due = Date.now() + Math.min(300000, 2000 * Math.pow(2, Math.min(lane.failures, 7)) *
         (0.8 + Math.random() * 0.4));
     }).finally((): void => {
       lane.running = false;
-      if (!this.light.running && !this.backup.running) {
+      if (!this.light.running && !this.backup.running && !this.supplementary.running) {
         for (let resolve of this.idleWaiters) { resolve(); }
         this.idleWaiters = [];
       }

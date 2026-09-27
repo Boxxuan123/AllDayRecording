@@ -11,6 +11,7 @@ const root = path.resolve(process.argv[3]);
 const input = JSON.parse(fs.readFileSync(0, 'utf8'));
 const current = []; const cancelled = []; const published = []; const updated = [];
 const native = {
+  '@kit.BasicServicesKit': { systemDateTime: { TimeType: { STARTUP: 0 }, getUptime: () => performance.now() } },
   '@kit.NotificationKit': { notificationManager: { isNotificationEnabled: async () => true } },
   '@kit.BackgroundTasksKit': { reminderAgentManager: {
     ReminderType: { REMINDER_TYPE_CALENDAR: 1 }, TimeZoneType: { FIXED_TIME_ZONE: 1 },

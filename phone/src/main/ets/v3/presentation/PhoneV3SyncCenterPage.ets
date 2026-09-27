@@ -193,6 +193,7 @@ export struct PhoneV3SyncCenterPage {
           }
           .width('100%')
 
+          if (this.viewModel.supplementaryError) { Text(`审核/人物刷新：${this.viewModel.supplementaryError}`).fontSize(12) }
           Text(this.viewModel.computerSyncError || this.viewModel.computerSyncMessage).id('computer-sync-status')
             .fontSize(13).width('100%')
           Text(`标注与状态：${this.viewModel.computerSyncActive ? '同步中' : '等待更新'} · ${this.viewModel.snapshot.sync.pendingOperations} 项待同步`)

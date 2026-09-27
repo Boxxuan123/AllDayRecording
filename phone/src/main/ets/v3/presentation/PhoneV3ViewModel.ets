@@ -1,3 +1,4 @@
+import { annotationTiming } from '../application/PhoneAnnotationTiming';
 import { PhoneV3ReviewAudioRetry } from '../domain/PhoneV3ReviewAudioRetry';
 import { ComputerConnectionError } from '../../computer/ComputerConnectionError';
 import { phoneV3VoiceCandidates } from '../domain/PhoneV3ReviewModels';
@@ -66,6 +67,8 @@ class PhoneV3PrefetchDemand {
 
 @Observed
 export class PhoneV3ViewModel {
+  supplementaryError: string = '';
+  private committedUiIds: Array<string> = [];
   private reviewSubmissions: Map<string, PhoneV3PendingReview> = new Map<string, PhoneV3PendingReview>();
   snapshot: PhoneV3Snapshot = new PhoneV3Snapshot();
   device: PhoneV3DeviceState = new PhoneV3DeviceState();
@@ -289,6 +292,15 @@ export class PhoneV3ViewModel {
     const generation = this.lifecycleGeneration;
     const useCases = this.useCases;
     if (useCases === undefined) { return; }
+    useCases.onCommitted = (result): void => {
+      this.committedUiIds = this.committedUiIds.concat(result.operationIds).slice(-512);
+      const full = this.syncProjectionDirty || result.requiresReload;
+      this.syncProjectionDirty = true;
+      if (generation === this.lifecycleGeneration) {
+        this.refreshCommittedSync(full ? [] : result.utteranceIds)
+          .catch((error: Object): void => this.fail(error));
+      }
+    };
     const port: PhoneSyncCoordinatorPort = {
       light: async (): Promise<PhoneSyncWorkResult> => {
         if (!this.snapshot.paired) { return new PhoneSyncWorkResult(false, 120000, false); }
@@ -303,7 +315,12 @@ export class PhoneV3ViewModel {
         const processing = this.snapshot.sessions.some((session): boolean =>
           ['queued', 'running', 'pending'].indexOf(session.processingStatus) >= 0);
         return new PhoneSyncWorkResult(result.completion === 'budget_exhausted',
-          result.remainingOperations > 0 || processing || this.backupActive || this.reviewPageActive ? 15000 : 120000);
+          result.remainingOperations > 0 || this.snapshot.sync.confirmedOperations > 0 || processing || this.backupActive || this.reviewPageActive ? 15000 : 120000);
+      },
+      supplementary: async (): Promise<PhoneSyncWorkResult> => {
+        if (!this.snapshot.paired) { return new PhoneSyncWorkResult(false, 120000, false); }
+        await useCases.refreshSupplementary();
+        return new PhoneSyncWorkResult(false, this.reviewPageActive ? 15000 : 120000);
       },
       backup: async (): Promise<PhoneSyncWorkResult> => {
         if (!this.snapshot.paired) { return new PhoneSyncWorkResult(false, 0, false); }
@@ -325,6 +342,7 @@ export class PhoneV3ViewModel {
         this.backupActive = coordinator.backup.running;
         this.computerSyncError = coordinator.light.error;
         this.backupError = coordinator.backup.error;
+        this.supplementaryError = coordinator.supplementary.error;
         this.syncPaused = coordinator.paused;
         this.lightSuccessAt = coordinator.light.successAt;
         this.backupSuccessAt = coordinator.backup.successAt;
@@ -979,6 +997,7 @@ export class PhoneV3ViewModel {
     try {
       while (this.syncProjectionDirty && !this.annotationSaving && this.foreground && lifecycle === this.lifecycleGeneration) {
         this.syncProjectionDirty = false;
+        const committedIds = this.committedUiIds.slice();
         const revision = this.snapshotGeneration;
         if (ids.length > 0) {
           this.snapshotGeneration += 1;
@@ -988,6 +1007,10 @@ export class PhoneV3ViewModel {
           }
         } else { await this.refreshSnapshot(false); }
         this.syncProjectionDirty = this.syncProjectionDirty || this.snapshotGeneration !== revision + 1 || this.annotationSaving || !this.foreground;
+        if (!this.syncProjectionDirty) {
+          annotationTiming('T6-ui-confirmed', committedIds);
+          this.committedUiIds = this.committedUiIds.filter((id): boolean => committedIds.indexOf(id) < 0);
+        }
         ids = [];
       }
     } catch (error) {

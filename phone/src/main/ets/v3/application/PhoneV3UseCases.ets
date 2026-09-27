@@ -1,3 +1,4 @@
+import { annotationTiming } from './PhoneAnnotationTiming';
 import { syncRequestBatch } from '../data/PhoneSyncBatch';
 import { PhonePendingOperation } from '../data/PhoneSyncProjection';
 import { PHONE_V3_SOUND_KINDS, phoneV3SoundKindLabel } from '../domain/PhoneV3SoundKind';
@@ -81,6 +82,8 @@ interface UtteranceCorrectionPayload {
 const activeSyncRepositories: Set<PhoneV3ProjectionRepositoryPort> = new Set<PhoneV3ProjectionRepositoryPort>();
 
 export class PhoneV3SyncResult {
+  operationIds: Array<string> = [];
+  receiptStates: Array<string> = [];
   changed: boolean = false;
   utteranceIds: Array<string> = [];
   requiresReload: boolean = false;
@@ -113,6 +116,12 @@ export class PhoneV3SyncResult {
 }
 
 export class PhoneV3UseCases {
+  onCommitted: (result: PhoneV3SyncResult) => void = (): void => {};
+  private publishCommitted(result: PhoneV3SyncResult): void {
+    try { this.onCommitted(result); }
+    catch (_) { console.warn('[sync] committed notification deferred; durable projection retained'); }
+  }
+
   private reviewAudioCache?: PhoneV3ReviewAudioCachePort;
   private syncActive: boolean = false;
   private syncCancelled: boolean = false;
@@ -294,6 +303,7 @@ export class PhoneV3UseCases {
           person_name: phoneV3SoundKindLabel(soundKind), sound_kind: soundKind }));
       }
       await this.repository.commit();
+      annotationTiming('T0-local-commit', committed.map((op): string => op.operation_id));
       return committed;
     } catch (error) {
       await this.repository.rollback();
@@ -378,7 +388,9 @@ export class PhoneV3UseCases {
       let changed = false;
       const utteranceIds = new Set<string>();
       let requiresReload = false;
-      const pendingBefore = (await this.repository.v3Status()).pendingOperations;
+      const statusBefore = await this.repository.v3Status();
+      const pendingBefore = statusBefore.pendingOperations + (statusBefore.confirmedOperations ?? 0);
+      annotationTiming('T1-schedule-complete', (await this.repository.pendingOperations(500)).map((op): string => op.operation_id));
       onStatus('正在同步标注与电脑状态…');
       const session = await this.remote.connect();
       const status = await session.status();
@@ -404,8 +416,20 @@ export class PhoneV3UseCases {
         const operations = request.client_operations;
         onStatus(`正在同步转写与处理状态：第 ${batches + 1} 批`);
         dispatched = operations.map((operation): string => operation.operation_id);
+        annotationTiming('T2-sync-dispatch', dispatched);
         const response = await session.sync(request);
         await applySyncResponse(this.repository, response);
+        // The transaction is durable. UI/network failures must never mark it failed.
+        dispatched = [];
+        const committed = new PhoneV3SyncResult(1, response.receipts.length, response.next_cursor, backup);
+        committed.changed = true;
+        committed.operationIds = response.receipts.map((receipt): string => receipt.operation_id);
+        committed.receiptStates = response.receipts.map((receipt): string => receipt.status);
+        committed.utteranceIds = response.changes.filter((change): boolean => change.resource_type === 'utterance')
+          .map((change): string => change.resource_id);
+        committed.requiresReload = response.receipts.length > 0 || response.changes.some((change): boolean => change.resource_type !== 'utterance');
+        annotationTiming('T5-receipt-commit', committed.operationIds);
+        this.publishCommitted(committed);
         changed = changed || response.changes.length > 0 || response.receipts.length > 0;
         for (let change of response.changes) {
           if (change.resource_type === 'utterance') { utteranceIds.add(change.resource_id); }
@@ -423,25 +447,11 @@ export class PhoneV3UseCases {
         }
         cursor = response.next_cursor;
       }
-      if (!this.syncCancelled) {
-      onStatus("正在获取最新审核结果…");
-      const reviews = await session.reviews();
-      const oldReviews = await this.repository.projectionRows('review_item');
-      const oldPayloads = oldReviews.map((row): string => row.payloadJson).sort();
-      const newPayloads = reviews.items.map((row): string => JSON.stringify(row)).sort();
-      if (!this.syncCancelled && JSON.stringify(oldPayloads) !== JSON.stringify(newPayloads)) {
-        await this.repository.replaceReviewItems(reviews.items); changed = true; requiresReload = true;
-      }
-      try {
-        const people = await session.annotations({ action: 'people' });
-        if (!this.syncCancelled) { await this.cacheRemotePeople(people.people ?? []); }
-      } catch (error) { /* Cached people remain usable while the computer is unavailable. */ }
-      }
       const result = new PhoneV3SyncResult(batches, submitted, cursor, backup);
       const statusAfter = await this.repository.v3Status();
       // An empty pull can retire an already-applied overlay once its projection is visible.
       // This local change must invalidate the UI even without a new server change/receipt.
-      if (pendingBefore !== statusAfter.pendingOperations) {
+      if (pendingBefore !== statusAfter.pendingOperations + (statusAfter.confirmedOperations ?? 0)) {
         changed = true;
         if (utteranceIds.size === 0) { requiresReload = true; }
       }
@@ -459,6 +469,18 @@ export class PhoneV3UseCases {
       await this.repository.markSyncFailure(message, dispatched);
       throw error instanceof Error ? error : new Error(message);
     } finally { this.syncActive = false; activeSyncRepositories.delete(this.repository); }
+  }
+
+  async refreshSupplementary(): Promise<void> {
+    const session = await this.remote.connect();
+    const reviews = await session.reviews();
+    await this.repository.replaceReviewItems(reviews.items);
+    const committed = new PhoneV3SyncResult(0, 0, '', new PhoneV3AudioBackupResult());
+    committed.changed = true; committed.requiresReload = true;
+    this.publishCommitted(committed);
+    const people = await session.annotations({ action: 'people' });
+    await this.cacheRemotePeople(people.people ?? []);
+    this.publishCommitted(committed);
   }
 
   async rebuild(): Promise<PhoneV3SyncResult> {

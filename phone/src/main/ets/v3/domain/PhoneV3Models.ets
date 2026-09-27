@@ -76,14 +76,16 @@ export class PhoneV3SyncStatus {
   lastServerTime: string;
   lastError: string;
   pendingOperations: number;
+  confirmedOperations: number;
   retryCount: number;
 
   constructor(cursor: string = 'cursor-0', lastServerTime: string = '', lastError: string = '',
-    pendingOperations: number = 0, retryCount: number = 0) {
+    pendingOperations: number = 0, retryCount: number = 0, confirmedOperations: number = 0) {
     this.cursor = cursor;
     this.lastServerTime = lastServerTime;
     this.lastError = lastError;
     this.pendingOperations = pendingOperations;
+    this.confirmedOperations = confirmedOperations;
     this.retryCount = retryCount;
   }
 }

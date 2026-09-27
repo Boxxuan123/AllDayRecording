@@ -87,6 +87,7 @@ export interface PhoneProjectionStatus {
   last_server_time: string;
   last_error: string;
   pending_operations: number;
+  confirmed_operations: number;
   max_attempt_count: number;
   retry_count: number;
 }
@@ -243,7 +244,8 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
   async status(): Promise<PhoneProjectionStatus> {
     const result = await this.store.querySql(
       `SELECT cursor, last_server_time, last_error, retry_count,
-       (SELECT COUNT(*) FROM outbox) AS pending_operations,
+       (SELECT COUNT(*) FROM outbox WHERE applied_revision IS NULL) AS pending_operations,
+       (SELECT COUNT(*) FROM outbox WHERE applied_revision IS NOT NULL) AS confirmed_operations,
        (SELECT COALESCE(MAX(attempt_count), 0) FROM outbox) AS max_attempt_count
        FROM sync_state WHERE singleton_id = 1`);
     try {
@@ -254,6 +256,7 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
         cursor: result.getString(result.getColumnIndex('cursor')),
         last_server_time: result.getString(result.getColumnIndex('last_server_time')),
         last_error: result.getString(result.getColumnIndex('last_error')),
+        confirmed_operations: result.getLong(result.getColumnIndex('confirmed_operations')),
         pending_operations: result.getLong(result.getColumnIndex('pending_operations')),
         max_attempt_count: result.getLong(result.getColumnIndex('max_attempt_count')),
         retry_count: result.getLong(result.getColumnIndex('retry_count'))
@@ -266,7 +269,7 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
   async v3Status(): Promise<PhoneV3SyncStatus> {
     const value = await this.status();
     return new PhoneV3SyncStatus(value.cursor, value.last_server_time, value.last_error,
-      value.pending_operations, value.retry_count);
+      value.pending_operations, value.retry_count, value.confirmed_operations);
   }
 
   async projectionRows(resourceType: string, resourceIds?: Array<string>): Promise<Array<PhoneV3ProjectionRow>> {
