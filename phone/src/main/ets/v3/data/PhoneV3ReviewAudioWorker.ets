@@ -27,6 +27,24 @@ interface AudioEntry {
   response: DeviceV3ReviewAudioResponse;
 }
 
+interface CacheFileError { code?: number; }
+
+// CoreFileKit BusinessError 13900002 is ENOENT in the installed SDK.
+function removeDerivedFile(path: string): void {
+  try { fileIo.unlinkSync(path); }
+  catch (error) {
+    if ((error as CacheFileError).code !== 13900002) { throw error; }
+  }
+}
+
+function saveAudioIndex(indexPath: string, entries: Array<AudioEntry>): void {
+  const manifest = JSON.stringify(entries);
+  const index = fileIo.openSync(`${indexPath}.part`, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+  try { fileIo.writeSync(index.fd, manifest); fileIo.fsyncSync(index.fd); }
+  finally { fileIo.closeSync(index.fd); }
+  fileIo.renameSync(`${indexPath}.part`, indexPath);
+}
+
 // All directory scans, base64 conversion, hashes and IO execute in taskpool.
 // Callers serialize this function; no database/network transaction crosses it.
 @Concurrent
@@ -82,8 +100,9 @@ export async function reviewAudioFileTask(root: string, action: string, namespac
       result = JSON.stringify(entry.response);
     } catch (_error) {
       if (pins.indexOf(`${root}/${entry.name}`) >= 0) { throw new Error('试听缓存正在使用，请停止播放后重试'); }
-      try { fileIo.unlinkSync(`${root}/${entry.name}`); } catch (_ignored) {}
+      removeDerivedFile(`${root}/${entry.name}`);
       entries = entries.filter((e: AudioEntry): boolean => e.name !== entry.name);
+      saveAudioIndex(indexPath, entries);
     }
   }
   if (action === 'write') {
@@ -109,8 +128,10 @@ export async function reviewAudioFileTask(root: string, action: string, namespac
     for (const old of entries) {
       if (used + bytes.length <= maxBytes && entries.length - victims.length < 48) { break; }
       if (pins.indexOf(`${root}/${old.name}`) >= 0 || old.holdUntil > Date.now()) { continue; }
-      fileIo.unlinkSync(`${root}/${old.name}`);
+      removeDerivedFile(`${root}/${old.name}`);
       used -= old.bytes; victims.push(old.name);
+      // Persist each repair before a later unlink/write can fail.
+      saveAudioIndex(indexPath, entries.filter((e: AudioEntry): boolean => victims.indexOf(e.name) < 0));
     }
     entries = entries.filter((e: AudioEntry): boolean => victims.indexOf(e.name) < 0);
     if (used + bytes.length > maxBytes || entries.length >= 48) { throw new Error('试听缓存空间暂不足，请稍后重试'); }
@@ -138,14 +159,11 @@ export async function reviewAudioFileTask(root: string, action: string, namespac
     const obsolete = action === 'clear' || (namespace.length > 0 && item.namespace !== ns);
     const evict = obsolete || (item.holdUntil < Date.now() && (count > 48 || total > maxBytes));
     if (evict && !pinned) {
-      try { fileIo.unlinkSync(`${root}/${item.name}`); } catch (_error) {}
+      try { removeDerivedFile(`${root}/${item.name}`); }
+      catch (error) { saveAudioIndex(indexPath, retained.concat(entries.slice(entries.indexOf(item)))); throw error; }
       total -= item.bytes; count -= 1;
     } else { retained.push(item); }
   }
-  const manifest = JSON.stringify(retained);
-  const index = fileIo.openSync(`${indexPath}.part`, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-  try { fileIo.writeSync(index.fd, manifest); fileIo.fsyncSync(index.fd); }
-  finally { fileIo.closeSync(index.fd); }
-  fileIo.renameSync(`${indexPath}.part`, indexPath);
+  saveAudioIndex(indexPath, retained);
   return result;
 }

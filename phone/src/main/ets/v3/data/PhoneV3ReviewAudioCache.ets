@@ -1,3 +1,4 @@
+import { PhoneV3ReviewAudioRetry } from '../domain/PhoneV3ReviewAudioRetry';
 import { common } from '@kit.AbilityKit';
 import { taskpool } from '@kit.ArkTS';
 import { DeviceV3ReviewAudioResponse } from '../../computer/ComputerTransferProtocol';
@@ -53,7 +54,6 @@ export class PhoneV3ReviewAudioCache implements PhoneV3ReviewAudioCachePort {
 
   async prepare(namespace: string, key: string, download: () => Promise<DeviceV3ReviewAudioResponse>, prefetch: boolean): Promise<DeviceV3ReviewAudioResponse> {
     if (!namespace || !/^[a-f0-9]{64}$/.test(key)) { throw new Error('尚无可信试听缓存描述'); }
-    if (prefetch && this.prefetchFailedUntil > Date.now()) { throw new Error('预取暂缓'); }
     const epoch = this.epoch;
     const cached = await this.file('read', namespace, key);
     let response: DeviceV3ReviewAudioResponse;
@@ -63,6 +63,7 @@ export class PhoneV3ReviewAudioCache implements PhoneV3ReviewAudioCachePort {
       let job = this.jobs.get(id);
       if (job !== undefined) { job.prefetch = job.prefetch && prefetch; this.joins += 1; }
       else {
+        if (prefetch && this.prefetchFailedUntil > Date.now()) { throw new PhoneV3ReviewAudioRetry(this.prefetchFailedUntil); }
         if (this.jobs.size >= 4) { throw new Error('试听准备繁忙，请稍后重试'); }
         job = new AudioJob(namespace, key, download, prefetch);
         this.jobs.set(id, job); this.queue.push(job); this.drain();

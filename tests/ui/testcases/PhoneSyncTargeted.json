@@ -1,0 +1,1 @@
+{"description":"四项修补集中 LAN 回归","environment":[{"type":"device","label":"phone"}],"driver":{"type":"DeviceTest","py_file":["PhoneSyncTargeted.py"]}}

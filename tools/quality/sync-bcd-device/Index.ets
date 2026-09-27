@@ -71,7 +71,7 @@ class TimedUseCases extends PhoneV3UseCases {
 }
 interface PlayTime { clicked: number; started: number; worker: number; main: number; key: string; }
 interface CacheState { hits: number; downloads: number; joins: number; }
-interface TaskState { key: string; fingerprint: string; content: string; played: boolean; }
+interface TaskState { key: string; fingerprint: string; content: string; played: boolean; cacheState: string; }
 class TimedPlayer extends PhoneV3ReviewAudioPlayer {
   clicked: number = 0;
   times: Array<PlayTime> = [];
@@ -124,9 +124,8 @@ struct Index {
   private async prepare(resume: boolean = false): Promise<void> {
     try {
       const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      const value = JSON.parse(util.TextDecoder.create('utf-8').decodeToString(
-        await context.resourceManager.getRawFileContent('sync-bcd-config.json'))) as Config;
-      await write(context.cacheDir + '/sync-bcd-ca.pem', await context.resourceManager.getRawFileContent('sync-bcd-ca.pem'));
+      // Local HDC-supplied fixture configuration allows one candidate build.
+      const value = JSON.parse(fileIo.readTextSync(context.cacheDir + '/sync-bcd-config.json')) as Config;
       this.uid = value.utteranceId;
       if (!resume) {
       const previous = await relationalStore.getRdbStore(context, {name:DB, securityLevel:relationalStore.SecurityLevel.S2});
@@ -192,7 +191,7 @@ struct Index {
             message:this.model.computerSyncMessage,error:this.model.computerSyncError,revision:this.revision,at:Date.now(),times:use.times,
             cache:{hits:cache.hits,downloads:cache.downloads,joins:cache.joins} as CacheState,plays:this.reviewPlayer?.times,
             tasks:phoneV3VoiceTasks(this.model.snapshot.reviewItems).map((t): TaskState=>({key:t.key,fingerprint:t.fingerprint,
-              content:t.candidate.audioContentKey,played:this.model.reviewSampleWasPlayed(t.item.reviewId,t.candidate.prototypeId)})),
+              content:t.candidate.audioContentKey,cacheState:this.model.reviewAudioState(t.key),played:this.model.reviewSampleWasPlayed(t.item.reviewId,t.candidate.prototypeId)})),
             audioLoading:this.model.annotationPlaybackState(),audioError:this.model.error
           })));
         });

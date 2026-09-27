@@ -1,3 +1,5 @@
+import { PhoneV3ReviewAudioRetry } from '../domain/PhoneV3ReviewAudioRetry';
+import { ComputerConnectionError } from '../../computer/ComputerConnectionError';
 import { phoneV3VoiceCandidates } from '../domain/PhoneV3ReviewModels';
 import { validateReviewSample } from '../domain/PhoneV3ReviewAudioValidation';
 import { PhoneV3ReviewAudioCache } from '../data/PhoneV3ReviewAudioCache';
@@ -56,6 +58,12 @@ class PhoneV3PendingReview {
   }
 }
 
+class PhoneV3PrefetchDemand {
+  state: string = 'waiting';
+  retryAt: number = 0;
+  failures: number = 0;
+}
+
 @Observed
 export class PhoneV3ViewModel {
   private reviewSubmissions: Map<string, PhoneV3PendingReview> = new Map<string, PhoneV3PendingReview>();
@@ -96,6 +104,8 @@ export class PhoneV3ViewModel {
   private reviewWindow: Array<PhoneV3VoiceTask> = [];
   private prefetchIdentity: string = '';
   private prefetchGeneration: number = 0;
+  private prefetchTimer: number = -1;
+  private prefetchDemands: Map<string, PhoneV3PrefetchDemand> = new Map<string, PhoneV3PrefetchDemand>();
   private reviewAudioStates: Map<string, string> = new Map<string, string>();
   private audioLoading: boolean = false;
   private annotationAudioPlaying: boolean = false;
@@ -139,6 +149,7 @@ export class PhoneV3ViewModel {
   }
 
   stop(): void {
+    this.clearPrefetchTimer(); this.prefetchDemands.clear();
     this.prefetchGeneration += 1;
     this.prefetchIdentity = '';
     this.reviewWindow = []; this.reviewPageActive = false; this.reviewAudioStates.clear();
@@ -267,7 +278,10 @@ export class PhoneV3ViewModel {
     this.syncPaused = await environment.paused();
     if (generation !== this.lifecycleGeneration) { environment.stop(); return; }
     this.startCoordinator();
-    environment.start((): void => this.coordinator?.trigger(true));
+    environment.start((): void => {
+      this.coordinator?.trigger(true);
+      if (this.reviewPageActive) { this.setReviewAudioWindow(this.reviewWindow); }
+    });
   }
 
   private startCoordinator(): void {
@@ -615,28 +629,68 @@ export class PhoneV3ViewModel {
     if (becameActive) { this.coordinator?.trigger(false); }
     const selected = active && this.foreground ? tasks.slice(0, 3) : [];
     const identity = selected.map((task: PhoneV3VoiceTask): string => `${task.key}:${task.fingerprint}`).join('|');
-    if (identity === this.prefetchIdentity) { return; }
-    this.prefetchIdentity = identity;
-    const generation = ++this.prefetchGeneration;
+    if (identity !== this.prefetchIdentity) {
+      this.clearPrefetchTimer();
+      this.prefetchIdentity = identity;
+      this.prefetchGeneration += 1;
+      this.useCases?.cancelReviewPrefetch();
+      this.prefetchDemands.clear(); this.reviewAudioStates.clear();
+    }
+    const generation = this.prefetchGeneration;
     const useCases = this.useCases;
-    useCases?.cancelReviewPrefetch();
-    this.reviewAudioStates.clear();
     let next: Promise<void> = Promise.resolve();
     for (const task of selected) {
       if (!task.candidate.hasAudio || !task.candidate.audioContentKey) { continue; }
+      let demand = this.prefetchDemands.get(task.key);
+      if (demand === undefined) { demand = new PhoneV3PrefetchDemand(); this.prefetchDemands.set(task.key, demand); }
+      if (demand.state !== 'waiting' || demand.retryAt > Date.now()) { continue; }
+      const current = demand;
+      current.state = 'running'; // Includes queued demand; repeated events coalesce.
       next = next.then(async (): Promise<void> => {
         if (generation !== this.prefetchGeneration || useCases === undefined) { return; }
         this.reviewAudioStates.set(task.key, '正在准备试听');
         this.stateChangeListener();
         try {
           await useCases.loadReviewAudio(task.item.reviewId, task.candidate.prototypeId, true);
-          if (generation === this.prefetchGeneration) { this.reviewAudioStates.set(task.key, '已缓存，可离线试听'); }
-        } catch (_error) {
-          if (generation === this.prefetchGeneration) { this.reviewAudioStates.set(task.key, '点击准备试听'); }
+          if (generation !== this.prefetchGeneration) { return; }
+          current.state = 'ready';
+          this.reviewAudioStates.set(task.key, '已缓存，可离线试听');
+        } catch (error) {
+          if (generation !== this.prefetchGeneration) { return; }
+          current.failures += 1;
+          const connection = error instanceof ComputerConnectionError;
+          const failure = error as ComputerConnectionError;
+          const recoverable = connection &&
+            ['unpaired', 'authorization', 'identity', 'tls'].indexOf(failure.category) < 0 &&
+            !(failure.statusCode >= 400 && failure.statusCode < 500 && failure.statusCode !== 408 && failure.statusCode !== 429);
+          current.state = recoverable || error instanceof PhoneV3ReviewAudioRetry ? 'waiting' : 'blocked';
+          current.retryAt = error instanceof PhoneV3ReviewAudioRetry ? error.retryAt :
+            Date.now() + Math.min(300000, 60000 * Math.pow(2, Math.min(current.failures - 1, 3)));
+          this.reviewAudioStates.set(task.key, current.state === 'blocked' ? '试听准备失败，点击查看原因' : '等待连接恢复后准备试听');
         }
-        if (generation === this.prefetchGeneration) { this.stateChangeListener(); }
+        this.schedulePrefetchRetry();
+        this.stateChangeListener();
       });
     }
+    this.schedulePrefetchRetry();
+  }
+
+  private clearPrefetchTimer(): void {
+    if (this.prefetchTimer >= 0) { clearTimeout(this.prefetchTimer); this.prefetchTimer = -1; }
+  }
+
+  private schedulePrefetchRetry(): void {
+    this.clearPrefetchTimer();
+    if (!this.foreground || !this.reviewPageActive) { return; }
+    const pending = Array.from(this.prefetchDemands.values()).filter((d: PhoneV3PrefetchDemand): boolean => d.state === 'waiting');
+    if (pending.length === 0) { return; }
+    const due = Math.min(...pending.map((d: PhoneV3PrefetchDemand): number => d.retryAt));
+    const generation = this.prefetchGeneration;
+    // One deadline for <=3 failed demands, not another sync polling loop.
+    this.prefetchTimer = setTimeout((): void => {
+      this.prefetchTimer = -1;
+      if (generation === this.prefetchGeneration) { this.setReviewAudioWindow(this.reviewWindow); }
+    }, Math.max(1, due - Date.now()));
   }
 
   reviewAudioState(key: string): string { return this.reviewAudioStates.get(key) ?? '点击准备试听'; }
