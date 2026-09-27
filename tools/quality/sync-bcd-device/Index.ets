@@ -124,8 +124,11 @@ struct Index {
   private async prepare(resume: boolean = false): Promise<void> {
     try {
       const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      // Local HDC-supplied fixture configuration allows one candidate build.
-      const value = JSON.parse(fileIo.readTextSync(context.cacheDir + '/sync-bcd-config.json')) as Config;
+      // Some device builds deny HDC writes even for a debug app; packaged
+      // synthetic resources remain the supported isolated assembly fallback.
+      const value = JSON.parse(util.TextDecoder.create('utf-8').decodeToString(
+        await context.resourceManager.getRawFileContent('sync-bcd-config.json'))) as Config;
+      await write(context.cacheDir + '/sync-bcd-ca.pem', await context.resourceManager.getRawFileContent('sync-bcd-ca.pem'));
       this.uid = value.utteranceId;
       if (!resume) {
       const previous = await relationalStore.getRdbStore(context, {name:DB, securityLevel:relationalStore.SecurityLevel.S2});
