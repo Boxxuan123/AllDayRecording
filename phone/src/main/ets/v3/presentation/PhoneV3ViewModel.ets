@@ -473,6 +473,68 @@ export class PhoneV3ViewModel {
     });
   }
 
+  submitPurityReview(reviewId: string, personId: string, unknown: boolean,
+    purity: string, others: Array<string>, flags: Array<string>, undo: boolean,
+    onResolved: () => void = (): void => {}): void {
+    const useCases = this.useCases;
+    if (useCases === undefined || this.busy || this.reviewSubmissionState(reviewId)) { return; }
+    const request: DeviceV3ReviewActionRequest = { review_id: reviewId, action: undo ? 'undo' : 'submit' };
+    if (!undo) {
+      request.primary_speaker_person_id = unknown ? null : personId;
+      request.primary_speaker_unknown = unknown;
+      request.purity = purity;
+      request.other_speaker_ids = others;
+      request.quality_flags = flags;
+    }
+    this.reviewSubmissions.set(this.reviewObjectKey(reviewId, ''), new PhoneV3PendingReview(reviewId, '', request.action, 'sending'));
+    const lifecycle = this.lifecycleGeneration;
+    this.stateChangeListener();
+    useCases.resolveReview(request).then((items): void => {
+      this.reviewSubmissions.delete(this.reviewObjectKey(reviewId, ''));
+      if (lifecycle !== this.lifecycleGeneration) { return; }
+      const current = this.snapshot;
+      this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SNAPSHOT_READY,
+        new PhoneV3Snapshot(current.sessions, current.conflicts, current.sync, current.paired,
+          current.reminders, items), undefined, '声纹纯度判断已保存'));
+      onResolved();
+    }).catch((error: Object): void => {
+      if (error instanceof PhoneV3ReviewSubmissionError) {
+        this.reviewSubmissions.set(this.reviewObjectKey(reviewId, ''),
+          new PhoneV3PendingReview(reviewId, '', request.action, error.committed ? 'committed' : 'unknown'));
+      } else { this.reviewSubmissions.delete(this.reviewObjectKey(reviewId, '')); }
+      if (lifecycle === this.lifecycleGeneration) { this.fail(error); }
+    });
+  }
+
+  playPurityContext(reviewId: string, taskId: string): void {
+    const useCases = this.useCases;
+    const player = this.reviewAudioPlayer;
+    if (useCases === undefined || player === undefined || this.busy) { return; }
+    const generation = ++this.audioRequestGeneration;
+    this.reviewPlaybackPrototype = '';
+    this.reviewPlaybackRange = '';
+    this.audioLoading = true;
+    player.release().then((): void => {}, (): void => {});
+    useCases.loadPurityContext(reviewId, taskId).then((response): void => {
+      if (generation !== this.audioRequestGeneration) { return; }
+      player.play(response, (): void => {
+        if (generation !== this.audioRequestGeneration) { return; }
+        this.audioLoading = false;
+        this.reviewPlaybackPrototype = taskId;
+        this.reviewPlaybackRange = `上下文播放中；只判断中间 ${((response.target_start_ms ?? 0) / 1000).toFixed(1)}–${((response.target_end_ms ?? 0) / 1000).toFixed(1)} 秒目标片段`;
+        this.stateChangeListener();
+      }, (): void => {
+        if (generation !== this.audioRequestGeneration) { return; }
+        this.reviewPlaybackPrototype = ''; this.reviewPlaybackRange = '';
+        this.stateChangeListener();
+      }, (message: string): void => {
+        if (generation === this.audioRequestGeneration) { this.reviewPlaybackPrototype = ''; this.fail(new Error(message)); }
+      });
+    }).catch((error: Object): void => {
+      if (generation === this.audioRequestGeneration) { this.audioLoading = false; this.fail(error); }
+    });
+  }
+
   refreshVoiceReviews(onLoaded: () => void = (): void => {}): void {
     if (this.useCases === undefined || this.busy) { return; }
     this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.BUSY, undefined, undefined, '正在核对电脑审核状态…'));

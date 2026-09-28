@@ -205,7 +205,7 @@ export function validateV3ReminderDto(value: Object): V3ReminderDto {
 export function validateV3ReviewItemDto(value: Object): V3ReviewItemDto {
   const item = value as V3ReviewItemDto;
   if (typeof item.review_id !== 'string' || item.review_id.length === 0 ||
-    ['processing_gate', 'reminder', 'person_memory', 'voice_identity', 'knowledge_proposal']
+    ['processing_gate', 'reminder', 'person_memory', 'voice_identity', 'knowledge_proposal', 'speaker_profile_purity']
       .indexOf(item.kind) < 0 ||
     ['high', 'normal'].indexOf(item.priority) < 0 ||
     typeof item.source_id !== 'string' || item.source_id.length === 0 ||

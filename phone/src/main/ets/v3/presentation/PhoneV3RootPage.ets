@@ -18,6 +18,7 @@ import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 @Component
 export struct PhoneV3RootPage {
   onOpenVoice: (reviewId: string, history: boolean) => void = (): void => {};
+  onOpenPurity: (reviewId: string, history: boolean) => void = (): void => {};
   onOpenAnnotation: (rows: Array<PhoneV3Utterance>, title: string) => void = (): void => {};
   onOpenAnnotationList: (rows: Array<PhoneV3Utterance>, title: string) => void = (): void => {};
   @ObjectLink viewModel: PhoneV3ViewModel;
@@ -156,6 +157,7 @@ export struct PhoneV3RootPage {
       TabContent() {
         PhoneV3ReviewInboxPage({
           onOpenVoice: this.onOpenVoice,
+          onOpenPurity: this.onOpenPurity,
           viewModel: this.viewModel,
           stateRevision: this.stateRevision,
           onOpenSession: (session: PhoneV3SessionCard): void => this.openSession(session)

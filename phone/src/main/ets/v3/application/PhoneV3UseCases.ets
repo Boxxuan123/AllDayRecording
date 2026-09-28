@@ -669,6 +669,11 @@ export class PhoneV3UseCases {
     } catch (error) { if (!prefetch) { cache.release(response.local_audio_path ?? ''); } throw error as Error; }
   }
 
+  async loadPurityContext(reviewId: string, taskId: string): Promise<DeviceV3ReviewAudioResponse> {
+    const session = await this.remote.connect();
+    return session.reviewAudio({ review_id: reviewId, prototype_id: taskId, context: true });
+  }
+
   releaseReviewAudio(response: DeviceV3ReviewAudioResponse): void { this.reviewAudioCache?.release(response.local_audio_path ?? ''); }
   cancelReviewPrefetch(): void { this.reviewAudioCache?.cancelPrefetch(); }
   async clearReviewAudio(): Promise<void> { await this.reviewAudioCache?.clear(); }

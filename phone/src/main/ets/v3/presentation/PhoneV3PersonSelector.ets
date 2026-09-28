@@ -5,6 +5,7 @@ import { DeviceV3PersonChoice } from '../../computer/ComputerTransferProtocol';
 export struct PhoneV3PersonSelector {
   @Prop people: Array<DeviceV3PersonChoice> = [];
   @Prop selectedId: string = '';
+  @Prop allowCreate: boolean = true;
   @State private query: string = '';
   @State private creating: boolean = false;
   @State private name: string = '';
@@ -36,12 +37,14 @@ export struct PhoneV3PersonSelector {
                   .onClick((): void => this.onSelect(p.person_id, p.display_name))
               }
             }, (p: DeviceV3PersonChoice): string => p.person_id)
-          ListItem() {
-            Row() {
-              Text('新建人物').fontSize(16).layoutWeight(1)
-              SymbolGlyph($r('sys.symbol.chevron_right')).fontSize(14)
-            }.padding(16).constraintSize({ minHeight: 60 }).width('100%').backgroundColor($r('app.color.surface_primary'))
-              .onClick((): void => { this.creating = true; this.name = ''; })
+          if (this.allowCreate) {
+            ListItem() {
+              Row() {
+                Text('新建人物').fontSize(16).layoutWeight(1)
+                SymbolGlyph($r('sys.symbol.chevron_right')).fontSize(14)
+              }.padding(16).constraintSize({ minHeight: 60 }).width('100%').backgroundColor($r('app.color.surface_primary'))
+                .onClick((): void => { this.creating = true; this.name = ''; })
+            }
           }
         }.layoutWeight(1).width('100%')
       }

@@ -241,6 +241,11 @@ export interface DeviceV3ReviewActionRequest {
   prototype_id?: string;
   display_name?: string;
   reason?: string;
+  primary_speaker_person_id?: string | null;
+  primary_speaker_unknown?: boolean;
+  purity?: string;
+  other_speaker_ids?: Array<string>;
+  quality_flags?: Array<string>;
 }
 
 export interface DeviceV3ReviewActionResponse {
@@ -254,6 +259,7 @@ export interface DeviceV3ReviewAudioRequest {
   audition_key?: string;
   audio_content_key?: string;
   prefetch?: boolean;
+  context?: boolean;
 }
 
 export interface DeviceV3ReviewAudioWindow {
@@ -264,6 +270,8 @@ export interface DeviceV3ReviewAudioWindow {
 }
 
 export interface DeviceV3ReviewAudioResponse {
+  target_start_ms?: number;
+  target_end_ms?: number;
   audio_content_key?: string;
   sha256?: string;
   byte_length?: number;

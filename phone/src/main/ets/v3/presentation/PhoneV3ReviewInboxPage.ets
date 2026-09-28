@@ -1,5 +1,5 @@
 import { phoneV3VoiceTasks } from '../domain/PhoneV3VoiceReviewTask';
-import { phoneV3PendingReviews } from '../domain/PhoneV3ReviewModels';
+import { phoneV3PendingReviews, phoneV3ReviewIsHistory } from '../domain/PhoneV3ReviewModels';
 import { PhoneV3AnnotationConflictPanel } from './PhoneV3AnnotationConflictPanel';
 import { PhoneV3Conflict, PhoneV3ReviewItem, PhoneV3SessionCard } from '../domain/PhoneV3Models';
 import {
@@ -27,6 +27,7 @@ class PhoneV3ReviewGroup {
 @Component
 export struct PhoneV3ReviewInboxPage {
   onOpenVoice: (reviewId: string, history: boolean) => void = (): void => {};
+  onOpenPurity: (reviewId: string, history: boolean) => void = (): void => {};
   viewModel: PhoneV3ViewModel = new PhoneV3ViewModel();
   @Prop stateRevision: number = 0;
   @State private selectedFilter: number = 0;
@@ -48,7 +49,19 @@ export struct PhoneV3ReviewInboxPage {
   }
 
   private visibleReviews(): Array<PhoneV3ReviewItem> {
-    return phoneV3PendingReviews(this.currentUiState().snapshot.reviewItems, this.selectedFilter);
+    const items = phoneV3PendingReviews(this.currentUiState().snapshot.reviewItems, this.selectedFilter);
+    let purityShown: boolean = false;
+    return items.filter((item: PhoneV3ReviewItem): boolean => {
+      if (item.kind !== 'speaker_profile_purity') { return true; }
+      if (purityShown) { return false; }
+      purityShown = true;
+      return true;
+    });
+  }
+
+  private purityPendingCount(): number {
+    return this.currentUiState().snapshot.reviewItems.filter((item: PhoneV3ReviewItem): boolean =>
+      item.kind === 'speaker_profile_purity' && !phoneV3ReviewIsHistory(item)).length;
   }
 
   private groupedReviews(): Array<PhoneV3ReviewGroup> {
@@ -69,6 +82,7 @@ export struct PhoneV3ReviewInboxPage {
   }
 
   private reviewGroupLabel(item: PhoneV3ReviewItem): string {
+    if (item.kind === 'speaker_profile_purity') { return '声纹纯度审核'; }
     if (this.groupMode === 0) {
       const session = this.matchingSession(item.sessionId);
       if (session !== undefined) {
@@ -91,6 +105,7 @@ export struct PhoneV3ReviewInboxPage {
   private kindLabel(kind: string): string {
     switch (kind) {
       case 'voice_identity': return '声音身份';
+      case 'speaker_profile_purity': return '声纹纯度审核';
       case 'reminder': return '提醒确认';
       case 'person_memory': return '人物记忆';
       case 'knowledge_proposal': return '事件提案';
@@ -169,7 +184,14 @@ export struct PhoneV3ReviewInboxPage {
 
   @Builder
   private reviewCard(item: PhoneV3ReviewItem) {
-    if (item.kind === 'voice_identity') {
+    if (item.kind === 'speaker_profile_purity') {
+      Column({ space: 8 }) {
+        Text('声纹纯度审核').fontSize(17).fontWeight(FontWeight.Medium).width('100%')
+        Text(`${this.purityPendingCount()} 段待听 · 听原音 → 选人物 → 判断纯度`).fontSize(13).fontColor($r('app.color.text_secondary')).width('100%')
+        Button('开始审核').width('100%').onClick((): void => this.onOpenPurity(item.reviewId, false))
+      }.width('100%').padding(16).alignItems(HorizontalAlign.Start)
+        .borderRadius(16).backgroundColor($r('app.color.surface_primary'))
+    } else if (item.kind === 'voice_identity') {
       Column({ space: 8 }) {
         Text(phoneV3VoiceMode(item) === 'speaker_discovery' ? '这是谁的声音？' : '核对声音样本').fontSize(13).fontColor($r('app.color.text_secondary'))
         Text(item.title).fontSize(17).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
@@ -255,6 +277,8 @@ export struct PhoneV3ReviewInboxPage {
 
       Row() {
         Text(`当前缓存 · ${this.visibleReviews().length + this.annotationConflicts().length} 个任务`).fontSize(12).layoutWeight(1).fontColor($r('app.color.text_secondary'))
+        Button(`纯度已审核 ${this.currentUiState().snapshot.reviewItems.filter((item: PhoneV3ReviewItem): boolean => item.kind === 'speaker_profile_purity' && phoneV3ReviewIsHistory(item)).length}`)
+          .buttonStyle(ButtonStyleMode.TEXTUAL).fontSize(12).onClick((): void => this.onOpenPurity('', true))
         Button(`已采纳样本 ${phoneV3VoiceTasks(this.currentUiState().snapshot.reviewItems, true).length}`)
           .buttonStyle(ButtonStyleMode.TEXTUAL).fontSize(13).onClick((): void => this.onOpenVoice('', true))
       }.width('100%')

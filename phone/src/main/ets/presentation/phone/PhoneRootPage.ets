@@ -1,5 +1,6 @@
 import { PhoneV3AnnotationListPage } from '../../v3/presentation/PhoneV3AnnotationListPage';
 import { PhoneV3VoiceReviewPage } from '../../v3/presentation/PhoneV3VoiceReviewPage';
+import { PhoneV3PurityReviewPage } from '../../v3/presentation/PhoneV3PurityReviewPage';
 import { PhoneV3AnnotationPage } from '../../v3/presentation/PhoneV3AnnotationPage';
 import { PhoneV3AnnotationEditor } from '../../v3/domain/PhoneV3AnnotationEditor';
 import { PhoneV3Utterance } from '../../v3/domain/PhoneV3Models';
@@ -224,6 +225,10 @@ export struct PhoneRootPage {
         onOpenAnnotation: (rows: Array<PhoneV3Utterance>, title: string): void => this.openAnnotation(rows, title),
         onOpenSession: (session: PhoneV3SessionCard): void => this.openV3Session(session),
         onConnect: (): void => this.openComputerTransfer() })
+    } else if (name === 'purityReview') {
+      PhoneV3PurityReviewPage({ viewModel: this.v3ViewModel, navStack: this.navStack,
+        stateRevision: this.v3StateRevision, reviewId: (param as VoiceReviewRoute).reviewId,
+        history: (param as VoiceReviewRoute).history })
     } else if (name === 'annotationList') {
       PhoneV3AnnotationListPage({ viewModel: this.v3ViewModel, editor: (param as AnnotationRoute).editor,
         scopeTitle: (param as AnnotationRoute).title, stateRevision: this.v3StateRevision,
@@ -352,6 +357,10 @@ export struct PhoneRootPage {
         onOpenVoice: (reviewId: string, history: boolean): void => {
           this.v3ViewModel.stopPlayback();
           this.navStack.pushPath({ name: 'voiceReview', param: new VoiceReviewRoute(reviewId, history) });
+        },
+        onOpenPurity: (reviewId: string, history: boolean): void => {
+          this.v3ViewModel.stopPlayback();
+          this.navStack.pushPath({ name: 'purityReview', param: new VoiceReviewRoute(reviewId, history) });
         },
         onOpenAnnotationList: (rows: Array<PhoneV3Utterance>, title: string): void => this.openAnnotation(rows, title, true),
         onOpenAnnotation: (rows: Array<PhoneV3Utterance>, title: string): void => this.openAnnotation(rows, title),

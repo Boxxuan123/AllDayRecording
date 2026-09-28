@@ -28,7 +28,9 @@ process.stdout.write(
 );
 
 async function runModuleTests(moduleName) {
-  const productName = moduleName === 'phone' ? 'phone' : 'default';
+  // Local signing/build profiles may map the phone target to the default product.
+  const productName = moduleName === 'phone' ?
+    (process.env.HOST_TEST_PHONE_PRODUCT || 'phone') : 'default';
   const reportPath = join(projectRoot, moduleName, '.test', 'default', 'intermediates',
     'test', 'coverage_data', 'test_result.txt');
   const reportMtimeBefore = existsSync(reportPath) ? statSync(reportPath).mtimeMs : -1;

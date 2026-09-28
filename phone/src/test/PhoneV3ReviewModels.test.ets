@@ -3,7 +3,9 @@ import { PhoneV3ReviewItem } from '../main/ets/v3/domain/PhoneV3Models';
 import {
   phoneV3ReviewReason,
   phoneV3VoiceCandidates,
-  phoneV3VoiceMode
+  phoneV3VoiceMode,
+  phoneV3PendingReviews,
+  phoneV3ReviewIsHistory
 } from '../main/ets/v3/domain/PhoneV3ReviewModels';
 
 export default function phoneV3ReviewModelsTest() {
@@ -49,6 +51,23 @@ export default function phoneV3ReviewModelsTest() {
       expect(candidates[0].totalMs).assertEqual(2000);
       expect(candidates[0].auditionKey).assertEqual('synthetic-key');
       expect(phoneV3ReviewReason(item.reason).includes('单独')).assertTrue();
+    });
+    it('purityTasksUseExactSourceAudioAndHistoryLeavesPendingInbox', 0, () => {
+      const clip = '"voice_candidates":[{"prototype_id":"task-1","session_id":"session",' +
+        '"speaker_track_id":"track","person_name":"待听原音","audio_available":true,' +
+        '"representative_clips":[{"media_id":"media","start_ms":1250,"end_ms":5750}]}]';
+      const pending = new PhoneV3ReviewItem('purity:task-1', 'speaker_profile_purity', 'high',
+        'task-1', null, 'session', null, '声纹纯度审核', '', 'speaker_profile_purity', 1,
+        '2026-09-28T00:00:00Z', '2026-09-28T00:00:00Z',
+        '{"voice_mode":"speaker_profile_purity","review_lane":"primary",' + clip + '}');
+      const reviewed = new PhoneV3ReviewItem('purity:task-2', 'speaker_profile_purity', 'high',
+        'task-2', 1, 'session', null, '声纹纯度审核', '', 'speaker_profile_purity', 1,
+        '2026-09-28T00:00:00Z', '2026-09-28T00:00:01Z',
+        '{"voice_mode":"speaker_profile_purity","review_lane":"history",' + clip + '}');
+      expect(phoneV3PendingReviews([pending, reviewed], 1).length).assertEqual(1);
+      expect(phoneV3ReviewIsHistory(reviewed)).assertTrue();
+      expect(phoneV3VoiceCandidates(pending)[0].totalMs).assertEqual(4500);
+      expect(phoneV3VoiceCandidates(pending)[0].startMs).assertEqual(1250);
     });
   });
 }
