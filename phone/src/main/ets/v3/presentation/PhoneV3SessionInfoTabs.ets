@@ -61,7 +61,7 @@ export function PhoneV3SessionOverviewTab(options: SessionTabOptions) {
     Column({ space: 12 }) {
       Row({ space: 8 }) {
         PhoneV3SessionOverviewTabMetric(options, '时长', formatRecordingDuration(options.session.durationMs))
-        PhoneV3SessionOverviewTabMetric(options, '转写', options.session.utterances.length.toString())
+        PhoneV3SessionOverviewTabMetric(options, '转写', options.session.utteranceCount.toString())
         PhoneV3SessionOverviewTabMetric(options, '版本', `r${options.session.revision}`)
       }
       .width('100%')

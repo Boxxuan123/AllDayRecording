@@ -128,7 +128,7 @@ export class PhoneComputerTransferViewModel {
 
   refreshRecordings(): void {
     const context = this.requireContext();
-    this.updateRecordings(new PhoneV3RecordingStore(context.filesDir).list());
+    this.updateRecordings(PhoneV3RecordingStore.shared(context.filesDir).list());
   }
 
   private updateRecordings(recordings: Array<ReceivedRecordingFile>): void {

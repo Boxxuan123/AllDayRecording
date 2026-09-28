@@ -1,0 +1,5 @@
+{
+  "description": "正式手机离线缓存与播放只读验收",
+  "environment": [{"type": "device", "label": "phone"}],
+  "driver": {"type": "DeviceTest", "py_file": ["PhonePageLoadingOffline.py"]}
+}

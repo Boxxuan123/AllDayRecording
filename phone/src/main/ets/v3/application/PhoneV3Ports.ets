@@ -36,6 +36,8 @@ export interface PhoneV3ProjectionRepositoryPort extends PhoneProjectionStorage,
   pendingOperations(limit?: number, excludedIds?: Array<string>): Promise<Array<PhonePendingOperation>>;
   currentCursor(): Promise<string>;
   projectionRows(resourceType: string, resourceIds?: Array<string>): Promise<Array<PhoneV3ProjectionRow>>;
+  projectionUtterancesBySession?(): Promise<Map<string, Array<PhoneV3ProjectionRow>>>;
+  searchTranscriptSessionIds?(search: string): Promise<Array<string>>;
   localAudioLinks(): Promise<Array<PhoneV3LocalAudioLink>>;
   localSessionCompletions(): Promise<Array<PhoneSessionCompletionRecord>>;
   recordSessionCompletion(record: PhoneSessionCompletionRecord): Promise<void>;

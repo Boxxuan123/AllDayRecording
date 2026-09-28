@@ -533,7 +533,7 @@ export class PhoneV3DeviceRuntime {
           this.playbackDurationMs = durationMs;
         }
       });
-    const recordingStore = new PhoneV3RecordingStore(context.filesDir);
+    const recordingStore = PhoneV3RecordingStore.shared(context.filesDir);
     this.recordingStore = recordingStore;
     this.initializeWifiTransfer(context, token, recordingStore);
     this.status = '正在连接已配对手表…';
@@ -558,7 +558,7 @@ export class PhoneV3DeviceRuntime {
     }
     this.status = 'Wear Engine 通道已重建，正在重新注册接收器…';
     const recordingStore = this.recordingStore === undefined ?
-      new PhoneV3RecordingStore(context.filesDir) : this.recordingStore;
+      PhoneV3RecordingStore.shared(context.filesDir) : this.recordingStore;
     this.recordingStore = recordingStore;
     if (this.wifiTransferService === undefined) {
       this.initializeWifiTransfer(context, token, recordingStore);

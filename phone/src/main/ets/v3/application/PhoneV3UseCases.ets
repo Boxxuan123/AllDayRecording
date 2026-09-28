@@ -2,7 +2,8 @@ import { annotationTiming } from './PhoneAnnotationTiming';
 import { syncRequestBatch, PhoneSyncBatchPolicy, jsonBytes } from '../data/PhoneSyncBatch';
 import { PhonePendingOperation } from '../data/PhoneSyncProjection';
 import { PHONE_V3_SOUND_KINDS, phoneV3SoundKindLabel } from '../domain/PhoneV3SoundKind';
-import { PhoneV3LocalAnnotation, PhoneV3AnnotationSentence, applyLocalAnnotations, applyAnnotationRows, applyAnnotationConflicts, annotationRows } from '../domain/PhoneV3LocalAnnotation';
+import { PhoneV3Evidence } from '../domain/PhoneV3PersonFact';
+import { PhoneV3LocalAnnotation, PhoneV3AnnotationSentence, applyLocalAnnotations, applyAnnotationRows, applyAnnotationConflicts, applyAnnotationConflictsToRows, annotationRows } from '../domain/PhoneV3LocalAnnotation';
 import {
   DeviceV3ClientOperation,
   DeviceV3PersonChoice,
@@ -142,6 +143,7 @@ export class PhoneV3UseCases {
   private remote: PhoneV3RemotePort;
   private reminderScheduler: PhoneV3ReminderSchedulerPort | undefined;
   private audioBackup: PhoneV3AudioBackupPort | undefined;
+  private cachedUtteranceRows: Map<string, Array<PhoneV3ProjectionRow>> | null = null;
 
   constructor(repository: PhoneV3ProjectionRepositoryPort,
     localAudio: PhoneV3LocalAudioRepositoryPort, remote: PhoneV3RemotePort,
@@ -159,10 +161,29 @@ export class PhoneV3UseCases {
     return this.localAudio.list();
   }
 
+  async searchTranscriptSessionIds(search: string): Promise<Array<string>> {
+    if (this.repository.searchTranscriptSessionIds !== undefined) {
+      return this.repository.searchTranscriptSessionIds(search);
+    }
+    const rows = await this.repository.projectionRows('utterance');
+    const matches = new Set<string>();
+    for (let row of rows) {
+      const payload = validateV3UtteranceDto(parseProjectionObject(row));
+      if (payload.text.toLocaleLowerCase().includes(search.toLocaleLowerCase()) ||
+        (payload.speaker_label ?? '').toLocaleLowerCase().includes(search.toLocaleLowerCase())) {
+        matches.add(payload.session_id);
+      }
+    }
+    return Array.from(matches);
+  }
+
   async loadCached(localFacts: Array<PhoneV3LocalAudioFact>): Promise<PhoneV3Snapshot> {
     const recordings = await this.repository.projectionRows('recording_session');
     const processing = await this.repository.projectionRows('processing_run');
-    const utterances = await this.repository.projectionRows('utterance');
+    const grouped = this.repository.projectionUtterancesBySession === undefined ? null :
+      this.cachedUtteranceRows ?? await this.repository.projectionUtterancesBySession();
+    if (grouped !== null) { this.cachedUtteranceRows = grouped; }
+    const utterances = grouped === null ? await this.repository.projectionRows('utterance') : [];
     const reviews = await this.repository.projectionRows('review_item');
     const reminders = await this.repository.projectionRows('reminder');
     const links = await this.repository.localAudioLinks();
@@ -174,8 +195,30 @@ export class PhoneV3UseCases {
     const completions = await this.repository.localSessionCompletions();
     const sessions = mergePhoneV3Sessions(localFacts, links, recordings, processing, utterances,
       completions);
-    applyLocalAnnotations(sessions, await this.repository.annotationOperations());
-    applyAnnotationConflicts(sessions, conflicts);
+    const annotations = await this.repository.annotationOperations();
+    if (grouped === null) {
+      applyLocalAnnotations(sessions, annotations);
+      applyAnnotationConflicts(sessions, conflicts);
+    } else {
+      for (let card of sessions) {
+        const rows = grouped.get(card.sessionId) ?? [];
+        if (rows.length === 0) { continue; }
+        card.setLazyUtterances(rows.map((row: PhoneV3ProjectionRow): string => row.resourceId),
+          (): Array<PhoneV3Utterance> => indexSessionUtterances(rows).get(card.sessionId) ?? [],
+          (): void => {
+            applyLocalAnnotations([card], annotations);
+            applyAnnotationConflicts([card], conflicts);
+          },
+          (offset: number, limit: number): Array<PhoneV3Utterance> => {
+            const page = indexSessionUtterances(rows.slice(offset, offset + limit)).get(card.sessionId) ?? [];
+            const indexed = new Map<string, PhoneV3Utterance>();
+            for (let row of page) { indexed.set(row.utteranceId, row); }
+            applyAnnotationRows(indexed, annotations);
+            applyAnnotationConflictsToRows(indexed, conflicts);
+            return page;
+          });
+      }
+    }
     return new PhoneV3Snapshot(
       sessions,
       conflicts, status, paired, reminderValues, phoneV3ReviewItems(reviews));
@@ -200,6 +243,7 @@ export class PhoneV3UseCases {
   }
 
   async refreshUtterances(snapshot: PhoneV3Snapshot, ids: Array<string>): Promise<PhoneV3Snapshot> {
+    this.cachedUtteranceRows = null;
     const rows = await this.repository.projectionRows('utterance', ids);
     const operations = await this.repository.annotationOperations(ids);
     const status = await this.repository.v3Status();
@@ -207,7 +251,7 @@ export class PhoneV3UseCases {
     const bySession = indexSessionUtterances(rows);
     const sessions = snapshot.sessions.map((session: PhoneV3SessionCard): PhoneV3SessionCard => {
       const fresh = bySession.get(session.sessionId) ?? [];
-      if (fresh.length === 0 && !session.utterances.some((row): boolean => changed.has(row.utteranceId))) { return session; }
+      if (fresh.length === 0 && !ids.some((id: string): boolean => session.hasUtterance(id))) { return session; }
       const merged = session.utterances.filter((row): boolean => !changed.has(row.utteranceId)).concat(fresh);
       merged.sort((a,b): number => a.startMs-b.startMs || a.utteranceId.localeCompare(b.utteranceId));
       const index = new Map<string, PhoneV3Utterance>();
@@ -434,6 +478,9 @@ export class PhoneV3UseCases {
         annotationTiming('T4-response-decoded', dispatched);
         const commitStarted = Date.now();
         await applySyncResponse(this.repository, response);
+        if (response.changes.some((change): boolean => change.resource_type === 'utterance')) {
+          this.cachedUtteranceRows = null;
+        }
         // The transaction is durable. UI/network failures must never mark it failed.
         dispatched = [];
         if (adaptive) {
@@ -531,6 +578,7 @@ export class PhoneV3UseCases {
 
   async rebuild(): Promise<PhoneV3SyncResult> {
     this.reviewVersion = undefined; this.peopleVersion = undefined;
+    this.cachedUtteranceRows = null;
     await this.repository.rebuildFromComputer();
     return this.synchronize();
   }
@@ -562,6 +610,7 @@ export class PhoneV3UseCases {
     const response = await session.annotations(request);
     if (response.people !== undefined) { await this.cacheRemotePeople(response.people); }
     if (response.utterances !== undefined) {
+      this.cachedUtteranceRows = null;
       await this.repository.beginTransaction();
       try {
         for (let index = 0; index < response.utterances.length; index += 1) {
@@ -748,7 +797,7 @@ function indexSessionUtterances(rows: Array<PhoneV3ProjectionRow>): Map<string, 
         payload.identity, payload.original_identity, JSON.stringify(payload.identity_evidence),
         payload.start_ms, payload.end_ms, payload.start_at, payload.end_at,
         payload.text, payload.original_text, payload.revision, payload.status,
-        JSON.stringify(payload.evidence)));
+        JSON.stringify(payload.evidence), payload.evidence as PhoneV3Evidence));
     } catch (error) {
       throw projectionRowError(rows[index], 'utterance', error as Object);
     }

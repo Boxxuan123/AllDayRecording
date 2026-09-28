@@ -34,7 +34,7 @@ export function phoneV3BackupLabel(session: PhoneV3SessionCard): string {
     const duration = session.durationMs > 0 ?
       `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒` : '整场录音';
     return `已备份 ${duration}${session.processingStatus === 'running' ||
-      session.processingStatus === 'queued' || session.utterances.length > 0 ? '' : '，等待转写'}`;
+      session.processingStatus === 'queued' || session.utteranceCount > 0 ? '' : '，等待转写'}`;
   }
   if (session.uploadStatus === 'file_uploaded') { return '分片已到电脑，等待整场确认'; }
   return '等待备份';
@@ -52,8 +52,8 @@ export function phoneV3TranscriptSummary(session: PhoneV3SessionCard): string {
   if (session.processingStatus === 'running' || session.processingStatus === 'queued') {
     return phoneV3ProcessingStage(session);
   }
-  if (session.utterances.length > 0) {
-    return `已生成 ${session.utterances.length} 条转写`;
+  if (session.utteranceCount > 0) {
+    return `已生成 ${session.utteranceCount} 条转写`;
   }
   if (session.sessionId.length === 0) {
     return session.uploadStatus === 'uploaded' ? '已上传，等待电脑生成转写' :

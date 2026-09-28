@@ -168,6 +168,7 @@ export struct PhoneV3RootPage {
           onOpenAnnotation: this.onOpenAnnotationList,
           viewModel: this.viewModel,
           stateRevision: this.stateRevision,
+          active: this.selectedTab === 3,
           onOpenSession: (session: PhoneV3SessionCard): void => this.openSession(session),
           onOpenReviews: (): void => {
             this.selectedTab = 2;

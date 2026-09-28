@@ -22,7 +22,7 @@ import {
 import { PhoneV3ProjectionRepositoryPort } from '../application/PhoneV3Ports';
 
 const DATABASE_NAME: string = 'phone_v3_projection.db';
-const SCHEMA_VERSION: number = 14;
+const SCHEMA_VERSION: number = 15;
 const TABLES: Array<string> = [
   'projection_recordings', 'projection_audio_assets', 'projection_processing_runs',
   'projection_utterances', 'projection_review_items', 'projection_reminders'
@@ -304,6 +304,72 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
     return values;
   }
 
+  async sessionUtteranceRows(sessionId: string, limit: number = 50,
+    afterStartMs: number = -1, afterId: string = ''): Promise<Array<PhoneV3ProjectionRow>> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
+      throw new Error('Phone 会话转写查询上限无效');
+    }
+    const result = await this.store.querySql(
+      `SELECT resource_id, revision, payload_json, updated_at FROM projection_utterances
+       WHERE session_id = ? AND status = 'active'
+         AND (start_ms > ? OR (start_ms = ? AND resource_id > ?))
+       ORDER BY start_ms, resource_id LIMIT ?`,
+      [sessionId, afterStartMs, afterStartMs, afterId, limit]);
+    const rows: Array<PhoneV3ProjectionRow> = [];
+    try {
+      while (result.goToNextRow()) {
+        rows.push(new PhoneV3ProjectionRow(
+          result.getString(result.getColumnIndex('resource_id')),
+          result.getLong(result.getColumnIndex('revision')),
+          result.getString(result.getColumnIndex('payload_json')),
+          result.getLong(result.getColumnIndex('updated_at'))));
+      }
+    } finally { result.close(); }
+    return rows;
+  }
+
+  async sessionUtteranceCount(sessionId: string): Promise<number> {
+    const result = await this.store.querySql(
+      `SELECT COUNT(*) FROM projection_utterances WHERE session_id = ? AND status = 'active'`, [sessionId]);
+    try { return result.goToNextRow() ? result.getLong(0) : 0; }
+    finally { result.close(); }
+  }
+
+  async projectionUtterancesBySession(): Promise<Map<string, Array<PhoneV3ProjectionRow>>> {
+    const result = await this.store.querySql(
+      `SELECT session_id, resource_id, revision, payload_json, updated_at
+       FROM projection_utterances ORDER BY session_id, start_ms, resource_id`);
+    const grouped = new Map<string, Array<PhoneV3ProjectionRow>>();
+    try {
+      while (result.goToNextRow()) {
+        const sessionId = result.getString(result.getColumnIndex('session_id'));
+        const values = grouped.get(sessionId) ?? [];
+        values.push(new PhoneV3ProjectionRow(
+          result.getString(result.getColumnIndex('resource_id')),
+          result.getLong(result.getColumnIndex('revision')),
+          result.getString(result.getColumnIndex('payload_json')),
+          result.getLong(result.getColumnIndex('updated_at'))));
+        grouped.set(sessionId, values);
+      }
+    } finally { result.close(); }
+    return grouped;
+  }
+
+  async searchTranscriptSessionIds(search: string): Promise<Array<string>> {
+    const escaped = search.trim().replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+    if (escaped.length === 0) { return []; }
+    const pattern = `%${escaped}%`;
+    const result = await this.store.querySql(
+      `SELECT DISTINCT session_id FROM projection_utterances
+       WHERE json_extract(payload_json, '$.text') LIKE ? ESCAPE '\\'
+          OR json_extract(payload_json, '$.speaker_label') LIKE ? ESCAPE '\\'`,
+      [pattern, pattern]);
+    const ids: Array<string> = [];
+    try { while (result.goToNextRow()) { ids.push(result.getString(0)); } }
+    finally { result.close(); }
+    return ids;
+  }
+
   async localAudioLinks(): Promise<Array<PhoneV3LocalAudioLink>> {
     const result = await this.store.querySql(
       `SELECT session_key, session_id, local_path, upload_status, updated_at, sha256
@@ -559,12 +625,26 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
     }
     const resource = change.resource_type === 'recording_session' ?
       await this.preserveRecordingSessionKey(change.resource_id, change.resource) : change.resource;
-    await this.store.executeSql(
-      `INSERT INTO ${table} (resource_id, revision, payload_json, updated_at)
-       VALUES (?, ?, ?, ?) ON CONFLICT(resource_id) DO UPDATE SET
-       revision = excluded.revision, payload_json = excluded.payload_json,
-       updated_at = excluded.updated_at WHERE excluded.revision >= revision`,
-      [change.resource_id, change.revision, JSON.stringify(resource), Date.now()]);
+    if (change.resource_type === 'utterance') {
+      const value = resource as Record<string, Object>;
+      await this.store.executeSql(
+        `INSERT INTO projection_utterances
+         (resource_id, revision, payload_json, updated_at, session_id, start_ms, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(resource_id) DO UPDATE SET
+         revision = excluded.revision, payload_json = excluded.payload_json,
+         updated_at = excluded.updated_at, session_id = excluded.session_id,
+         start_ms = excluded.start_ms, status = excluded.status
+         WHERE excluded.revision >= revision`,
+        [change.resource_id, change.revision, JSON.stringify(resource), Date.now(),
+          String(value.session_id ?? ''), Number(value.start_ms ?? 0), String(value.status ?? 'active')]);
+    } else {
+      await this.store.executeSql(
+        `INSERT INTO ${table} (resource_id, revision, payload_json, updated_at)
+         VALUES (?, ?, ?, ?) ON CONFLICT(resource_id) DO UPDATE SET
+         revision = excluded.revision, payload_json = excluded.payload_json,
+         updated_at = excluded.updated_at WHERE excluded.revision >= revision`,
+        [change.resource_id, change.revision, JSON.stringify(resource), Date.now()]);
+    }
     if (change.resource_type === 'recording_session') {
       await this.bindLocalSession(change.resource_id, resource as Object);
     }
@@ -791,6 +871,18 @@ async function migrate(store: relationalStore.RdbStore): Promise<void> {
         attempt_count INTEGER NOT NULL, retry_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL)`);
       store.version = 14;
+    }
+    if (store.version < 15) {
+      await store.executeSql("ALTER TABLE projection_utterances ADD COLUMN session_id TEXT NOT NULL DEFAULT ''");
+      await store.executeSql('ALTER TABLE projection_utterances ADD COLUMN start_ms INTEGER NOT NULL DEFAULT 0');
+      await store.executeSql("ALTER TABLE projection_utterances ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
+      await store.executeSql(`UPDATE projection_utterances SET
+        session_id = COALESCE(json_extract(payload_json, '$.session_id'), ''),
+        start_ms = COALESCE(json_extract(payload_json, '$.start_ms'), 0),
+        status = COALESCE(json_extract(payload_json, '$.status'), 'active')`);
+      await store.executeSql(`CREATE INDEX idx_projection_utterances_session_time
+        ON projection_utterances(session_id, status, start_ms, resource_id)`);
+      store.version = 15;
     }
     store.commit();
   } catch (error) {

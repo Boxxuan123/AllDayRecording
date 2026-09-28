@@ -176,7 +176,7 @@ export class PhoneV3WearEngineReceiver {
     this.statusHandler = statusHandler;
     this.syncProgressHandler = syncProgressHandler;
     this.controlStatusHandler = controlStatusHandler;
-    this.recordingStore = recordingStore === undefined ? new PhoneV3RecordingStore(context.filesDir) : recordingStore;
+    this.recordingStore = recordingStore === undefined ? PhoneV3RecordingStore.shared(context.filesDir) : recordingStore;
   }
 
   getStoredRecordings(): Array<ReceivedRecordingFile> {

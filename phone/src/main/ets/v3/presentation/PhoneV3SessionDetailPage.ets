@@ -1,4 +1,4 @@
-import { phoneV3AnnotationLabel, phoneV3AnnotationState } from '../domain/PhoneV3AnnotationState';
+import { phoneV3AnnotationKey, phoneV3AnnotationLabel, phoneV3AnnotationState } from '../domain/PhoneV3AnnotationState';
 import { phoneV3SoundKindLabel } from '../domain/PhoneV3SoundKind';
 import { formatRecordingDuration } from 'common';
 import {
@@ -38,11 +38,29 @@ class PhoneV3SpeakerChoice {
   }
 }
 
+class PhoneV3TimelineSource implements IDataSource {
+  private rows: Array<PhoneV3Utterance> = [];
+  private listeners: Array<DataChangeListener> = [];
+
+  totalCount(): number { return this.rows.length; }
+  getData(index: number): PhoneV3Utterance { return this.rows[index]; }
+  registerDataChangeListener(listener: DataChangeListener): void { this.listeners.push(listener); }
+  unregisterDataChangeListener(listener: DataChangeListener): void {
+    const index = this.listeners.indexOf(listener);
+    if (index >= 0) { this.listeners.splice(index, 1); }
+  }
+  update(rows: Array<PhoneV3Utterance>): void {
+    if (this.rows === rows) { return; }
+    this.rows = rows;
+    this.listeners.forEach((listener: DataChangeListener): void => listener.onDataReloaded());
+  }
+}
+
 @Component
 export struct PhoneV3SessionDetailPage {
   onOpenAnnotation: (rows: Array<PhoneV3Utterance>, title: string) => void = (): void => {};
   @ObjectLink viewModel: PhoneV3ViewModel;
-  @Prop stateRevision: number = 0;
+  @Prop @Watch('refreshTimeline') stateRevision: number = 0;
   routeSession: PhoneV3SessionCard | undefined = undefined;
   @State private isSeeking: boolean = false;
   @State private seeking: number = 0;
@@ -51,7 +69,22 @@ export struct PhoneV3SessionDetailPage {
   @State private correctionSpeakerTrackId: string = '';
   @State private correctionIdentity: string = 'unknown';
   @State private selectedContentTab: number = 0;
+  @State private loadedUtteranceCount: number = 50;
   private correctionTarget: PhoneV3Utterance | undefined = undefined;
+  private timelineSource: PhoneV3TimelineSource = new PhoneV3TimelineSource();
+
+  aboutToAppear(): void { this.refreshTimeline(); }
+  private refreshTimeline(): void {
+    const session = this.currentSession();
+    this.timelineSource.update(session?.utterancePage(this.loadedUtteranceCount) ?? []);
+  }
+
+  private loadMoreUtterances(): void {
+    const session = this.currentSession();
+    if (session === undefined || this.loadedUtteranceCount >= session.utteranceCount) { return; }
+    this.loadedUtteranceCount = Math.min(session.utteranceCount, this.loadedUtteranceCount + 50);
+    this.refreshTimeline();
+  }
 
   private currentSession(): PhoneV3SessionCard | undefined {
     if (this.stateRevision < 0) {
@@ -115,8 +148,9 @@ export struct PhoneV3SessionDetailPage {
     if (session === undefined) {
       return choices;
     }
-    for (let index = 0; index < session.utterances.length; index += 1) {
-      const utterance = session.utterances[index];
+    const available = this.correctionVisible ? session.utterances : session.utterancePage(50);
+    for (let index = 0; index < available.length; index += 1) {
+      const utterance = available[index];
       if (utterance.speakerTrackId !== null && !seen.has(utterance.speakerTrackId)) {
         seen.add(utterance.speakerTrackId);
         choices.push(new PhoneV3SpeakerChoice(utterance.speakerTrackId,
@@ -286,8 +320,9 @@ export struct PhoneV3SessionDetailPage {
 
   @Builder
   private content(session: PhoneV3SessionCard) {
-    Scroll() {
-      Column({ space: 12 }) {
+    List({ space: 12 }) {
+      ListItem() {
+        Column({ space: 12 }) {
         Row({ space: 10 }) {
           Text(phoneV3SessionMeta(session))
             .fontSize(13)
@@ -452,13 +487,19 @@ export struct PhoneV3SessionDetailPage {
             .width('100%')
         }
 
-        if (this.selectedContentTab === 0) {
+        }
+        .width('100%')
+      }
+      if (this.selectedContentTab === 0) {
+        ListItem() {
           Text('转写时间线')
             .width('100%')
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_primary'))
-          if (session.utterances.length === 0) {
+        }
+          if (session.utteranceCount === 0) {
+            ListItem() {
             Text('电脑尚未生成转写，已有本地音频仍可播放。')
               .width('100%')
               .fontSize(14)
@@ -466,23 +507,37 @@ export struct PhoneV3SessionDetailPage {
               .padding(16)
               .backgroundColor($r('app.color.surface_primary'))
               .borderRadius(12)
+            }
           } else {
-            ForEach(session.utterances, (utterance: PhoneV3Utterance) => {
-              this.timeline(utterance)
-            }, (utterance: PhoneV3Utterance): string => utterance.utteranceId)
+            LazyForEach(this.timelineSource, (utterance: PhoneV3Utterance) => {
+              ListItem() { this.timeline(utterance) }
+            }, (utterance: PhoneV3Utterance): string => phoneV3AnnotationKey(utterance, utterance.utteranceId, utterance.revision))
+            if (this.loadedUtteranceCount < session.utteranceCount) {
+              ListItem() {
+                Button(`继续加载转写 · ${this.loadedUtteranceCount} / ${session.utteranceCount}`,
+                  { type: ButtonType.Capsule }).onClick((): void => this.loadMoreUtterances())
+              }
+            }
           }
         } else if (this.selectedContentTab === 1) {
+          ListItem() {
           PhoneV3SessionOverviewTab({ session: session })
+          }
         } else if (this.selectedContentTab === 2) {
+          ListItem() {
           PhoneV3SessionSpeakersTab({ session: session })
+          }
         } else {
+          ListItem() {
           PhoneV3SessionEvidenceTab({ session: session })
+          }
         }
-      }
-      .width('100%')
-      .padding({ left: 18, right: 18, top: 8, bottom: 32 })
     }
+      .padding({ left: 18, right: 18, top: 8, bottom: 32 })
     .align(Alignment.TopStart)
+    .onReachEnd((): void => {
+      if (this.selectedContentTab === 0) { this.loadMoreUtterances(); }
+    })
     .width('100%')
     .height('100%')
   }

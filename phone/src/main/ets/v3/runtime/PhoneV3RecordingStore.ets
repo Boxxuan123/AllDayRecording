@@ -40,6 +40,15 @@ function isReceivedRecordingManifest(manifest: ReceivedRecordingManifest): boole
 }
 
 export class PhoneV3RecordingStore {
+  private static sharedStores: Map<string, PhoneV3RecordingStore> = new Map<string, PhoneV3RecordingStore>();
+  static shared(filesDirectory: string): PhoneV3RecordingStore {
+    let store = PhoneV3RecordingStore.sharedStores.get(filesDirectory);
+    if (store === undefined) {
+      store = new PhoneV3RecordingStore(filesDirectory);
+      PhoneV3RecordingStore.sharedStores.set(filesDirectory, store);
+    }
+    return store;
+  }
   private filesDirectory: string;
   private syncRoot: string;
   private manifestPath: string;
@@ -176,6 +185,8 @@ export class PhoneV3RecordingStore {
     const loaded: Array<ReceivedRecordingFile> = [];
     this.loadManifest(loaded);
     const indexedCount = loaded.length;
+    // Recover files copied just before a manifest write failed. The shared
+    // store runs this scan once per process, not on each ordinary refresh.
     this.scanExistingSyncFiles(loaded);
     this.recordings = loaded;
     this.sortNewestFirst();

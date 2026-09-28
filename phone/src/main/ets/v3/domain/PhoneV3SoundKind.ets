@@ -1,3 +1,5 @@
+import { PhoneV3Evidence } from './PhoneV3PersonFact';
+
 export const PHONE_V3_SOUND_KINDS: Array<string> = ['speech', 'live_speech', 'non_speech', 'unintelligible', 'background_speech', 'overlapping_speech', 'remote_speech', 'media_speech'];
 export function phoneV3SoundKindLabel(kind: string): string {
   switch (kind) {
@@ -11,8 +13,7 @@ export function phoneV3SoundKindLabel(kind: string): string {
     default: return '正常发言';
   }
 }
-interface SoundEvidence { sound_kind?: string; }
-export function phoneV3SoundKind(evidenceJson: string): string {
-  const evidence = JSON.parse(evidenceJson) as SoundEvidence;
+export function phoneV3SoundKind(evidenceJson: string, parsed?: PhoneV3Evidence): string {
+  const evidence = parsed ?? JSON.parse(evidenceJson) as PhoneV3Evidence;
   return evidence.sound_kind ?? 'speech';
 }

@@ -1,0 +1,5 @@
+{
+  "description": "正式手机长录音页面只读验收",
+  "environment": [{"type": "device", "label": "phone"}],
+  "driver": {"type": "DeviceTest", "py_file": ["PhonePageLoadingAcceptance.py"]}
+}

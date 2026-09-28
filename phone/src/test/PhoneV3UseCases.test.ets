@@ -271,6 +271,31 @@ function localFact(): PhoneV3LocalAudioFact {
 
 export default function phoneV3UseCasesTest() {
   describe('PhoneV3UseCases', () => {
+    it('defersSessionTranscriptDecodeUntilTheSessionIsOpened', 0, () => {
+      const card = new PhoneV3SessionCard('s', 's', '', '', '', 0, '', '', '', 0, 1, 0,
+        [], 0, 0, '', '', '', 0, []);
+      let decodes = 0;
+      let pageDecodes = 0;
+      card.setLazyUtterances(['first'], (): Array<PhoneV3Utterance> => {
+        decodes += 1;
+        return [new PhoneV3Utterance('first', 's', null, null, null, null,
+          'unknown', 'unknown', '{}', 0, 100, '', '', 'text', 'text', 1, 'active', '{}')];
+      }, (): void => {}, (_offset: number, _limit: number): Array<PhoneV3Utterance> => {
+        pageDecodes += 1;
+        return [new PhoneV3Utterance('first', 's', null, null, null, null,
+          'unknown', 'unknown', '{}', 0, 100, '', '', 'text', 'text', 1, 'active', '{}')];
+      });
+      expect(card.utteranceCount).assertEqual(1);
+      expect(card.utterancesLoaded()).assertFalse();
+      expect(decodes).assertEqual(0);
+      expect(card.utterancePage(1).length).assertEqual(1);
+      expect(card.utterancePage(1).length).assertEqual(1);
+      expect(pageDecodes).assertEqual(1);
+      expect(decodes).assertEqual(0);
+      expect(card.utterances.length).assertEqual(1);
+      expect(card.utterances.length).assertEqual(1);
+      expect(decodes).assertEqual(1);
+    });
     it('mergesLocalAudioComputerProjectionAndStableTimelineIdentity', 0, () => {
       const evidence: EvidenceFixture = { asset_id: 'asset-1' };
       const recording = new PhoneV3ProjectionRow(SESSION_ID, 3, JSON.stringify({

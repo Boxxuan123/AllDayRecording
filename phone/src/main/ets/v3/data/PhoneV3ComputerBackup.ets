@@ -34,7 +34,7 @@ export class PhoneV3ComputerBackup implements PhoneV3AudioBackupPort {
 
   async backup(): Promise<PhoneV3AudioBackupResult> {
     const progressGeneration = ++this.progressGeneration;
-    const localRecordings = new PhoneV3RecordingStore(this.context.filesDir).list();
+    const localRecordings = PhoneV3RecordingStore.shared(this.context.filesDir).list();
     const links = await this.repository.localAudioLinks();
     const completions = await this.repository.localSessionCompletions();
     const failures = await this.repository.localSessionFailures();

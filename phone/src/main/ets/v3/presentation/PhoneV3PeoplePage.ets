@@ -20,6 +20,7 @@ export struct PhoneV3PeoplePage {
   onOpenAnnotation: (rows: Array<PhoneV3Utterance>, title: string) => void = (): void => {};
   @ObjectLink viewModel: PhoneV3ViewModel;
   @Prop stateRevision: number = 0;
+  @Prop active: boolean = false;
   onOpenReviews: () => void = (): void => {};
   onOpenSession: (session: PhoneV3SessionCard) => void = (): void => {};
   private summarySessions: Array<PhoneV3SessionCard> | undefined = undefined;
@@ -29,6 +30,7 @@ export struct PhoneV3PeoplePage {
     return AppStorage.get<PhoneV3UiState>(PHONE_V3_UI_STATE_STORAGE_KEY) ?? new PhoneV3UiState();
   }
   private summaries(known: boolean): Array<PhoneV3SpeakerSummary> {
+    if (!this.active) { return []; }
     const sessions = this.currentUiState().snapshot.sessions;
     if (sessions !== this.summarySessions) {
       this.summarySessions = sessions;

@@ -72,6 +72,11 @@ export function applyAnnotationConflicts(sessions: Array<PhoneV3SessionCard>, co
   for (let session of sessions) {
     for (let row of session.utterances) { rows.set(row.utteranceId, row); }
   }
+  applyAnnotationConflictsToRows(rows, conflicts);
+}
+
+export function applyAnnotationConflictsToRows(rows: Map<string, PhoneV3Utterance>,
+  conflicts: Array<PhoneV3Conflict>): void {
   for (let conflict of conflicts) {
     if (conflict.kind !== 'speaker.assign' && conflict.kind !== 'segment.classify') { continue; }
     try {

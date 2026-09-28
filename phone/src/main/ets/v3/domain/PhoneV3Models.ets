@@ -1,6 +1,6 @@
 import { phoneV3SoundKind } from './PhoneV3SoundKind';
 import { annotationFacts, PhoneV3AnnotationFacts, AnnotationRow } from './PhoneV3AnnotationState';
-import { phoneV3PersonFact, phoneV3PersonUncertain } from './PhoneV3PersonFact';
+import { phoneV3PersonFact, phoneV3PersonUncertain, PhoneV3Evidence } from './PhoneV3PersonFact';
 export class PhoneV3ProjectionRow {
   resourceId: string;
   revision: number;
@@ -121,7 +121,8 @@ export class PhoneV3Utterance implements AnnotationRow {
     originalSpeakerLabel: string | null, identity: string, originalIdentity: string,
     identityEvidenceJson: string, startMs: number, endMs: number,
     startAt: string, endAt: string, text: string, originalText: string,
-    revision: number, status: string, evidenceJson: string) {
+    revision: number, status: string, evidenceJson: string,
+    parsedEvidence?: PhoneV3Evidence) {
     this.utteranceId = utteranceId;
     this.sessionId = sessionId;
     this.speakerTrackId = speakerTrackId;
@@ -140,10 +141,11 @@ export class PhoneV3Utterance implements AnnotationRow {
     this.revision = revision;
     this.status = status;
     this.evidenceJson = evidenceJson;
-    this.annotationFacts = annotationFacts(evidenceJson);
-    this.soundKind = phoneV3SoundKind(evidenceJson);
-    this.annotationPersonId = phoneV3PersonFact(evidenceJson);
-    if (phoneV3PersonUncertain(evidenceJson)) {
+    const evidence = parsedEvidence ?? JSON.parse(evidenceJson) as PhoneV3Evidence;
+    this.annotationFacts = annotationFacts(evidenceJson, evidence);
+    this.soundKind = phoneV3SoundKind(evidenceJson, evidence);
+    this.annotationPersonId = phoneV3PersonFact(evidenceJson, evidence);
+    if (phoneV3PersonUncertain(evidenceJson, evidence)) {
       this.identity = 'unknown';
       this.speakerLabel = '人物待确认';
     }
@@ -170,7 +172,69 @@ export class PhoneV3SessionCard {
   processingStatus: string;
   processingStage: string;
   processingProgress: number;
-  utterances: Array<PhoneV3Utterance>;
+  private cachedUtterances: Array<PhoneV3Utterance> | null = [];
+  private utteranceLoader: (() => Array<PhoneV3Utterance>) | null = null;
+  private afterUtterancesLoaded: (() => void) | null = null;
+  private utterancePageLoader: ((offset: number, limit: number) => Array<PhoneV3Utterance>) | null = null;
+  private previewUtterances: Array<PhoneV3Utterance> = [];
+  private lazyUtteranceIds: Set<string> = new Set<string>();
+  utteranceCount: number = 0;
+
+  get utterances(): Array<PhoneV3Utterance> {
+    if (this.cachedUtterances === null && this.utteranceLoader !== null) {
+      const loader = this.utteranceLoader;
+      this.cachedUtterances = loader();
+      this.utteranceLoader = null;
+      try { this.afterUtterancesLoaded?.(); }
+      catch (error) {
+        this.cachedUtterances = null;
+        this.utteranceLoader = loader;
+        throw error as Error;
+      }
+      this.afterUtterancesLoaded = null;
+    }
+    return this.cachedUtterances ?? [];
+  }
+
+  set utterances(rows: Array<PhoneV3Utterance>) {
+    this.cachedUtterances = rows;
+    this.utteranceLoader = null;
+    this.afterUtterancesLoaded = null;
+    this.utterancePageLoader = null;
+    this.previewUtterances = [];
+    this.lazyUtteranceIds.clear();
+    this.utteranceCount = rows.length;
+  }
+
+  setLazyUtterances(ids: Array<string>, loader: () => Array<PhoneV3Utterance>,
+    afterLoad: () => void, pageLoader?: (offset: number, limit: number) => Array<PhoneV3Utterance>): void {
+    this.cachedUtterances = null;
+    this.utteranceCount = ids.length;
+    this.lazyUtteranceIds = new Set<string>(ids);
+    this.utteranceLoader = loader;
+    this.afterUtterancesLoaded = afterLoad;
+    this.utterancePageLoader = pageLoader ?? null;
+    this.previewUtterances = [];
+  }
+
+  utterancesLoaded(): boolean { return this.cachedUtterances !== null; }
+  hasUtterance(id: string): boolean {
+    return this.cachedUtterances === null ? this.lazyUtteranceIds.has(id) :
+      this.cachedUtterances.some((row: PhoneV3Utterance): boolean => row.utteranceId === id);
+  }
+
+  utterancePage(count: number): Array<PhoneV3Utterance> {
+    if (this.cachedUtterances !== null || this.utterancePageLoader === null) {
+      return this.utterances.slice(0, count);
+    }
+    while (this.previewUtterances.length < Math.min(count, this.utteranceCount)) {
+      const offset = this.previewUtterances.length;
+      const rows = this.utterancePageLoader(offset, Math.min(50, count - offset));
+      if (rows.length === 0) { break; }
+      this.previewUtterances = this.previewUtterances.concat(rows);
+    }
+    return this.previewUtterances.slice(0, count);
+  }
 
   constructor(id: string, sessionId: string, sessionKey: string, localGroupKey: string, capturedStart: string,
     startedAt: number, deviceName: string, state: string, statusCode: string, progress: number,

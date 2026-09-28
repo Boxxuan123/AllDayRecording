@@ -18,7 +18,7 @@ export class PhoneV3LocalAudioRepository implements PhoneV3LocalAudioRepositoryP
   }
 
   async list(): Promise<Array<PhoneV3LocalAudioFact>> {
-    const recordings = new PhoneV3RecordingStore(this.filesDirectory).list();
+    const recordings = PhoneV3RecordingStore.shared(this.filesDirectory).list();
     const groups: Array<PhoneV3LocalAudioFact> = [];
     for (let index = 0; index < recordings.length; index += 1) {
       const recording = recordings[index];

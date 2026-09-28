@@ -22,11 +22,44 @@ import {
 @Component
 export struct PhoneV3RecordingListPage {
   @ObjectLink viewModel: PhoneV3ViewModel;
-  @Prop stateRevision: number = 0;
+  @Prop @Watch('refreshTranscriptSearch') stateRevision: number = 0;
   @State private searchText: string = '';
+  @State private transcriptMatchIds: Array<string> = [];
+  @State private searchPending: boolean = false;
+  @State private searchError: string = '';
+  private searchTimer: number = -1;
+  private searchVersion: number = 0;
   @State private filterIndex: number = 0;
   onOpenSession: (session: PhoneV3SessionCard) => void = (_session: PhoneV3SessionCard): void => {};
   onOpenBackupIssues: () => void = (): void => {};
+
+  aboutToAppear(): void { this.refreshTranscriptSearch(); }
+  aboutToDisappear(): void { clearTimeout(this.searchTimer); }
+
+  private refreshTranscriptSearch(): void {
+    if (this.searchText.trim().length > 0) { this.queueTranscriptSearch(); }
+  }
+
+  private queueTranscriptSearch(): void {
+    clearTimeout(this.searchTimer);
+    const search = this.searchText.trim();
+    const version = ++this.searchVersion;
+    this.transcriptMatchIds = [];
+    this.searchError = '';
+    this.searchPending = search.length > 0;
+    if (search.length === 0) { return; }
+    this.searchTimer = setTimeout((): void => {
+      this.viewModel.searchTranscriptSessionIds(search).then((ids: Array<string>): void => {
+        if (version !== this.searchVersion) { return; }
+        this.transcriptMatchIds = ids;
+        this.searchPending = false;
+      }).catch((error: Object): void => {
+        if (version !== this.searchVersion) { return; }
+        this.searchError = error instanceof Error ? error.message : String(error);
+        this.searchPending = false;
+      });
+    }, 200);
+  }
 
   private currentUiState(): PhoneV3UiState {
     const state = AppStorage.get<PhoneV3UiState>(PHONE_V3_UI_STATE_STORAGE_KEY);
@@ -59,9 +92,7 @@ export struct PhoneV3RecordingListPage {
         session.capturedStart.toLocaleLowerCase().includes(search)) {
         return true;
       }
-      return session.utterances.some((utterance): boolean =>
-        utterance.text.toLocaleLowerCase().includes(search) ||
-        (utterance.speakerLabel ?? '').toLocaleLowerCase().includes(search));
+      return this.transcriptMatchIds.indexOf(session.sessionId) >= 0;
     });
   }
 
@@ -224,7 +255,14 @@ export struct PhoneV3RecordingListPage {
         .borderRadius(14)
         .onChange((value: string): void => {
           this.searchText = value;
+          this.queueTranscriptSearch();
         })
+
+      if (this.searchPending) {
+        Text('正在搜索完整转写…').fontSize(12).fontColor($r('app.color.text_secondary'))
+      } else if (this.searchError.length > 0) {
+        Text(`转写搜索失败：${this.searchError}`).fontSize(12).fontColor($r('app.color.brand_danger'))
+      }
 
       Row({ space: 2 }) {
         this.filterButton(0, '全部')
@@ -302,6 +340,7 @@ export struct PhoneV3RecordingListPage {
               .buttonStyle(ButtonStyleMode.TEXTUAL)
               .onClick((): void => {
                 this.searchText = '';
+                this.queueTranscriptSearch();
                 this.filterIndex = 0;
               })
           }

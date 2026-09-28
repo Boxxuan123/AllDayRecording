@@ -1,25 +1,16 @@
 import { phoneV3SoundKindLabel } from './PhoneV3SoundKind';
+import { PhoneV3Evidence } from './PhoneV3PersonFact';
 
-interface Fact { person_id?: string; state?: string; }
-interface FactIds { person?: Array<string>; sound?: Array<string>; }
-interface Dimensions { person?: Array<string>; sound?: Array<string>; }
-interface Review { dimensions?: Dimensions; }
-interface Evidence {
-  person_annotation?: Fact;
-  annotation_fact_ids?: FactIds;
-  annotation_outdated?: Array<string>;
-  annotation_review?: Review;
-}
 export class PhoneV3AnnotationFacts {
   person: string = '';
   sound: string = '';
   reason: string = '';
 }
 // Derived once when a projection row is materialized, never on playback ticks.
-export function annotationFacts(evidenceJson: string): PhoneV3AnnotationFacts {
+export function annotationFacts(evidenceJson: string, parsed?: PhoneV3Evidence): PhoneV3AnnotationFacts {
   const result = new PhoneV3AnnotationFacts();
   try {
-    const evidence = JSON.parse(evidenceJson) as Evidence;
+    const evidence = parsed ?? JSON.parse(evidenceJson) as PhoneV3Evidence;
     const fact = evidence.person_annotation;
     if (fact?.person_id && (fact.state === undefined || fact.state === 'active')) { result.person = 'synced'; }
     if ((evidence.annotation_fact_ids?.sound?.length ?? 0) > 0) { result.sound = 'synced'; }

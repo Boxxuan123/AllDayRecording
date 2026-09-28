@@ -7,7 +7,9 @@ import {
   V3ContractFixture,
   V3DecodedFixture,
   V3ReminderDto,
-  V3UtteranceDto
+  V3UtteranceDto,
+  V3_CORE_SCHEMA_VERSION,
+  V3_PHONE_PROJECTION_SCHEMA_VERSION
 } from '../main/ets/v3/contracts/V3ContractModels';
 
 // Generated with the fixture bodies. Python contract tests verify these receipts
@@ -65,6 +67,10 @@ function expectDecoded(actual: V3DecodedFixture, expected: V3DecodedFixture): vo
 
 export default function v3ContractFixtureTest() {
   describe('V3ContractFixture', () => {
+    it('matchesReleasedDatabaseSchemas', 0, () => {
+      expect(V3_CORE_SCHEMA_VERSION).assertEqual(20);
+      expect(V3_PHONE_PROJECTION_SCHEMA_VERSION).assertEqual(15);
+    });
     it('decodesCanonicalComputerFixture', 0, () => {
       expect(CORE_FIXTURE_SHA256.length).assertEqual(64);
       expectDecoded(decodeV3ContractFixture(canonicalFixture()), {

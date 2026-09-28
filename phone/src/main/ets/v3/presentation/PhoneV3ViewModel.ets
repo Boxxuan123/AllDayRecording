@@ -212,6 +212,10 @@ export class PhoneV3ViewModel {
     this.refreshDeviceState();
   }
 
+  async searchTranscriptSessionIds(search: string): Promise<Array<string>> {
+    return this.useCases === undefined ? [] : this.useCases.searchTranscriptSessionIds(search);
+  }
+
   refresh(): void {
     if (this.refreshing) {
       this.refreshQueued = true;
@@ -1065,7 +1069,6 @@ export class PhoneV3ViewModel {
     if (scanLocal) { this.localFacts = await useCases.loadLocal(); }
     const snapshot = await useCases.loadCached(this.localFacts);
     if (generation !== this.snapshotGeneration || this.annotationSaving) { return; }
-    indexedUtterances(snapshot.sessions);
     this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SNAPSHOT_READY, snapshot,
       undefined, `已合并 ${snapshot.sessions.length} 条会话；最后游标 ${snapshot.sync.cursor}`));
   }
@@ -1158,7 +1161,12 @@ export class PhoneV3ViewModel {
     this.message = next.message;
     this.error = next.error;
     AppStorage.setOrCreate<PhoneV3UiState>(PHONE_V3_UI_STATE_STORAGE_KEY, next);
-    this.stateChangeListener();
+    // The observed device field updates playback controls directly. The root
+    // revision is for snapshot/content changes and must not invalidate every
+    // page on each playback tick.
+    if (action.type !== PhoneV3UiActionType.DEVICE_CHANGED) {
+      this.stateChangeListener();
+    }
   }
 
   private currentUiState(): PhoneV3UiState {
