@@ -28,6 +28,8 @@ import {
 import { PhoneV3UseCases, mergePhoneV3Sessions } from '../main/ets/v3/application/PhoneV3UseCases';
 import { PhonePendingOperation } from '../main/ets/v3/data/PhoneSyncProjection';
 import {
+  PhoneSessionCompletionRecord,
+  PhoneSessionTransferFailure,
   PhoneV3Conflict,
   PhoneV3Utterance,
   PhoneV3SessionCard,
@@ -76,6 +78,15 @@ interface ReviewActionResultFixture {
 }
 
 class FakePhoneV3Repository implements PhoneV3ProjectionRepositoryPort {
+  completions: Array<PhoneSessionCompletionRecord> = [];
+  async localSessionCompletions(): Promise<Array<PhoneSessionCompletionRecord>> { return this.completions; }
+  async localSessionFailures(): Promise<Array<PhoneSessionTransferFailure>> { return []; }
+  async recordSessionFailure(_failure: PhoneSessionTransferFailure): Promise<void> {}
+  async clearSessionFailure(_sessionKey: string): Promise<void> {}
+  async recordSessionCompletion(record: PhoneSessionCompletionRecord): Promise<void> {
+    this.completions = this.completions.filter((item: PhoneSessionCompletionRecord): boolean =>
+      item.sessionKey !== record.sessionKey).concat([record]);
+  }
   recordingRows: Array<PhoneV3ProjectionRow> = [];
   processingRows: Array<PhoneV3ProjectionRow> = [];
   utteranceRows: Array<PhoneV3ProjectionRow> = [];
@@ -145,13 +156,14 @@ class FakePhoneV3Repository implements PhoneV3ProjectionRepositoryPort {
   }
   async linkLocalAudio(_sessionKey: string, _localPath: string, _sha256: string,
     _uploadStatus: string): Promise<void> {}
-  async replaceReviewItems(items: Array<Object>): Promise<void> {
+  async replaceReviewItems(items: Array<Object>): Promise<boolean> {
     this.reviewRows = [];
     for (let index = 0; index < items.length; index += 1) {
       const item = items[index] as ReviewSnapshotItemFixture;
       this.reviewRows.push(new PhoneV3ProjectionRow(item.review_id, 1,
         JSON.stringify(item), Date.parse(item.updated_at)));
     }
+    return true;
   }
 
   async projectionRows(resourceType: string): Promise<Array<PhoneV3ProjectionRow>> {
@@ -627,6 +639,38 @@ export default function phoneV3UseCasesTest() {
         new PhoneV3LocalAudioLink(SESSION_KEY, '', '/phone/segment_0.wav', 'uploaded', 1500)
       ];
       expect(await useCases.localAudioIsProtected(SESSION_KEY)).assertTrue();
+    });
+
+    it('withdrawsWholeSessionBackupLabelWhenAnotherChunkArrives', 0, () => {
+      const local = new PhoneV3LocalAudioFact(SESSION_KEY, LOCAL_GROUP_KEY,
+        ['/phone/segment_0.wav', '/phone/segment_1.wav'], 1767225600000,
+        1767225660000, 488, 2000);
+      const links = [new PhoneV3LocalAudioLink(SESSION_KEY, SESSION_ID,
+        '/phone/segment_0.wav', 'uploaded', 1500)];
+      const completion: PhoneSessionCompletionRecord = { sessionKey: SESSION_KEY,
+        source: 'legacy_user_confirmed', completedSegments: 1, totalSamples: 16000,
+        confirmedAt: 1767225660000, manifestSha256: 'a'.repeat(64) };
+      const cards = mergePhoneV3Sessions([local], links, [], [], [], [completion]);
+      expect(cards[0].uploadStatus).assertEqual('file_uploaded');
+    });
+
+    it('requiresWholeManifestAndEveryFileReceiptBeforeShowingBackup', 0, () => {
+      const local = new PhoneV3LocalAudioFact(SESSION_KEY, LOCAL_GROUP_KEY,
+        ['/phone/segment_0.wav', '/phone/segment_1.wav'], 1767225600000,
+        1767225660000, 488, 2000);
+      const first = new PhoneV3LocalAudioLink(SESSION_KEY, SESSION_ID,
+        '/phone/segment_0.wav', 'uploaded', 1500, 'a'.repeat(64));
+      const second = new PhoneV3LocalAudioLink(SESSION_KEY, SESSION_ID,
+        '/phone/segment_1.wav', 'uploaded', 1600, 'b'.repeat(64));
+      const completion: PhoneSessionCompletionRecord = { sessionKey: SESSION_KEY,
+        source: 'watch', completedSegments: 2, totalSamples: 32000,
+        confirmedAt: 1767225660000, manifestSha256: 'c'.repeat(64) };
+      expect(mergePhoneV3Sessions([local], [first], [], [], [], [completion])[0].uploadStatus)
+        .assertEqual('file_uploaded');
+      expect(mergePhoneV3Sessions([local], [first, second], [], [], [], [completion])[0].uploadStatus)
+        .assertEqual('uploaded');
+      expect(mergePhoneV3Sessions([local], [first, second], [], [], [], [])[0].uploadStatus)
+        .assertEqual('file_uploaded');
     });
 
     it('protectsLocalAudioWhenComputerAlreadyHasTheSession', 0, async () => {

@@ -12,6 +12,8 @@ import {
   clearRebuildableProjection
 } from './PhoneSyncProjection';
 import {
+  PhoneSessionCompletionRecord,
+  PhoneSessionTransferFailure,
   PhoneV3Conflict,
   PhoneV3LocalAudioLink,
   PhoneV3ProjectionRow,
@@ -20,7 +22,7 @@ import {
 import { PhoneV3ProjectionRepositoryPort } from '../application/PhoneV3Ports';
 
 const DATABASE_NAME: string = 'phone_v3_projection.db';
-const SCHEMA_VERSION: number = 11;
+const SCHEMA_VERSION: number = 14;
 const TABLES: Array<string> = [
   'projection_recordings', 'projection_audio_assets', 'projection_processing_runs',
   'projection_utterances', 'projection_review_items', 'projection_reminders'
@@ -56,6 +58,10 @@ const CREATE_STATEMENTS: Array<string> = [
     session_key TEXT NOT NULL, local_path TEXT NOT NULL, sha256 TEXT NOT NULL,
     upload_status TEXT NOT NULL, updated_at INTEGER NOT NULL,
     PRIMARY KEY(session_key, local_path))`,
+  `CREATE TABLE IF NOT EXISTS local_session_completions (
+    session_key TEXT PRIMARY KEY, source TEXT NOT NULL, completed_segments INTEGER NOT NULL,
+    total_samples INTEGER NOT NULL, confirmed_at INTEGER NOT NULL,
+    manifest_sha256 TEXT NOT NULL DEFAULT '')`,
   `INSERT OR IGNORE INTO sync_state (
     singleton_id, projection_version, cursor, last_server_time, last_error,
     last_attempt_at, last_success_at) VALUES (1, 1, 'cursor-0', '', '', 0, 0)`
@@ -143,21 +149,24 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
       throw new Error('Phone outbox 查询上限无效');
     }
     const result = await this.store.querySql(
-      `SELECT operation_id, kind, base_revision, payload_json, attempt_count,
-        NOT EXISTS (SELECT 1 FROM json_each(outbox.payload_json, '$.selections') s
-          LEFT JOIN projection_utterances u ON u.resource_id=json_extract(s.value,'$.utterance_id')
-          WHERE u.resource_id IS NULL) AS resources_ready
-       FROM outbox WHERE applied_revision IS NULL OR (
+      `SELECT operation_id, kind, base_revision, payload_json, attempt_count
+       FROM outbox WHERE (applied_revision IS NULL OR (
          kind IN ('speaker.assign','segment.classify') AND json_array_length(payload_json,'$.selections')>1
-         AND NOT EXISTS (SELECT 1 FROM outbox_resource_receipts r WHERE r.operation_id=outbox.operation_id))
-       ORDER BY created_at, rowid`);
+         AND NOT EXISTS (SELECT 1 FROM outbox_resource_receipts r WHERE r.operation_id=outbox.operation_id)))
+       AND NOT EXISTS (SELECT 1 FROM json_each(outbox.payload_json, '$.selections') s
+          LEFT JOIN projection_utterances u ON u.resource_id=json_extract(s.value,'$.utterance_id')
+          WHERE u.resource_id IS NULL)
+       AND NOT EXISTS (SELECT 1 FROM json_each(?) excluded WHERE excluded.value=outbox.operation_id)
+       AND NOT EXISTS (SELECT 1 FROM json_each(outbox.payload_json,'$.depends_on') dependency
+         WHERE EXISTS (SELECT 1 FROM conflicts c WHERE c.operation_id=dependency.value)
+         OR EXISTS (SELECT 1 FROM outbox parent WHERE parent.operation_id=dependency.value
+           AND (parent.applied_revision IS NULL OR (parent.kind IN ('speaker.assign','segment.classify')
+             AND json_array_length(parent.payload_json,'$.selections')>1
+             AND NOT EXISTS (SELECT 1 FROM outbox_resource_receipts r WHERE r.operation_id=parent.operation_id)))))
+       ORDER BY created_at, rowid LIMIT ?`, [JSON.stringify(excludedIds), limit]);
     const operations: Array<PhonePendingOperation> = [];
-    const resourcesReady = new Set<string>();
     try {
       while (result.goToNextRow()) {
-        if (result.getLong(result.getColumnIndex('resources_ready')) === 1) {
-          resourcesReady.add(result.getString(result.getColumnIndex('operation_id')));
-        }
         const baseIndex = result.getColumnIndex('base_revision');
         operations.push({
           operation_id: result.getString(result.getColumnIndex('operation_id')),
@@ -170,13 +179,7 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
     } finally {
       result.close();
     }
-    const blocked = new Set<string>(operations.map((op): string => op.operation_id));
-    for (let conflict of await this.conflictRows()) { blocked.add(conflict.operationId); }
-    return operations.filter((op): boolean => {
-      const payload = op.payload as OperationDependencies;
-      return resourcesReady.has(op.operation_id) && excludedIds.indexOf(op.operation_id) < 0 &&
-        !(payload.depends_on ?? []).some((id: string): boolean => blocked.has(id));
-    }).slice(0, limit);
+    return operations;
   }
 
   async annotationOperations(resourceIds?: Array<string>): Promise<Array<PhonePendingOperation>> {
@@ -303,7 +306,7 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
 
   async localAudioLinks(): Promise<Array<PhoneV3LocalAudioLink>> {
     const result = await this.store.querySql(
-      `SELECT session_key, session_id, local_path, upload_status, updated_at
+      `SELECT session_key, session_id, local_path, upload_status, updated_at, sha256
        FROM local_audio_links ORDER BY updated_at DESC, local_path`);
     const values: Array<PhoneV3LocalAudioLink> = [];
     try {
@@ -313,7 +316,8 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
           result.getString(result.getColumnIndex('session_id')),
           result.getString(result.getColumnIndex('local_path')),
           result.getString(result.getColumnIndex('upload_status')),
-          result.getLong(result.getColumnIndex('updated_at'))));
+          result.getLong(result.getColumnIndex('updated_at')),
+          result.getString(result.getColumnIndex('sha256'))));
       }
     } finally {
       result.close();
@@ -384,25 +388,116 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
     } catch (error) { await this.rollback(); throw repositoryError(error as Object); }
   }
 
-  async replaceReviewItems(items: Array<Object>): Promise<void> {
+  async localSessionCompletions(): Promise<Array<PhoneSessionCompletionRecord>> {
+    const result = await this.store.querySql(
+      `SELECT session_key, source, completed_segments, total_samples, confirmed_at, manifest_sha256, input_revision
+       FROM local_session_completions`);
+    const values: Array<PhoneSessionCompletionRecord> = [];
+    try {
+      while (result.goToNextRow()) {
+        values.push({
+          sessionKey: result.getString(result.getColumnIndex('session_key')),
+          source: result.getString(result.getColumnIndex('source')),
+          completedSegments: result.getLong(result.getColumnIndex('completed_segments')),
+          totalSamples: result.getLong(result.getColumnIndex('total_samples')),
+          confirmedAt: result.getLong(result.getColumnIndex('confirmed_at')),
+          manifestSha256: result.getString(result.getColumnIndex('manifest_sha256')),
+          inputRevision: result.getLong(result.getColumnIndex('input_revision'))
+        });
+      }
+    } finally { result.close(); }
+    return values;
+  }
+
+  async recordSessionCompletion(record: PhoneSessionCompletionRecord): Promise<void> {
     await this.beginTransaction();
     try {
-      await this.store.executeSql('DELETE FROM projection_review_items');
+    await this.store.executeSql(
+      `INSERT INTO local_session_completions
+       (session_key,source,completed_segments,total_samples,confirmed_at,manifest_sha256,input_revision)
+       VALUES (?,?,?,?,?,?,?) ON CONFLICT(session_key) DO UPDATE SET
+       source=excluded.source, completed_segments=excluded.completed_segments,
+       total_samples=excluded.total_samples, confirmed_at=excluded.confirmed_at,
+       manifest_sha256=excluded.manifest_sha256, input_revision=excluded.input_revision`,
+      [record.sessionKey, record.source, record.completedSegments, record.totalSamples,
+        record.confirmedAt, record.manifestSha256, record.inputRevision ?? 1]);
+      await this.store.executeSql('DELETE FROM local_session_failures WHERE session_key=?', [record.sessionKey]);
+      await this.commit();
+    } catch (error) { await this.rollback(); throw repositoryError(error as Object); }
+  }
+
+  async localSessionFailures(): Promise<Array<PhoneSessionTransferFailure>> {
+    const result = await this.store.querySql(
+      `SELECT session_key,manifest_sha256,category,reason,attempt_count,retry_at,updated_at
+       FROM local_session_failures ORDER BY updated_at DESC`);
+    const values: Array<PhoneSessionTransferFailure> = [];
+    try {
+      while (result.goToNextRow()) {
+        values.push({ sessionKey: result.getString(result.getColumnIndex('session_key')),
+          manifestSha256: result.getString(result.getColumnIndex('manifest_sha256')),
+          category: result.getString(result.getColumnIndex('category')),
+          reason: result.getString(result.getColumnIndex('reason')),
+          attemptCount: result.getLong(result.getColumnIndex('attempt_count')),
+          retryAt: result.getLong(result.getColumnIndex('retry_at')),
+          updatedAt: result.getLong(result.getColumnIndex('updated_at')) });
+      }
+    } finally { result.close(); }
+    return values;
+  }
+
+  async recordSessionFailure(failure: PhoneSessionTransferFailure): Promise<void> {
+    await this.store.executeSql(
+      `INSERT INTO local_session_failures
+       (session_key,manifest_sha256,category,reason,attempt_count,retry_at,updated_at)
+       VALUES (?,?,?,?,?,?,?) ON CONFLICT(session_key) DO UPDATE SET
+       manifest_sha256=excluded.manifest_sha256, category=excluded.category,
+       reason=excluded.reason, attempt_count=excluded.attempt_count,
+       retry_at=excluded.retry_at, updated_at=excluded.updated_at`,
+      [failure.sessionKey, failure.manifestSha256, failure.category, failure.reason,
+        failure.attemptCount, failure.retryAt, failure.updatedAt]);
+  }
+
+  async clearSessionFailure(sessionKey: string): Promise<void> {
+    await this.store.executeSql('DELETE FROM local_session_failures WHERE session_key=?', [sessionKey]);
+  }
+
+  async replaceReviewItems(items: Array<Object>): Promise<boolean> {
+    const incoming = new Map<string, string>();
+    for (let value of items) {
+      const item = value as ReviewSnapshotPayload;
+      if (typeof item.review_id !== 'string' || item.review_id.length === 0 || incoming.has(item.review_id)) {
+        throw new Error('电脑返回的审核快照包含无效或重复 ID');
+      }
+      incoming.set(item.review_id, JSON.stringify(item));
+    }
+    await this.beginTransaction();
+    try {
+      const existing = await this.projectionRows('review_item');
+      if (existing.length === incoming.size && existing.every((row): boolean => incoming.get(row.resourceId) === row.payloadJson)) {
+        await this.commit();
+        return false;
+      }
+      const previous = new Map<string, string>();
+      for (let row of existing) { previous.set(row.resourceId, row.payloadJson); }
+      await this.store.executeSql('DELETE FROM projection_review_items WHERE resource_id NOT IN (SELECT value FROM json_each(?))',
+        [JSON.stringify(Array.from(incoming.keys()))]);
       for (let index = 0; index < items.length; index += 1) {
         const item = items[index] as ReviewSnapshotPayload;
         if (typeof item.review_id !== 'string' || item.review_id.length === 0) {
           throw new Error('电脑返回的审核快照包含无效 ID');
         }
+        if (previous.get(item.review_id) === incoming.get(item.review_id)) { continue; }
         const revision = typeof item.source_revision === 'number' && item.source_revision > 0 ?
           item.source_revision : 1;
         const parsedTime = typeof item.updated_at === 'string' ? Date.parse(item.updated_at) : Date.now();
         await this.store.executeSql(
-          `INSERT INTO projection_review_items (resource_id, revision, payload_json, updated_at)
+          `INSERT OR REPLACE INTO projection_review_items (resource_id, revision, payload_json, updated_at)
            VALUES (?, ?, ?, ?)`,
-          [item.review_id, revision, JSON.stringify(item),
+          [item.review_id, revision, incoming.get(item.review_id)!,
             Number.isFinite(parsedTime) ? parsedTime : Date.now()]);
       }
       await this.commit();
+      return true;
     } catch (error) {
       await this.rollback();
       throw repositoryError(error as Object);
@@ -510,37 +605,21 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
           }
         }
       } finally { pending.close(); }
-      await this.clearProjectedOperations();
     } else {
       await this.store.executeSql('DELETE FROM outbox WHERE operation_id = ?', [receipt.operation_id]);
     }
   }
 
-  private async projectedResourceIds(operationId: string): Promise<Array<string>> {
-    const result = await this.store.querySql('SELECT resource_id FROM outbox_resource_receipts WHERE operation_id=? AND projected=1', [operationId]);
-    const ids: Array<string> = [];
-    try { while (result.goToNextRow()) { ids.push(result.getString(0)); } }
-    finally { result.close(); }
-    return ids;
-  }
-
   private async clearProjectedOperations(): Promise<void> {
-    await this.store.executeSql(`UPDATE outbox_resource_receipts SET projected=1 WHERE EXISTS (
+    await this.store.executeSql(`UPDATE outbox_resource_receipts SET projected=1 WHERE projected=0 AND (EXISTS (
       SELECT 1 FROM projection_utterances p WHERE p.resource_id=outbox_resource_receipts.resource_id AND p.revision>=outbox_resource_receipts.target_revision)
       OR EXISTS (SELECT 1 FROM projection_tombstones t WHERE t.resource_type='utterance'
-        AND t.resource_id=outbox_resource_receipts.resource_id AND t.revision>=outbox_resource_receipts.target_revision)`);
-    const result = await this.store.querySql('SELECT operation_id, payload_json FROM outbox WHERE applied_revision IS NOT NULL');
-    const completed: Array<string> = [];
-    try {
-      while (result.goToNextRow()) {
-        const payload = JSON.parse(result.getString(1)) as OperationDependencies;
-        const projected = await this.projectedResourceIds(result.getString(0));
-        if ((payload.selections ?? []).every((s): boolean => projected.indexOf(s.utterance_id) >= 0)) {
-          completed.push(result.getString(0));
-        }
-      }
-    } finally { result.close(); }
-    for (let id of completed) { await this.store.executeSql('DELETE FROM outbox WHERE operation_id = ?', [id]); }
+        AND t.resource_id=outbox_resource_receipts.resource_id AND t.revision>=outbox_resource_receipts.target_revision))`);
+    await this.store.executeSql(`DELETE FROM outbox WHERE applied_revision IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM json_each(outbox.payload_json,'$.selections') selection
+        WHERE NOT EXISTS (SELECT 1 FROM outbox_resource_receipts receipt
+          WHERE receipt.operation_id=outbox.operation_id
+            AND receipt.resource_id=json_extract(selection.value,'$.utterance_id') AND receipt.projected=1))`);
     await this.store.executeSql('DELETE FROM outbox_resource_receipts WHERE operation_id NOT IN (SELECT operation_id FROM outbox)');
   }
 
@@ -690,6 +769,28 @@ async function migrate(store: relationalStore.RdbStore): Promise<void> {
       await store.executeSql(`CREATE TRIGGER IF NOT EXISTS outbox_selection_delete AFTER DELETE ON outbox BEGIN
         DELETE FROM outbox_selections WHERE operation_id=OLD.operation_id; END`);
       store.version = 11;
+    }
+    if (store.version < 12) {
+      // SQLite indexes keep rowid as the tie breaker for equal timestamps.
+      await store.executeSql('CREATE INDEX IF NOT EXISTS outbox_created_at ON outbox(created_at)');
+      store.version = 12;
+    }
+    if (store.version < 13) {
+      await store.executeSql(`CREATE TABLE IF NOT EXISTS local_session_completions (
+        session_key TEXT PRIMARY KEY, source TEXT NOT NULL, completed_segments INTEGER NOT NULL,
+        total_samples INTEGER NOT NULL, confirmed_at INTEGER NOT NULL,
+        manifest_sha256 TEXT NOT NULL DEFAULT '')`);
+      store.version = 13;
+    }
+    if (store.version < 14) {
+      await store.executeSql(
+        'ALTER TABLE local_session_completions ADD COLUMN input_revision INTEGER NOT NULL DEFAULT 1');
+      await store.executeSql(`CREATE TABLE IF NOT EXISTS local_session_failures (
+        session_key TEXT PRIMARY KEY, manifest_sha256 TEXT NOT NULL,
+        category TEXT NOT NULL, reason TEXT NOT NULL,
+        attempt_count INTEGER NOT NULL, retry_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL)`);
+      store.version = 14;
     }
     store.commit();
   } catch (error) {

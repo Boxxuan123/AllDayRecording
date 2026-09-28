@@ -22,6 +22,8 @@ export class PhoneV3LocalAudioRepository implements PhoneV3LocalAudioRepositoryP
     const groups: Array<PhoneV3LocalAudioFact> = [];
     for (let index = 0; index < recordings.length; index += 1) {
       const recording = recordings[index];
+      if (!recording.fileName.toLowerCase().endsWith('.wav') &&
+        !recording.fileName.toLowerCase().endsWith('.m4a')) { continue; }
       const directory = sessionDirectory(recording);
       const startedAt = sessionStartedAt(directory, recording.receivedAt);
       const sessionKey = directory.length > 0 ? `watch-session:${startedAt}` : `file:${recording.path}`;

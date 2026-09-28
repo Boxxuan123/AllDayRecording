@@ -294,7 +294,7 @@ export struct PhoneV3SessionDetailPage {
             .fontColor($r('app.color.text_secondary'))
             .layoutWeight(1)
           ChipV2({
-            chipV2Options: phoneV3StatusChip(session.sessionId.length > 0 ? '已备份' : '本地')
+            chipV2Options: phoneV3StatusChip(session.uploadStatus === 'uploaded' ? '已备份' : '本地')
           })
         }
         .width('100%')

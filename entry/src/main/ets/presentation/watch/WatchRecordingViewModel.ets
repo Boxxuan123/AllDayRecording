@@ -131,6 +131,9 @@ export class WatchRecordingViewModel {
         }
         this.transferSender?.enqueueAutomatic(recording);
       },
+      onSessionFinalized: (summary: RecordingFile): void => {
+        this.transferSender?.enqueueAutomatic(summary);
+      },
       onSessionError: (message: string): void => {
         if (!this.lifecycle.isActive(token)) {
           return;

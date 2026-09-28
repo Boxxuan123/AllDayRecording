@@ -6,7 +6,8 @@ import {
 } from '../../computer/ComputerRecordingBackupService';
 import {
   ComputerUploadProgress,
-  computerDeviceName
+  computerDeviceName,
+  computerTransferTimezone
 } from '../../computer/ComputerRecordingUploadService';
 import {
   ComputerTransferConfig,
@@ -22,8 +23,10 @@ import {
   parseComputerPairingBootstrap
 } from '../../computer/ComputerTransferProtocol';
 import { prepareComputerSessions } from '../../computer/ComputerSessionManifest';
+import { PreparedComputerSession } from '../../computer/ComputerSessionManifest';
 import { recordingsNeedingComputerBackup } from '../../v3/data/PhoneV3ComputerBackup';
 import { PhoneV3RecordingStore } from '../../v3/runtime/PhoneV3RecordingStore';
+import { PhoneSessionCompletionRecord, PhoneSessionTransferFailure } from '../../v3/domain/PhoneV3Models';
 import { PhonePasskeyClient } from '../../computer/PhonePasskeyClient';
 import {
   PhoneProjectionRepository,
@@ -35,6 +38,12 @@ interface PhoneProcessingProjection {
   status?: string;
   current_stage?: string;
   progress?: number;
+}
+
+export interface LegacyCompletionCandidate {
+  sessionKey: string;
+  completedSegments: number;
+  totalSamples: number;
 }
 
 @Observed
@@ -50,10 +59,13 @@ export class PhoneComputerTransferViewModel {
   busy: boolean = false;
   paired: boolean = false;
   progressPercent: number = 0;
+  uploadProgressActive: boolean = false;
   completedFiles: number = 0;
   totalFiles: number = 0;
   availableSessions: number = 0;
   availableRecordings: number = 0;
+  legacyCandidates: Array<LegacyCompletionCandidate> = [];
+  transferFailures: Array<PhoneSessionTransferFailure> = [];
   pendingOperations: number = 0;
   syncCursor: string = 'cursor-0';
   cachedProcessingStatus: string = '暂无已同步处理状态';
@@ -62,9 +74,11 @@ export class PhoneComputerTransferViewModel {
   private store: ComputerTransferConfigStore | undefined = undefined;
   private config: ComputerTransferConfig = new ComputerTransferConfig();
   private recordings: Array<ReceivedRecordingFile> = [];
+  private knownCompletions: Array<PhoneSessionCompletionRecord> = [];
   private importedCaPath: string = '';
   private projectionPromise: Promise<PhoneProjectionRepository> | undefined = undefined;
   private retryTimer: number = -1;
+  private uploadGeneration: number = 0;
 
   async pairFromQr(value: string): Promise<void> {
     const context = this.requireContext();
@@ -104,6 +118,11 @@ export class PhoneComputerTransferViewModel {
     this.store = new ComputerTransferConfigStore(context);
     this.projectionPromise = PhoneProjectionRepository.open(context);
     this.refreshRecordings();
+    this.requireProjection().then(async (repository: PhoneProjectionRepository): Promise<void> => {
+      this.knownCompletions = await repository.localSessionCompletions();
+      this.transferFailures = await repository.localSessionFailures();
+      this.updateRecordings(this.recordings);
+    }, (): void => {});
     this.loadState(context);
   }
 
@@ -122,11 +141,55 @@ export class PhoneComputerTransferViewModel {
         count += sessions[index].recordings.length;
       }
       this.availableRecordings = count;
+      this.legacyCandidates = sessions.filter((session: PreparedComputerSession): boolean =>
+        !session.canCommit() && session.manifest.continuityValid &&
+        !this.knownCompletions.some((record: PhoneSessionCompletionRecord): boolean =>
+          record.sessionKey === session.manifest.sessionKey &&
+          (record.manifestSha256.length > 0 ||
+            (record.completedSegments === session.manifest.completedSegments &&
+              record.totalSamples === session.manifest.totalSamples))) &&
+        !this.recordings.some((file: ReceivedRecordingFile): boolean =>
+          file.sourcePath === `${session.directory}/session_summary.json`))
+        .map((session: PreparedComputerSession): LegacyCompletionCandidate => ({
+          sessionKey: session.manifest.sessionKey,
+          completedSegments: session.manifest.completedSegments,
+          totalSamples: session.manifest.totalSamples
+        }));
     } catch (error) {
       this.availableSessions = 0;
       this.availableRecordings = 0;
+      this.legacyCandidates = [];
       this.status = computerTransferError(error as Object).message;
     }
+  }
+
+  async confirmLegacySession(sessionKey: string): Promise<void> {
+    try {
+      this.refreshRecordings();
+      const candidate = this.legacyCandidates.find((item: LegacyCompletionCandidate): boolean =>
+        item.sessionKey === sessionKey);
+      if (candidate === undefined) { throw new Error('此会话已有结束记录或分片状态已变化，请刷新'); }
+      const projection = await this.requireProjection();
+      const existing = (await projection.localSessionCompletions()).find(
+        (record: PhoneSessionCompletionRecord): boolean => record.sessionKey === sessionKey);
+      if (existing !== undefined && existing.manifestSha256.length > 0) {
+        throw new Error('旧录音已获电脑整场回执；迟到分片需要走修复流程');
+      }
+      if (existing !== undefined && existing.completedSegments === candidate.completedSegments &&
+        existing.totalSamples === candidate.totalSamples) {
+        throw new Error('此旧录音已经确认，不能重复覆盖回执');
+      }
+      const confirmation: PhoneSessionCompletionRecord = {
+        sessionKey: candidate.sessionKey, source: 'legacy_user_confirmed',
+        completedSegments: candidate.completedSegments, totalSamples: candidate.totalSamples,
+        confirmedAt: Date.now(), manifestSha256: ''
+      };
+      await projection.recordSessionCompletion(confirmation);
+      this.knownCompletions.push(confirmation);
+      this.legacyCandidates = this.legacyCandidates.filter((item: LegacyCompletionCandidate): boolean =>
+        item.sessionKey !== sessionKey);
+      this.status = `已确认旧录音 ${candidate.completedSegments} 片，${candidate.totalSamples} 样本；请上传以取得电脑整场回执`;
+    } catch (error) { this.status = computerTransferError(error as Object).message; }
   }
 
   async importCa(uri: string): Promise<void> {
@@ -187,12 +250,14 @@ export class PhoneComputerTransferViewModel {
     }
   }
 
-  async upload(): Promise<void> {
+  async upload(onlySessionKey: string = ''): Promise<void> {
     const context = this.requireContext();
     if (this.busy) {
       return;
     }
     this.busy = true;
+    this.uploadProgressActive = true;
+    const uploadGeneration = ++this.uploadGeneration;
     this.progressPercent = 0;
     this.completedFiles = 0;
     this.totalFiles = 0;
@@ -200,36 +265,71 @@ export class PhoneComputerTransferViewModel {
       this.refreshRecordings();
       this.status = '正在自动发现已配对电脑…';
       const projection = await this.requireProjection();
-      const pending = recordingsNeedingComputerBackup(this.recordings, await projection.localAudioLinks());
+      const completions = await projection.localSessionCompletions();
+      const links = await projection.localAudioLinks();
+      let pending = await recordingsNeedingComputerBackup(this.recordings, links, completions);
+      if (onlySessionKey.length > 0) {
+        const selected = prepareComputerSessions(pending, computerTransferTimezone(), completions)
+          .find((session: PreparedComputerSession): boolean => session.manifest.sessionKey === onlySessionKey);
+        pending = selected === undefined ? [] : pending.filter((recording: ReceivedRecordingFile): boolean =>
+          recording.sourcePath.startsWith(`${selected.directory}/`));
+      }
       if (pending.length === 0) {
-        this.status = '全部录音已备份到电脑，正在同步处理状态…';
+        if (onlySessionKey.length > 0) {
+          this.status = '此录音的当前完整清单已确认，或录音文件尚未齐全';
+          return;
+        }
+        this.status = '已同步，没有新录音';
         const connected = await new ComputerRecordingBackupRuntime(context).connect();
         this.applyConfig(connected);
         await new PhoneSyncCoordinator(new ComputerTransferHttpClient(context, connected.baseUrl,
           connected.caPath, connected.deviceId), projection).synchronize();
         this.cancelRetry();
         await this.refreshProjectionStatus(projection);
-        this.progressPercent = 100;
-        this.status = '全部录音已备份，处理状态同步完成';
+        this.status = '已同步，没有新录音';
         return;
       }
-      const outcome = await createComputerRecordingBackupService(context, projection)
-        .backup(pending, (progress: ComputerUploadProgress): void => {
-          this.progressPercent = progress.percent();
-          this.completedFiles = progress.completedFiles;
-          this.totalFiles = progress.totalFiles;
-          this.status = progress.message;
-        });
-      this.applyConfig(outcome.config);
-      const result = outcome.upload;
-      this.progressPercent = 100;
-      const newFiles = result.recordings + result.manifests - result.skippedFiles;
-      this.status = `上传检查完成：新增 ${newFiles} 个文件，电脑已有并跳过 ${result.skippedFiles} 个；` +
-        `共 ${result.sessions} 个会话，手机原文件已保留`;
+      const sessions = prepareComputerSessions(pending, computerTransferTimezone(), completions);
+      let connected: ComputerTransferConfig | undefined = undefined;
+      let newFiles = 0;
+      let skippedFiles = 0;
+      let confirmedSessions = 0;
+      const errors: Array<string> = [];
+      for (let index = 0; index < sessions.length; index += 1) {
+        const session = sessions[index];
+        const files = pending.filter((recording: ReceivedRecordingFile): boolean =>
+          recording.sourcePath.startsWith(`${session.directory}/`));
+        try {
+          const outcome = await createComputerRecordingBackupService(context, projection)
+            .backup(files, (progress: ComputerUploadProgress): void => {
+              if (uploadGeneration !== this.uploadGeneration) { return; }
+              this.progressPercent = progress.stage === 'uploading' ? progress.percent() : 0;
+              this.uploadProgressActive = progress.stage === 'uploading';
+              this.completedFiles = progress.completedFiles;
+              this.totalFiles = progress.totalFiles;
+              this.status = progress.message;
+            }, completions, await projection.localAudioLinks(), await projection.localSessionFailures());
+          connected = outcome.config;
+          const uploaded = outcome.upload;
+          newFiles += uploaded.recordings + uploaded.manifests - uploaded.skippedFiles;
+          skippedFiles += uploaded.skippedFiles;
+          confirmedSessions += uploaded.sessions;
+        } catch (error) {
+          errors.push(`${session.directory}：${computerTransferError(error as Object).message}`);
+        }
+      }
+      this.knownCompletions = await projection.localSessionCompletions();
+      this.updateRecordings(this.recordings);
+      this.uploadProgressActive = false;
+      this.status = `上传检查完成：新增 ${newFiles} 个文件，电脑已有并跳过 ${skippedFiles} 个；` +
+        `${confirmedSessions} 个会话已获得整场备份确认` +
+        (errors.length > 0 ? `；${errors.length} 条录音待处理：${errors.join('；')}` : '');
+      if (connected === undefined) { return; }
+      this.applyConfig(connected);
       try {
         const sync = await new PhoneSyncCoordinator(
-          new ComputerTransferHttpClient(context, outcome.config.baseUrl,
-            outcome.config.caPath, outcome.config.deviceId),
+          new ComputerTransferHttpClient(context, connected.baseUrl,
+            connected.caPath, connected.deviceId),
           projection).synchronize();
         await this.refreshProjectionStatus(projection);
         this.cancelRetry();
@@ -242,6 +342,13 @@ export class PhoneComputerTransferViewModel {
     } catch (error) {
       this.status = computerTransferError(error as Object).message;
     } finally {
+      if (uploadGeneration === this.uploadGeneration) {
+        this.uploadProgressActive = false;
+        this.progressPercent = 0;
+        this.uploadGeneration += 1;
+      }
+      try { this.transferFailures = await (await this.requireProjection()).localSessionFailures(); }
+      catch (_error) {}
       this.busy = false;
     }
   }

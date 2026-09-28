@@ -12,6 +12,7 @@ import {
   PCM_RECORDING_SEGMENT_BYTES,
   PCM_RECORDING_SEGMENT_SAMPLES,
   PcmSessionMetrics,
+  PCM_RECORDING_SUMMARY_FILE_NAME,
   pcmRecordingSessionDirectory
 } from '../recording/PcmRecordingContract';
 import { PcmSessionSummaryStore } from '../recording/PcmSessionSummaryStore';
@@ -22,6 +23,7 @@ export interface PcmSegmentedRecordingCallbacks {
   onSegmentCompleted: (recording: RecordingFile, completedCount: number,
     firstSample: number, sampleCount: number) => void;
   onSessionError: (message: string) => void;
+  onSessionFinalized?: (summary: RecordingFile) => void;
 }
 
 export class PcmSegmentedRecordingService {
@@ -396,6 +398,13 @@ export class PcmSegmentedRecordingService {
       capturerBufferSizeBytes: this.capturerBufferSizeBytes
     };
     this.summaryStore.write(this.sessionDirectory, metrics);
+    const path = `${this.sessionDirectory}/${PCM_RECORDING_SUMMARY_FILE_NAME}`;
+    this.callbacks.onSessionFinalized?.({
+      fileName: PCM_RECORDING_SUMMARY_FILE_NAME,
+      path: path,
+      size: fileIo.statSync(path).size,
+      durationMs: 0
+    });
   }
 
   private businessErrorMessage(error: Object): string {

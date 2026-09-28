@@ -25,7 +25,7 @@ export struct PhoneV3SyncCenterPage {
 
   @Builder
   private watchProgress(transfer: PhoneV3FileTransferState) {
-    if (this.viewModel.device.watchSyncing || transfer.active) {
+    if (transfer.active) {
       Column({ space: 8 }) {
         Row() {
           Text(transfer.stage.length > 0 ? transfer.stage : transfer.message)
@@ -81,7 +81,7 @@ export struct PhoneV3SyncCenterPage {
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.text_primary'))
               Text(this.viewModel.device.watchSyncing ?
-                `正在接收 ${this.viewModel.device.watchReceived}/${this.viewModel.device.watchTotal}` :
+                `正在接收录音，已收到 ${this.viewModel.device.watchReceived} 片` :
                 '接收后保存在手机')
                 .fontSize(13)
                 .fontColor($r('app.color.text_secondary'))
@@ -92,7 +92,7 @@ export struct PhoneV3SyncCenterPage {
           .width('100%')
 
           Text(this.viewModel.device.watchSyncing ?
-            `正在接收 ${this.viewModel.device.watchReceived}/${this.viewModel.device.watchTotal}` :
+            `正在接收录音，已收到 ${this.viewModel.device.watchReceived} 片` :
             '稳定接收适合日常使用；同一 Wi-Fi 下可使用快传')
             .width('100%')
             .fontSize(13)
@@ -198,7 +198,11 @@ export struct PhoneV3SyncCenterPage {
             .fontSize(13).width('100%')
           Text(`标注与状态：${this.viewModel.computerSyncActive ? '同步中' : '等待更新'} · ${this.viewModel.snapshot.sync.pendingOperations} 项待同步`)
             .id('light-sync-state').fontSize(13)
-          Text(this.viewModel.backupError || this.viewModel.backupMessage || '录音：等待备份')
+          Text(this.viewModel.backupError.length > 0 ?
+            `${this.viewModel.backupFailureCategory === 'conflict' ? '清单冲突' : '备份失败'}：${this.viewModel.backupError}` :
+            this.viewModel.device.watchSyncing && !this.viewModel.backupActive ?
+              `正在接收录音，已收到 ${this.viewModel.device.watchReceived} 片` :
+              this.viewModel.backupMessage || '录音：等待备份')
             .id('backup-sync-state').fontSize(13)
           Text(`标注上次成功：${this.viewModel.lightSuccessAt > 0 ? new Date(this.viewModel.lightSuccessAt).toLocaleTimeString() : '暂无'}`)
             .fontSize(12)
@@ -228,7 +232,8 @@ export struct PhoneV3SyncCenterPage {
             .buttonStyle(ButtonStyleMode.NORMAL)
             .onClick((): void => this.onOpenComputerConnection())
 
-          if (this.viewModel.computerProgress.totalFiles > 0) {
+          if (this.viewModel.backupActive && this.viewModel.computerProgress.stage === 'uploading' &&
+            this.viewModel.computerProgress.totalBytes > 0) {
             if (this.viewModel.computerProgress.activeFiles.length > 0) {
               Text('并行文件：\n' + this.viewModel.computerProgress.activeFiles.join('\n'))
                 .width('100%').fontSize(11).maxLines(6)

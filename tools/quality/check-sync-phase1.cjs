@@ -61,7 +61,7 @@ const wait=async predicate=>{const end=Date.now()+3000;while(!predicate()){asser
   assert.equal((await repo.annotationOperations([id(1)])).length,before);assert.equal((await repo.cachedPeople()).length,0);
   if(history===0) store.db.exec('DROP TRIGGER outbox_selection_insert; DROP TRIGGER outbox_selection_delete; DROP TABLE outbox_selections; PRAGMA user_version=10');
   store.db.close();const reopened=await Repository.open({databasePath:file});assert.equal((await reopened.annotationOperations([id(1)])).length,before);
-  assert.equal(stores.at(-1).version,11);
+  assert.equal(stores.at(-1).version,12);
   stores.at(-1).db.close();
  }
  console.log('PASS scale-independent target/dependency queries, zero scans/network, duplicate guard, rollback, restart, interleaved writes and older revisions');

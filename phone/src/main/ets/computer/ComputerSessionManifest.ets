@@ -6,9 +6,34 @@ import {
   ReceivedRecordingFile,
   WAV_HEADER_BYTES
 } from 'common';
+import { fileIo } from '@kit.CoreFileKit';
+import { PhoneSessionCompletionRecord } from '../v3/domain/PhoneV3Models';
 
 export const COMPUTER_SESSION_MANIFEST_FILE: string = 'session_summary.json';
-export const COMPUTER_SESSION_MANIFEST_FORMAT: string = 'AllDayRecording session manifest v1';
+export const COMPUTER_SESSION_MANIFEST_FORMAT: string = 'AllDayRecording session manifest v2';
+
+export interface ComputerManifestCompletion {
+  source: string;
+  completedSegments: number;
+  totalSamples: number;
+  confirmedAt: number;
+}
+
+interface WatchSummarySegment {
+  index: number;
+  fileName: string;
+  firstSample: number;
+  sampleCount: number;
+}
+
+interface WatchSummary {
+  format: string;
+  sessionStartedAt: number;
+  completedSegments: number;
+  totalSamples: number;
+  continuityValid: boolean;
+  segments: Array<WatchSummarySegment>;
+}
 
 export interface ComputerManifestChunk {
   index: number;
@@ -28,6 +53,7 @@ export interface ComputerSessionManifest {
   completedSegments: number;
   totalSamples: number;
   continuityValid: boolean;
+  completion?: ComputerManifestCompletion;
 }
 
 export interface ComputerManifestAudio {
@@ -50,10 +76,15 @@ export class PreparedComputerSession {
   manifestRelativePath(): string {
     return `${this.directory}/${COMPUTER_SESSION_MANIFEST_FILE}`;
   }
+
+  canCommit(): boolean {
+    return this.manifest.continuityValid && this.manifest.completion !== undefined;
+  }
 }
 
 export function prepareComputerSessions(recordings: Array<ReceivedRecordingFile>,
-  timezone: string = 'Asia/Singapore'): Array<PreparedComputerSession> {
+  timezone: string = 'Asia/Singapore',
+  completions: Array<PhoneSessionCompletionRecord> = []): Array<PreparedComputerSession> {
   const grouped = new Map<string, Array<ReceivedRecordingFile>>();
   for (let index = 0; index < recordings.length; index += 1) {
     const recording = recordings[index];
@@ -68,7 +99,7 @@ export function prepareComputerSessions(recordings: Array<ReceivedRecordingFile>
 
   const sessions: Array<PreparedComputerSession> = [];
   grouped.forEach((files: Array<ReceivedRecordingFile>, directory: string): void => {
-    sessions.push(prepareOneSession(directory, files, timezone));
+    sessions.push(prepareOneSession(directory, files, timezone, recordings, completions));
   });
   sessions.sort((left: PreparedComputerSession, right: PreparedComputerSession): number =>
     left.manifest.sessionStartedAt - right.manifest.sessionStartedAt);
@@ -76,7 +107,8 @@ export function prepareComputerSessions(recordings: Array<ReceivedRecordingFile>
 }
 
 function prepareOneSession(directory: string, recordings: Array<ReceivedRecordingFile>,
-  timezone: string): PreparedComputerSession {
+  timezone: string, allFiles: Array<ReceivedRecordingFile>,
+  completions: Array<PhoneSessionCompletionRecord>): PreparedComputerSession {
   const chunks: Array<ComputerManifestChunk> = [];
   const ordered = recordings.slice();
   const isRestoredSession = directory.startsWith('restored_auto_');
@@ -110,9 +142,12 @@ function prepareOneSession(directory: string, recordings: Array<ReceivedRecordin
     previousRestoredIndex = restoredIndex;
   }
   const startedAt = sessionStartedAt(directory);
+  const sessionKey = `watch-session:${startedAt}`;
+  const completion = verifiedCompletion(directory, startedAt, chunks, totalSamples,
+    continuityValid, allFiles, completions, sessionKey);
   return new PreparedComputerSession(directory, ordered, {
     format: COMPUTER_SESSION_MANIFEST_FORMAT,
-    sessionKey: `watch-session:${startedAt}`,
+    sessionKey: sessionKey,
     sessionStartedAt: startedAt,
     device: 'HUAWEI WATCH 5',
     timezone: timezone,
@@ -124,8 +159,47 @@ function prepareOneSession(directory: string, recordings: Array<ReceivedRecordin
     chunks: chunks,
     completedSegments: chunks.length,
     totalSamples: totalSamples,
-    continuityValid: continuityValid
+    continuityValid: continuityValid,
+    completion: completion
   });
+}
+
+function verifiedCompletion(directory: string, startedAt: number,
+  chunks: Array<ComputerManifestChunk>, totalSamples: number, continuityValid: boolean,
+  allFiles: Array<ReceivedRecordingFile>, records: Array<PhoneSessionCompletionRecord>,
+  sessionKey: string): ComputerManifestCompletion | undefined {
+  if (!continuityValid || chunks.length === 0) { return undefined; }
+  const summaryFile = allFiles.find((file: ReceivedRecordingFile): boolean =>
+    file.sourcePath === `${directory}/session_summary.json`);
+  if (summaryFile !== undefined) {
+    try {
+      const summary = JSON.parse(fileIo.readTextSync(summaryFile.path)) as WatchSummary;
+      if (summary.format !== 'AllDayRecording PCM gap test v1' ||
+        summary.sessionStartedAt !== startedAt || summary.continuityValid !== true ||
+        summary.completedSegments !== chunks.length || summary.totalSamples !== totalSamples ||
+        !Array.isArray(summary.segments) || summary.segments.length !== chunks.length) {
+        return undefined;
+      }
+      for (let index = 0; index < chunks.length; index += 1) {
+        const original = summary.segments[index];
+        const received = chunks[index];
+        if (original.index !== received.index || original.fileName !== received.fileName ||
+          original.firstSample !== received.firstSample || original.sampleCount !== received.sampleCount) {
+          return undefined;
+        }
+      }
+      return { source: 'watch_stop', completedSegments: chunks.length,
+        totalSamples: totalSamples, confirmedAt: summaryFile.receivedAt };
+    } catch (_error) { return undefined; }
+  }
+  const legacy = records.find((record: PhoneSessionCompletionRecord): boolean =>
+    record.sessionKey === sessionKey && record.source === 'legacy_user_confirmed');
+  if (legacy !== undefined && legacy.completedSegments === chunks.length &&
+    legacy.totalSamples === totalSamples && legacy.confirmedAt > 0) {
+    return { source: 'legacy_user_confirmed', completedSegments: chunks.length,
+      totalSamples: totalSamples, confirmedAt: legacy.confirmedAt };
+  }
+  return undefined;
 }
 
 function parseSegment(recording: ReceivedRecordingFile): ComputerManifestChunk {

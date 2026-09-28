@@ -9,15 +9,17 @@ import {
   COMPUTER_UPLOAD_CHUNK_BYTES,
   ComputerStatusResponse,
   ComputerUploadMetadata,
-  ComputerUploadRecord
+  ComputerUploadRecord,
+  confirmedComputerSessionId
 } from './ComputerTransferProtocol';
 import { ComputerTransferConfig, ComputerTransferConfigStore } from './ComputerTransferConfigStore';
 import { verifyConfiguration } from './ComputerReceiverConnection';
-import { ComputerTransferHttpClient, sha256Hex } from './ComputerTransferHttpClient';
+import { ComputerHttpError, ComputerTransferHttpClient, sha256Hex } from './ComputerTransferHttpClient';
 import {
   PreparedComputerSession,
   prepareComputerSessions
 } from './ComputerSessionManifest';
+import { PhoneSessionCompletionRecord, PhoneV3LocalAudioLink } from '../v3/domain/PhoneV3Models';
 
 export type ComputerUploadProgressHandler = (progress: ComputerUploadProgress) => void;
 
@@ -30,14 +32,16 @@ export class ComputerUploadProgress {
   totalFiles: number;
   transferredBytes: number;
   totalBytes: number;
+  stage: string;
 
   constructor(message: string, completedFiles: number, totalFiles: number,
-    transferredBytes: number, totalBytes: number) {
+    transferredBytes: number, totalBytes: number, stage: string = 'verifying') {
     this.message = message;
     this.completedFiles = completedFiles;
     this.totalFiles = totalFiles;
     this.transferredBytes = transferredBytes;
     this.totalBytes = totalBytes;
+    this.stage = stage;
   }
 
   percent(): number {
@@ -65,10 +69,14 @@ export class ComputerUploadResult {
 class ComputerFileUploadResult {
   upload: ComputerUploadRecord;
   skipped: boolean;
+  sessionId: string;
+  inputRevision: number;
 
-  constructor(upload: ComputerUploadRecord, skipped: boolean) {
+  constructor(upload: ComputerUploadRecord, skipped: boolean, sessionId: string = '', inputRevision: number = 1) {
     this.upload = upload;
     this.skipped = skipped;
+    this.sessionId = sessionId;
+    this.inputRevision = inputRevision;
   }
 }
 
@@ -96,15 +104,22 @@ export class ComputerRecordingUploadService {
   }
 
   async upload(recordings: Array<ReceivedRecordingFile>, onProgress: ComputerUploadProgressHandler,
-    onSessionCompleted: (session: PreparedComputerSession) => Promise<void> = async (): Promise<void> => {}):
+    onSessionCompleted: (session: PreparedComputerSession, upload: ComputerUploadRecord,
+      inputRevision: number) => Promise<void> =
+      async (): Promise<void> => {},
+    onFileCompleted: (session: PreparedComputerSession, recording: ReceivedRecordingFile,
+      upload: ComputerUploadRecord) => Promise<void> = async (): Promise<void> => {},
+    completions: Array<PhoneSessionCompletionRecord> = [],
+    links: Array<PhoneV3LocalAudioLink> = []):
     Promise<ComputerUploadResult> {
-    const sessions = prepareComputerSessions(recordings, currentTimezone());
+    const sessions = prepareComputerSessions(recordings, computerTransferTimezone(), completions);
     if (sessions.length === 0) {
       throw new Error('没有可上传的手表分段录音');
     }
-    const manifests = prepareManifests(sessions);
+    const manifests = prepareManifests(sessions.filter((session: PreparedComputerSession): boolean =>
+      session.canCommit()));
     const totalFiles = recordingsInSessions(sessions) + manifests.length;
-    const totalBytes = bytesInSessions(sessions) + manifestBytes(manifests);
+    let totalBytes = 0;
     const status = await this.client.status();
     verifyStatus(status);
     verifyFileSizes(sessions, manifests, status.max_file_bytes);
@@ -112,11 +127,26 @@ export class ComputerRecordingUploadService {
     let completedFiles = 0;
     let transferredBytes = 0;
     let skippedFiles = 0;
+    let committedSessions = 0;
     const concurrency = new ComputerUploadConcurrency();
+    const knownReceipts = new Map<string, PhoneV3LocalAudioLink>();
+    links.forEach((link: PhoneV3LocalAudioLink): void => {
+      if (link.uploadStatus === 'uploaded' && /^[0-9a-fA-F]{64}$/.test(link.sha256)) {
+        knownReceipts.set(`${link.sessionKey}\u0000${link.localPath}`, link);
+      }
+    });
+    sessions.forEach((session: PreparedComputerSession): void => {
+      session.recordings.forEach((recording: ReceivedRecordingFile): void => {
+        if (!knownReceipts.has(`${session.manifest.sessionKey}\u0000${recording.path}`)) {
+          totalBytes += recording.size;
+        }
+      });
+    });
 
     for (let sessionIndex = 0; sessionIndex < sessions.length; sessionIndex += 1) {
       await verifyConfiguration(this.store, this.config);
       const session = sessions[sessionIndex];
+      const locallySkipped: Array<ReceivedRecordingFile> = [];
       const activeFiles = new Map<number, string>();
       const report = (progress: ComputerUploadProgress): void => {
         progress.activeFiles = Array.from(activeFiles.values());
@@ -130,21 +160,34 @@ export class ComputerRecordingUploadService {
         let acknowledgedOffset = 0;
         let initialOffset = -1;
         activeFiles.set(recordingIndex, recording.fileName);
-        report(new ComputerUploadProgress(`并行校验 / 上传（当前上限 ${concurrency.limit} 个）`,
+        report(new ComputerUploadProgress(`正在核对已有文件（当前上限 ${concurrency.limit} 个）`,
           completedFiles, totalFiles, transferredBytes, totalBytes));
         try {
-          const result = await this.uploadRecording(recording, chunkBytes,
+          const receipt = knownReceipts.get(`${session.manifest.sessionKey}\u0000${recording.path}`);
+          const result = receipt === undefined ? await this.uploadRecording(recording, chunkBytes,
             (remoteOffset: number): void => {
               if (initialOffset < 0) {
                 initialOffset = remoteOffset;
+                totalBytes -= remoteOffset;
+                acknowledgedOffset = remoteOffset;
+                report(new ComputerUploadProgress('正在核对已有文件',
+                  completedFiles, totalFiles, transferredBytes, totalBytes));
+                return;
               }
               transferredBytes += remoteOffset - acknowledgedOffset;
               acknowledgedOffset = remoteOffset;
               report(new ComputerUploadProgress(`正在上传 ${recording.fileName}`,
-                completedFiles, totalFiles, transferredBytes, totalBytes));
-            }, (): void => { concurrency.congested(Date.now()); });
+                completedFiles, totalFiles, transferredBytes, totalBytes, 'uploading'));
+            }, (): void => { concurrency.congested(Date.now()); }) :
+            completedLocalUpload(recording, receipt);
+          if (receipt !== undefined) {
+            locallySkipped.push(recording);
+          }
           if (result.skipped) {
             skippedFiles += 1;
+          }
+          if (receipt === undefined) {
+            await onFileCompleted(session, recording, result.upload);
           }
           completedFiles += 1;
           activeFiles.delete(recordingIndex);
@@ -156,17 +199,56 @@ export class ComputerRecordingUploadService {
           activeFiles.delete(recordingIndex);
         }
       });
-      const manifest = manifests[sessionIndex];
-      const beforeManifest = transferredBytes;
-      report(new ComputerUploadProgress('正在校验并提交会话清单', completedFiles, totalFiles,
-        transferredBytes, totalBytes));
-      const result = await this.uploadBytes(manifest.relativePath, manifest.bytes, 'manifest', chunkBytes,
-        (remoteOffset: number): void => {
+      if (!session.canCommit()) {
+        const hasSummary = recordings.some((file: ReceivedRecordingFile): boolean =>
+          file.sourcePath === `${session.directory}/session_summary.json`);
+        const explanation = !session.manifest.continuityValid ?
+          '分片已到电脑，但样本位置不连续，整场未确认' : hasSummary ?
+            '手表结束记录与已收分片不符，请继续同步缺片' :
+            '分片已备份，等待手表结束记录或明确的旧录音确认';
+        report(new ComputerUploadProgress(explanation,
+          completedFiles, totalFiles, transferredBytes, totalBytes));
+        continue;
+      }
+      const manifest = prepareManifests([session])[0];
+      report(new ComputerUploadProgress('音频已传完，正在确认完整录音', completedFiles, totalFiles,
+        transferredBytes, totalBytes, 'confirming'));
+      const submitManifest = (): Promise<ComputerFileUploadResult> =>
+        this.uploadBytes(manifest.relativePath, manifest.bytes, 'manifest', chunkBytes,
+          (remoteOffset: number): void => {
           report(new ComputerUploadProgress(
-            `正在提交 ${session.directory} 会话清单`, completedFiles, totalFiles,
-            beforeManifest + remoteOffset, totalBytes));
+            `音频已传完，正在确认完整录音`, completedFiles, totalFiles,
+            transferredBytes, totalBytes, 'confirming'));
         });
-      transferredBytes = beforeManifest + result.upload.offset;
+      let result: ComputerFileUploadResult;
+      try {
+        result = await submitManifest();
+      } catch (error) {
+        if (!(error instanceof ComputerHttpError) || error.statusCode !== 409 ||
+          !error.message.includes('会话清单引用的录音尚未完整上传') || locallySkipped.length === 0) {
+          throw error as Error;
+        }
+        report(new ComputerUploadProgress('电脑缺少已记录的分片，正在核验并补传',
+          completedFiles, totalFiles, transferredBytes, totalBytes));
+        locallySkipped.forEach((recording: ReceivedRecordingFile): void => { totalBytes += recording.size; });
+        await runAdaptiveComputerUploadQueue(locallySkipped.length, concurrency,
+          async (index: number): Promise<number> => {
+            const recording = locallySkipped[index];
+            let previousOffset = -1;
+            const repaired = await this.uploadRecording(recording, chunkBytes, (offset: number): void => {
+              if (previousOffset < 0) { totalBytes -= offset; previousOffset = offset; return; }
+              transferredBytes += offset - previousOffset;
+              previousOffset = offset;
+              report(new ComputerUploadProgress(`正在补传 ${recording.fileName}`,
+                completedFiles, totalFiles, transferredBytes, totalBytes, 'uploading'));
+            },
+              (): void => { concurrency.congested(Date.now()); });
+            if (!repaired.skipped) { skippedFiles -= 1; }
+            await onFileCompleted(session, recording, repaired.upload);
+            return repaired.skipped ? 0 : repaired.upload.size;
+          });
+        result = await submitManifest();
+      }
       if (result.skipped) {
         skippedFiles += 1;
       }
@@ -175,13 +257,14 @@ export class ComputerRecordingUploadService {
         result.skipped ? `电脑已有，已跳过 ${manifest.relativePath}` :
           `已上传 ${completedFiles}/${totalFiles} 个文件`, completedFiles, totalFiles,
         transferredBytes, totalBytes));
-      await onSessionCompleted(session);
+      await onSessionCompleted(session, result.upload, result.inputRevision);
+      committedSessions += 1;
       const done = new ComputerUploadProgress('会话备份完成', completedFiles, totalFiles,
-        transferredBytes, totalBytes);
+        transferredBytes, totalBytes, 'completed');
       done.sessionCompleted = true;
       report(done);
     }
-    return new ComputerUploadResult(sessions.length, totalFiles - manifests.length, manifests.length, skippedFiles);
+    return new ComputerUploadResult(committedSessions, totalFiles - manifests.length, manifests.length, skippedFiles);
   }
 
   private async uploadRecording(recording: ReceivedRecordingFile, chunkBytes: number,
@@ -249,18 +332,22 @@ export class ComputerRecordingUploadService {
       kind: kind
     };
     await verifyConfiguration(this.store, this.config);
-    let remote = (await this.client.createUpload(metadata)).upload;
+    let response = await this.client.createUpload(metadata);
+    let remote = response.upload;
     verifyRemoteUpload(remote, metadata);
     onOffset(remote.offset);
     if (remote.status === 'completed') {
-      return new ComputerFileUploadResult(remote, true);
+      return new ComputerFileUploadResult(remote, true,
+        confirmedComputerSessionId(response, metadata.sha256),
+        response.automation?.v3?.input_revision ?? 1);
     }
     while (remote.offset < metadata.size) {
       await verifyConfiguration(this.store, this.config);
       const sentOffset = remote.offset;
       const end = Math.min(remote.offset + chunkBytes, metadata.size);
       const chunk = bytes.slice(remote.offset, end);
-      remote = (await this.client.appendUpload(remote.upload_id, remote.offset, chunk)).upload;
+      response = await this.client.appendUpload(remote.upload_id, remote.offset, chunk);
+      remote = response.upload;
       verifyRemoteUpload(remote, metadata);
       if (remote.offset !== end || remote.offset <= sentOffset) {
         throw new Error(`电脑返回了意外的会话清单断点：${relativePath}`);
@@ -270,8 +357,24 @@ export class ComputerRecordingUploadService {
     if (remote.status !== 'completed') {
       throw new Error(`电脑没有确认会话清单完成：${relativePath}`);
     }
-    return new ComputerFileUploadResult(remote, false);
+    return new ComputerFileUploadResult(remote, false,
+      confirmedComputerSessionId(response, metadata.sha256),
+      response.automation?.v3?.input_revision ?? 1);
   }
+}
+
+function completedLocalUpload(recording: ReceivedRecordingFile,
+  receipt: PhoneV3LocalAudioLink): ComputerFileUploadResult {
+  const stat = fileIo.statSync(recording.path);
+  if (!stat.isFile() || stat.size !== recording.size) {
+    throw new Error(`录音文件已改变，请刷新后重试：${recording.fileName}`);
+  }
+  const upload: ComputerUploadRecord = {
+    upload_id: '', relative_path: recording.sourcePath, size: recording.size,
+    sha256: receipt.sha256.toLowerCase(), kind: 'recording',
+    offset: recording.size, status: 'completed'
+  };
+  return new ComputerFileUploadResult(upload, true);
 }
 
 function prepareManifests(sessions: Array<PreparedComputerSession>): Array<PreparedManifestPayload> {
@@ -281,6 +384,10 @@ function prepareManifests(sessions: Array<PreparedComputerSession>): Array<Prepa
     result.push(new PreparedManifestPayload(sessions[index].manifestRelativePath(), bytes));
   }
   return result;
+}
+
+export async function computerSessionManifestSha256(session: PreparedComputerSession): Promise<string> {
+  return sha256Hex(prepareManifests([session])[0].bytes);
 }
 
 function recordingsInSessions(sessions: Array<PreparedComputerSession>): number {
@@ -346,7 +453,7 @@ function verifyRemoteUpload(remote: ComputerUploadRecord, expected: ComputerUplo
   }
 }
 
-function currentTimezone(): string {
+export function computerTransferTimezone(): string {
   try {
     return i18n.getCalendar('zh-CN').getTimeZone();
   } catch (error) {

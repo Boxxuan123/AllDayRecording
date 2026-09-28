@@ -25,6 +25,7 @@ import {
   wifiSecurityProtocolName
 } from '../security/WifiTransferSecurity';
 import { exactWatchFileKey } from '../sync/protocol/WatchFileSyncProtocol';
+import { isRecordingCompletionSourcePath } from '../sync/watch/RecordingCompletionPath';
 import {
   WIFI_SOURCE_ALREADY_ABSENT,
   WIFI_SOURCE_DELETED,
@@ -43,6 +44,7 @@ const PACKET_OVERHEAD_BYTES: number = PACKET_LENGTH_BYTES + FRAME_HEADER_BYTES;
 const WIFI_CHUNK_BYTES: number = 128 * 1024;
 const MAX_PACKET_BYTES: number = WIFI_CHUNK_BYTES + WIFI_SECURE_PAYLOAD_OVERHEAD_BYTES + FRAME_HEADER_BYTES;
 const MAX_FILE_BYTES: number = 512 * 1024 * 1024;
+const MAX_COMPLETION_BYTES: number = 1024 * 1024;
 const DISCOVERY_TIMEOUT_MS: number = 12000;
 const CONNECT_TIMEOUT_MS: number = 8000;
 const READY_TIMEOUT_MS: number = 15000;
@@ -189,7 +191,14 @@ export function sanitizeWifiRecordingFileName(fileName: string): string {
 
 export function isSafeWifiRecordingSourcePath(sourcePath: string): boolean {
   return sourcePath.length > 0 && !sourcePath.startsWith('/') && !sourcePath.includes('..') &&
-    (sourcePath.toLowerCase().endsWith('.wav') || sourcePath.toLowerCase().endsWith('.m4a'));
+    !sourcePath.includes('\\') &&
+    (sourcePath.toLowerCase().endsWith('.wav') || sourcePath.toLowerCase().endsWith('.m4a') ||
+      isRecordingCompletionSourcePath(sourcePath));
+}
+
+export function isAllowedWifiRecordingSize(sourcePath: string, size: number): boolean {
+  return size > 0 && size <= (isRecordingCompletionSourcePath(sourcePath) ?
+    MAX_COMPLETION_BYTES : MAX_FILE_BYTES);
 }
 
 export function isExactWifiRecordingMatch(incomingSourcePath: string, incomingSize: number,
@@ -387,6 +396,9 @@ export class WifiRecordingTransferService {
     let latest: RecordingCandidate | undefined = undefined;
     for (let index = 0; index < candidates.length; index += 1) {
       const candidate = candidates[index];
+      if (isRecordingCompletionSourcePath(candidate.relativePath)) {
+        continue;
+      }
       if (latest === undefined || candidate.modifiedAt > latest.modifiedAt) {
         latest = candidate;
       }
@@ -562,7 +574,8 @@ export class WifiRecordingTransferService {
       throw new Error(`手表中找不到待发送录音：${recording.fileName}`);
     }
     const fileStat = statFileChecked(recording.path);
-    if (isDirectoryChecked(fileStat) || fileStat.size <= 0 || fileStat.size > MAX_FILE_BYTES) {
+    if (isDirectoryChecked(fileStat) || !isAllowedWifiRecordingSize(
+      this.relativeSourcePath(recording.path), fileStat.size)) {
       throw new Error(`待发送录音为空或超过 512 MB 限制：${recording.fileName}`);
     }
     const sourcePath = this.relativeSourcePath(recording.path);
@@ -698,8 +711,8 @@ export class WifiRecordingTransferService {
         continue;
       }
       const lowerName = fileName.toLowerCase();
-      if ((!lowerName.endsWith('.wav') && !lowerName.endsWith('.m4a')) || lowerName.endsWith('.part') ||
-        stat.size <= 0 || stat.size > MAX_FILE_BYTES) {
+      if (!isSafeWifiRecordingSourcePath(relativePath) || lowerName.endsWith('.part') ||
+        !isAllowedWifiRecordingSize(relativePath, stat.size)) {
         continue;
       }
       const modifiedAt = Math.round(stat.mtime * 1000);
@@ -1192,12 +1205,13 @@ export class WifiRecordingTransferService {
 
   private async beginReceive(transferToken: number, metadata: TransferMetadata): Promise<void> {
     if (metadata.protocol !== PROTOCOL_NAME || metadata.version !== 1 || metadata.transferToken !== transferToken ||
-      metadata.size <= 0 || metadata.size > MAX_FILE_BYTES || metadata.sha256.length !== 64 ||
+      !isAllowedWifiRecordingSize(metadata.sourcePath, metadata.size) || metadata.sha256.length !== 64 ||
       metadata.chunkSize < 1024 || metadata.chunkSize > WIFI_CHUNK_BYTES ||
       !Number.isFinite(metadata.batchIndex) || !Number.isFinite(metadata.batchTotal) ||
       Math.floor(metadata.batchIndex) !== metadata.batchIndex || Math.floor(metadata.batchTotal) !== metadata.batchTotal ||
       metadata.batchIndex < 1 || metadata.batchTotal < 1 || metadata.batchIndex > metadata.batchTotal ||
-      !isSafeWifiRecordingSourcePath(metadata.sourcePath)) {
+      !isSafeWifiRecordingSourcePath(metadata.sourcePath) ||
+      (isRecordingCompletionSourcePath(metadata.sourcePath) && metadata.fileName !== 'session_summary.json')) {
       throw new Error('手表发送的 Wi-Fi 文件元数据无效');
     }
     if (this.receivingFile !== undefined && this.receivingFile.transferToken === transferToken) {

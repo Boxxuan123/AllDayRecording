@@ -349,7 +349,8 @@ export class PhoneV3RecordingStore {
 
   private isAudioFile(fileName: string): boolean {
     const lowerName = fileName.toLowerCase();
-    return lowerName.endsWith('.wav') || lowerName.endsWith('.m4a');
+    return lowerName.endsWith('.wav') || lowerName.endsWith('.m4a') ||
+      fileName === 'session_summary.json' || /^[0-9]+_session_summary\.json$/.test(fileName);
   }
 }
 

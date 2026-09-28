@@ -4,6 +4,9 @@ import {
   decodeBase64Url,
   encodeBase64Url,
   buildDeviceSignaturePayload,
+  confirmedComputerSessionId,
+  ComputerUploadRecord,
+  ComputerUploadResponse,
   normalizeCertificateFingerprint,
   normalizeComputerBaseUrl,
   parseComputerPairingBootstrap
@@ -43,6 +46,18 @@ function asciiText(value: Uint8Array): string {
 
 export default function computerTransferProtocolTest() {
   describe('ComputerTransferProtocol', () => {
+    it('requiresSessionAdmissionAfterManifestFileCompletes', 0, () => {
+      const upload: ComputerUploadRecord = { upload_id: 'manifest', relative_path: 'pcm_session_1/session_summary.json',
+        size: 1, sha256: 'a'.repeat(64), kind: 'manifest', offset: 1, status: 'completed' };
+      const onlyFile: ComputerUploadResponse = { upload: upload };
+      expect((): void => { confirmedComputerSessionId(onlyFile, upload.sha256); })
+        .assertThrowError('电脑只确认了清单文件，尚未返回整场录音入库回执');
+      const accepted: ComputerUploadResponse = { upload: upload, automation: { v3: { status: 'ingested',
+        session_id: 'session-id', asset_count: 71, manifest_sha256: upload.sha256 } } };
+      expect(confirmedComputerSessionId(accepted, upload.sha256)).assertEqual('session-id');
+      expect((): void => { confirmedComputerSessionId(accepted, 'b'.repeat(64)); })
+        .assertThrowError('电脑只确认了清单文件，尚未返回整场录音入库回执');
+    });
     it('normalizesSecureAddressFingerprintAndBase64Url', 0, () => {
       expect(normalizeComputerBaseUrl(' https://192.168.1.20:8766/ '))
         .assertEqual('https://192.168.1.20:8766');

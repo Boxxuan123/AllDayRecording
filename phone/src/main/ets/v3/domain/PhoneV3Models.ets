@@ -42,14 +42,16 @@ export class PhoneV3LocalAudioLink {
   localPath: string;
   uploadStatus: string;
   updatedAt: number;
+  sha256: string;
 
   constructor(sessionKey: string, sessionId: string, localPath: string, uploadStatus: string,
-    updatedAt: number) {
+    updatedAt: number, sha256: string = '') {
     this.sessionKey = sessionKey;
     this.sessionId = sessionId;
     this.localPath = localPath;
     this.uploadStatus = uploadStatus;
     this.updatedAt = updatedAt;
+    this.sha256 = sha256;
   }
 }
 
@@ -376,4 +378,24 @@ export class PhoneV3Snapshot {
     this.reminders = reminders;
     this.reviewItems = reviewItems;
   }
+}
+
+export interface PhoneSessionCompletionRecord {
+  sessionKey: string;
+  source: string;
+  completedSegments: number;
+  totalSamples: number;
+  confirmedAt: number;
+  manifestSha256: string;
+  inputRevision?: number;
+}
+
+export interface PhoneSessionTransferFailure {
+  sessionKey: string;
+  manifestSha256: string;
+  category: string;
+  reason: string;
+  attemptCount: number;
+  retryAt: number;
+  updatedAt: number;
 }

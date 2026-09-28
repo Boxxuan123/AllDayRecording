@@ -87,6 +87,7 @@ export class PhoneV3ViewModel {
   backupActive: boolean = false;
   backupMessage: string = '';
   backupError: string = '';
+  backupFailureCategory: string = '';
   syncPaused: boolean = false;
   lightSuccessAt: number = 0;
   backupSuccessAt: number = 0;
@@ -95,6 +96,9 @@ export class PhoneV3ViewModel {
   private foreground: boolean = true;
   private retirement: Promise<void> = Promise.resolve();
   private syncProjectionDirty: boolean = false;
+  private pendingUtteranceIds: Set<string> = new Set<string>();
+  private pendingFullRefresh: boolean = false;
+  private pendingReviewRefresh: boolean = false;
   private syncRefreshRunning: boolean = false;
   private snapshotGeneration: number = 0;
   private lifecycleGeneration: number = 0;
@@ -294,10 +298,10 @@ export class PhoneV3ViewModel {
     if (useCases === undefined) { return; }
     useCases.onCommitted = (result): void => {
       this.committedUiIds = this.committedUiIds.concat(result.operationIds).slice(-512);
-      const full = this.syncProjectionDirty || result.requiresReload;
+      const full = result.requiresReload;
       this.syncProjectionDirty = true;
       if (generation === this.lifecycleGeneration) {
-        this.refreshCommittedSync(full ? [] : result.utteranceIds)
+        this.refreshCommittedSync(full ? [] : result.utteranceIds, result.reviewsChanged && !full)
           .catch((error: Object): void => this.fail(error));
       }
     };
@@ -308,7 +312,7 @@ export class PhoneV3ViewModel {
           if (generation === this.lifecycleGeneration) { this.computerSyncMessage = message; }
         }, false, 4);
         if (generation !== this.lifecycleGeneration) { return new PhoneSyncWorkResult(false, 0, false); }
-        const requiresReload = this.syncProjectionDirty || result.requiresReload;
+        const requiresReload = result.requiresReload;
         this.syncProjectionDirty = this.syncProjectionDirty || result.changed;
         await this.refreshCommittedSync(requiresReload ? [] : result.utteranceIds);
         this.computerSyncMessage = result.summary();
@@ -327,11 +331,19 @@ export class PhoneV3ViewModel {
         if (this.syncEnvironment === undefined || !await this.syncEnvironment.wifi()) {
           this.backupMessage = '等待 Wi-Fi 后备份录音'; return new PhoneSyncWorkResult(false, 30000, false);
         }
+        this.backupError = '';
+        this.backupFailureCategory = '';
         this.backupMessage = '正在备份录音…';
         const result = await useCases.backupRecordings();
         if (generation !== this.lifecycleGeneration) { return new PhoneSyncWorkResult(false, 0, false); }
-        this.backupMessage = result.more ? '本会话备份完成，仍有录音待备份' : '录音备份完成';
-        return new PhoneSyncWorkResult(result.more);
+        this.backupFailureCategory = result.failureCategory;
+        this.backupError = result.failedSessions > 0 ? result.failureReason : '';
+        this.backupMessage = result.failedSessions > 0 ?
+          `${result.failureCategory === 'conflict' ? '清单冲突' : '备份失败'}：${result.failureReason}；其他录音继续处理` :
+          result.sessions > 0 ? (result.more ? '整场录音已备份，仍有录音待备份' : '整场录音已备份，等待转写') :
+          this.device.watchSyncing ? `正在接收录音，已收到 ${this.device.watchReceived} 片` :
+          '已同步，没有新录音';
+        return new PhoneSyncWorkResult(result.more, result.retryAfterMs);
       },
       cancelLight: (): void => useCases.cancelSynchronize(),
       changed: (): void => {
@@ -339,9 +351,17 @@ export class PhoneV3ViewModel {
         const coordinator = this.coordinator;
         if (coordinator === undefined) { return; }
         this.computerSyncActive = coordinator.light.running;
+        const wasBackupActive = this.backupActive;
         this.backupActive = coordinator.backup.running;
+        if (!wasBackupActive && this.backupActive) {
+          this.computerProgress = new ComputerUploadProgress('', 0, 0, 0, 0);
+          this.completedSessionKeys = [];
+          this.lastProgressAt = 0;
+          this.backupError = '';
+          this.backupFailureCategory = '';
+        }
         this.computerSyncError = coordinator.light.error;
-        this.backupError = coordinator.backup.error;
+        if (coordinator.backup.error.length > 0) { this.backupError = coordinator.backup.error; }
         this.supplementaryError = coordinator.supplementary.error;
         this.syncPaused = coordinator.paused;
         this.lightSuccessAt = coordinator.light.successAt;
@@ -868,7 +888,8 @@ export class PhoneV3ViewModel {
   }
 
   canDeleteLocalAudio(session: PhoneV3SessionCard): boolean {
-    return session.localPaths.length > 0 && session.sessionId.length === 0 && session.uploadStatus !== 'uploaded';
+    return session.localPaths.length > 0 && session.sessionId.length === 0 &&
+      session.uploadStatus !== 'uploaded' && session.uploadStatus !== 'file_uploaded';
   }
 
   localDeleteProtection(session: PhoneV3SessionCard): string {
@@ -877,6 +898,9 @@ export class PhoneV3ViewModel {
     }
     if (session.sessionId.length > 0 || session.uploadStatus === 'uploaded') {
       return '该录音已经同步到电脑，为避免误删已受保护';
+    }
+    if (session.uploadStatus === 'file_uploaded') {
+      return '分片虽已到电脑，整场尚未确认；请保留手机原件';
     }
     return '仅删除手机上的本地音频，删除后无法恢复';
   }
@@ -966,13 +990,14 @@ export class PhoneV3ViewModel {
         new PhoneV3ReminderScheduler(context), new PhoneV3ComputerBackup(context, repository, (progress: ComputerUploadProgress): void => {
           if (lifecycle !== this.lifecycleGeneration) { return; }
           const now = Date.now();
-          if (!progress.sessionCompleted && now - this.lastProgressAt < 150) { return; }
+          if (progress.stage === 'uploading' && now - this.lastProgressAt < 150) { return; }
           this.lastProgressAt = now;
           this.computerProgress = progress;
           if (progress.sessionCompleted) {
             this.completedSessionKeys = this.completedSessionKeys.concat([progress.sessionKey]);
           }
-          this.backupMessage = `${progress.message} · 文件 ${progress.completedFiles}/${progress.totalFiles} · ${progress.percent()}%`;
+          this.backupMessage = progress.stage === 'uploading' ?
+            `${progress.message} · 本次上传 ${progress.percent()}%` : progress.message;
           this.stateChangeListener();
         }), audioCache);
       await this.refreshSnapshot();
@@ -989,7 +1014,12 @@ export class PhoneV3ViewModel {
 
   // A committed projection is local work, even when the next network request fails.
   // Keep one reader and retain invalidated work until the conflicting save finishes.
-  private async refreshCommittedSync(ids: Array<string> = []): Promise<void> {
+  private async refreshCommittedSync(ids: Array<string> = [], reviewsOnly: boolean = false): Promise<void> {
+    if (this.syncProjectionDirty) {
+      for (let id of ids) { this.pendingUtteranceIds.add(id); }
+      this.pendingFullRefresh = this.pendingFullRefresh || (!reviewsOnly && ids.length === 0);
+      this.pendingReviewRefresh = this.pendingReviewRefresh || reviewsOnly;
+    }
     const useCases = this.useCases;
     if (useCases === undefined || this.syncRefreshRunning) { return; }
     const lifecycle = this.lifecycleGeneration;
@@ -997,16 +1027,23 @@ export class PhoneV3ViewModel {
     try {
       while (this.syncProjectionDirty && !this.annotationSaving && this.foreground && lifecycle === this.lifecycleGeneration) {
         this.syncProjectionDirty = false;
+        const full = this.pendingFullRefresh;
+        const reviews = this.pendingReviewRefresh;
+        const changedIds = Array.from(this.pendingUtteranceIds);
+        this.pendingFullRefresh = false; this.pendingReviewRefresh = false; this.pendingUtteranceIds.clear();
         const committedIds = this.committedUiIds.slice();
         const revision = this.snapshotGeneration;
-        if (ids.length > 0) {
+        if (!full && (changedIds.length > 0 || reviews)) {
           this.snapshotGeneration += 1;
-          const fresh = await useCases.refreshUtterances(this.snapshot, ids);
+          let fresh = changedIds.length > 0 ? await useCases.refreshUtterances(this.snapshot, changedIds) : this.snapshot;
+          if (reviews) { fresh = await useCases.refreshReviewSnapshot(fresh); }
           if (this.snapshotGeneration === revision + 1 && !this.annotationSaving && lifecycle === this.lifecycleGeneration && this.foreground) {
             this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SNAPSHOT_READY, fresh));
           }
         } else { await this.refreshSnapshot(false); }
-        this.syncProjectionDirty = this.syncProjectionDirty || this.snapshotGeneration !== revision + 1 || this.annotationSaving || !this.foreground;
+        if (this.snapshotGeneration !== revision + 1 || this.annotationSaving || !this.foreground) {
+          this.syncProjectionDirty = true; this.pendingFullRefresh = true;
+        }
         if (!this.syncProjectionDirty) {
           annotationTiming('T6-ui-confirmed', committedIds);
           this.committedUiIds = this.committedUiIds.filter((id): boolean => committedIds.indexOf(id) < 0);
@@ -1014,7 +1051,7 @@ export class PhoneV3ViewModel {
         ids = [];
       }
     } catch (error) {
-      this.syncProjectionDirty = true;
+      this.syncProjectionDirty = true; this.pendingFullRefresh = true;
       throw error as Error;
     } finally { this.syncRefreshRunning = false; }
   }

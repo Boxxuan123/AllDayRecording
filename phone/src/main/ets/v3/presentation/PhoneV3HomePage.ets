@@ -142,9 +142,10 @@ export struct PhoneV3HomePage {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
-        Text(this.currentUiState().snapshot.sessions[0].sessionId.length > 0 ? '已备份' : '仅手机')
+        Text(this.currentUiState().snapshot.sessions[0].uploadStatus === 'uploaded' ? '已备份' :
+          this.currentUiState().snapshot.sessions[0].uploadStatus === 'file_uploaded' ? '待整场确认' : '仅手机')
           .fontSize(11)
-          .fontColor(this.currentUiState().snapshot.sessions[0].sessionId.length > 0 ?
+          .fontColor(this.currentUiState().snapshot.sessions[0].uploadStatus === 'uploaded' ?
             $r('app.color.brand_success') : $r('app.color.text_secondary'))
         SymbolGlyph($r('sys.symbol.chevron_right'))
           .fontSize(15)

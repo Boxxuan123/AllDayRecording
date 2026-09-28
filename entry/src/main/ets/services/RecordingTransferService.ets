@@ -158,7 +158,9 @@ function collectSyncableFiles(filesDirectory: string, relativeDirectory: string,
       continue;
     }
     const lowerName = fileName.toLowerCase();
-    if (!lowerName.endsWith('.wav') && !lowerName.endsWith('.m4a')) {
+    if (!lowerName.endsWith('.wav') && !lowerName.endsWith('.m4a') &&
+      !(fileName === 'session_summary.json' && /^pcm_(gap_test|session)_[0-9]{13,}$/.test(
+        relativeDirectory))) {
       continue;
     }
     if (lowerName.endsWith('.part') || stat.size <= 0 || stat.size > MAX_RECORDING_BYTES) {

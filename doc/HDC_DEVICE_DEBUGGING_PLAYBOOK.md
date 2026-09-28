@@ -1,5 +1,7 @@
 # HarmonyOS 真机命令调试手册：HDC 连接、日志、截图、界面操作与文件验收
 
+手机真机调试前后，按 [手机常亮与恢复步骤](PHONE_SCREEN_ON_DEBUG.md) 设置和还原熄屏时间。
+
 > 适用工程：`/Volumes/hardDrive/DevEcoStudioProjects/AllDayRecording`
 >
 > 目标：让不熟悉 DevEco Studio 或 Computer Use 的 AI，能够优先使用命令完成手机与手表的连接、构建、安装、日志读取、界面检查、截图、文件备份和真机验收。

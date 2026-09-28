@@ -1,9 +1,11 @@
 import { common } from '@kit.AbilityKit';
 import {
   ComputerUploadProgressHandler,
-  ComputerUploadResult
+  ComputerUploadResult,
+  computerSessionManifestSha256,
+  computerTransferTimezone
 } from '../../computer/ComputerRecordingUploadService';
-import { createComputerRecordingBackupService } from '../../computer/ComputerRecordingBackupService';
+import { ComputerRecordingBackupOutcome, createComputerRecordingBackupService } from '../../computer/ComputerRecordingBackupService';
 import {
   PreparedComputerSession,
   prepareComputerSessions
@@ -15,12 +17,13 @@ import {
   PhoneV3AudioBackupResult,
   PhoneV3ProjectionRepositoryPort
 } from '../application/PhoneV3Ports';
-import { PhoneV3LocalAudioLink } from '../domain/PhoneV3Models';
+import { PhoneSessionCompletionRecord, PhoneSessionTransferFailure, PhoneV3LocalAudioLink } from '../domain/PhoneV3Models';
 
 export class PhoneV3ComputerBackup implements PhoneV3AudioBackupPort {
   private onProgress: ComputerUploadProgressHandler;
   private context: common.UIAbilityContext;
   private repository: PhoneV3ProjectionRepositoryPort;
+  private progressGeneration: number = 0;
 
   constructor(context: common.UIAbilityContext, repository: PhoneV3ProjectionRepositoryPort,
     onProgress: ComputerUploadProgressHandler = (): void => {}) {
@@ -30,36 +33,88 @@ export class PhoneV3ComputerBackup implements PhoneV3AudioBackupPort {
   }
 
   async backup(): Promise<PhoneV3AudioBackupResult> {
+    const progressGeneration = ++this.progressGeneration;
     const localRecordings = new PhoneV3RecordingStore(this.context.filesDir).list();
     const links = await this.repository.localAudioLinks();
-    const recordings = recordingsNeedingComputerBackup(localRecordings, links);
-    const sessions = prepareComputerSessions(recordings);
+    const completions = await this.repository.localSessionCompletions();
+    const failures = await this.repository.localSessionFailures();
+    const recordings = await recordingsNeedingComputerBackup(localRecordings, links, completions,
+      computerSessionManifestSha256, failures);
+    const sessions = prepareComputerSessions(recordings, computerTransferTimezone(), completions);
     if (sessions.length === 0) {
-      return new PhoneV3AudioBackupResult();
+      const result = new PhoneV3AudioBackupResult();
+      result.failedSessions = failures.length;
+      result.failureReason = failures.length > 0 ? failures[0].reason : '';
+      result.failureCategory = failures.length > 0 ? failures[0].category : '';
+      result.retryAfterMs = nextNetworkRetryMs(failures);
+      return result;
     }
-    const outcome = await createComputerRecordingBackupService(this.context, this.repository)
-      .backup(sessions[0].recordings, this.onProgress);
+    let outcome: ComputerRecordingBackupOutcome;
+    try {
+      outcome = await createComputerRecordingBackupService(this.context, this.repository)
+        .backup(recordings.filter((recording: ReceivedRecordingFile): boolean =>
+          recording.sourcePath.startsWith(`${sessions[0].directory}/`)), (progress): void => {
+            if (progressGeneration === this.progressGeneration) { this.onProgress(progress); }
+          }, completions, links, failures);
+    } catch (error) {
+      const updated = await this.repository.localSessionFailures();
+      const failed = updated.find((value: PhoneSessionTransferFailure): boolean => {
+          if (value.sessionKey !== sessions[0].manifest.sessionKey) { return false; }
+          const old = failures.find((entry: PhoneSessionTransferFailure): boolean =>
+            entry.sessionKey === value.sessionKey);
+          return old === undefined || value.manifestSha256 !== old.manifestSha256 ||
+            value.attemptCount > old.attemptCount || value.updatedAt > old.updatedAt;
+        });
+      if (failed === undefined) { throw error as Error; }
+      const remaining = await recordingsNeedingComputerBackup(localRecordings,
+        await this.repository.localAudioLinks(), completions, computerSessionManifestSha256, updated);
+      const result = new PhoneV3AudioBackupResult();
+      result.more = remaining.length > 0;
+      result.failedSessions = 1;
+      result.failureReason = failed.reason;
+      result.failureCategory = failed.category;
+      result.retryAfterMs = nextNetworkRetryMs(updated);
+      return result;
+    } finally {
+      if (progressGeneration === this.progressGeneration) { this.progressGeneration += 1; }
+    }
     const result = backupResult(outcome.upload);
     result.more = sessions.length > 1;
+    result.retryAfterMs = nextNetworkRetryMs(await this.repository.localSessionFailures());
     return result;
   }
 }
 
-export function recordingsNeedingComputerBackup(recordings: Array<ReceivedRecordingFile>,
-  links: Array<PhoneV3LocalAudioLink>): Array<ReceivedRecordingFile> {
-  const sessions = prepareComputerSessions(recordings);
+export async function recordingsNeedingComputerBackup(recordings: Array<ReceivedRecordingFile>,
+  links: Array<PhoneV3LocalAudioLink>,
+  completions: Array<PhoneSessionCompletionRecord> = [],
+  manifestDigest: (session: PreparedComputerSession) => Promise<string> = computerSessionManifestSha256,
+  failures: Array<PhoneSessionTransferFailure> = []):
+  Promise<Array<ReceivedRecordingFile>> {
+  const sessions = prepareComputerSessions(recordings, computerTransferTimezone(), completions);
   const pending: Array<ReceivedRecordingFile> = [];
   for (let sessionIndex = 0; sessionIndex < sessions.length; sessionIndex += 1) {
     const session = sessions[sessionIndex];
-    if (sessionIsUploaded(session, links)) {
+    const failed = failures.find((value: PhoneSessionTransferFailure): boolean =>
+      value.sessionKey === session.manifest.sessionKey);
+    if (failed !== undefined && (failed.category === 'conflict' || failed.retryAt > Date.now()) &&
+      failed.manifestSha256 === (session.canCommit() ? await manifestDigest(session) : '')) {
+      continue;
+    }
+    if (await sessionIsUploaded(session, links, completions, manifestDigest)) {
       continue;
     }
     pending.push(...session.recordings);
+    const summary = recordings.find((recording: ReceivedRecordingFile): boolean =>
+      recording.sourcePath === `${session.directory}/session_summary.json`);
+    if (summary !== undefined) { pending.push(summary); }
   }
   return pending;
 }
 
-function sessionIsUploaded(session: PreparedComputerSession, links: Array<PhoneV3LocalAudioLink>): boolean {
+async function sessionIsUploaded(session: PreparedComputerSession, links: Array<PhoneV3LocalAudioLink>,
+  completions: Array<PhoneSessionCompletionRecord>,
+  manifestDigest: (session: PreparedComputerSession) => Promise<string>): Promise<boolean> {
   for (let recordingIndex = 0; recordingIndex < session.recordings.length; recordingIndex += 1) {
     const recording = session.recordings[recordingIndex];
     let uploaded = false;
@@ -75,11 +130,27 @@ function sessionIsUploaded(session: PreparedComputerSession, links: Array<PhoneV
       return false;
     }
   }
-  return session.recordings.length > 0;
+  if (!session.canCommit()) { return session.recordings.length > 0; }
+  const receipt = completions.find((record: PhoneSessionCompletionRecord): boolean =>
+    record.sessionKey === session.manifest.sessionKey && record.manifestSha256.length === 64 &&
+    record.completedSegments === session.manifest.completedSegments &&
+    record.totalSamples === session.manifest.totalSamples);
+  return receipt !== undefined && receipt.manifestSha256 === await manifestDigest(session);
 }
 
 function backupResult(result: ComputerUploadResult): PhoneV3AudioBackupResult {
   const totalFiles = result.recordings + result.manifests;
   return new PhoneV3AudioBackupResult(result.sessions,
     Math.max(0, totalFiles - result.skippedFiles), result.skippedFiles);
+}
+
+function nextNetworkRetryMs(failures: Array<PhoneSessionTransferFailure>): number {
+  let next = 0;
+  for (let index = 0; index < failures.length; index += 1) {
+    const failure = failures[index];
+    if (failure.category !== 'network') { continue; }
+    const delay = Math.max(1000, failure.retryAt - Date.now());
+    next = next === 0 ? delay : Math.min(next, delay);
+  }
+  return next;
 }

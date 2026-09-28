@@ -1,4 +1,5 @@
 import { ComputerReviewNotSentError } from './ComputerReviewNotSentError';
+import { computerJsonText, COMPUTER_JSON_MAX_BYTES } from './ComputerJsonBody';
 import { ComputerConnectionError, connectionFailure, connectionDiagnosticId } from './ComputerConnectionError';
 import { common } from '@kit.AbilityKit';
 import { util } from '@kit.ArkTS';
@@ -60,15 +61,17 @@ interface ComputerErrorResponse {
 }
 
 interface PairingHeaders {
+  'Accept-Encoding': string;
   Authorization: string;
   'Content-Type': string;
 }
 
 interface JsonHeaders {
+  'Accept-Encoding': string;
   'Content-Type': string;
 }
 
-interface DiagnosticHeaders { XAllDayRequestId?: string; }
+interface DiagnosticHeaders { XAllDayRequestId?: string; 'Accept-Encoding'?: string; }
 
 interface DeviceRegistrationRequest {
   algorithm: string;
@@ -82,6 +85,7 @@ interface RegistrationVerifyRequest {
 }
 
 interface AuthenticatedHeaders {
+  'Accept-Encoding': string;
   'X-AllDay-Device-ID': string;
   'X-AllDay-Device-Challenge': string;
   'X-AllDay-Device-Signature': string;
@@ -135,6 +139,7 @@ export class ComputerTransferHttpClient {
       throw new Error('首次配对码无效');
     }
     const headers: PairingHeaders = {
+      'Accept-Encoding': 'gzip',
       'Authorization': `Bearer ${code}`,
       'Content-Type': 'application/json; charset=utf-8'
     };
@@ -274,6 +279,7 @@ export class ComputerTransferHttpClient {
   private async authenticatedJson<T>(method: string, path: string, body: Uint8Array,
     contentType: string | undefined, uploadOffset: number | undefined, onDispatch: () => void = (): void => {}): Promise<T> {
     const operationId=connectionDiagnosticId();
+    const authStarted = Date.now();
     const binding: ComputerRequestBinding = {
       method: method,
       path: path,
@@ -283,7 +289,7 @@ export class ComputerTransferHttpClient {
       binding.upload_offset = uploadOffset;
     }
     const optionsBody = JSON.stringify({ device_id: this.requireDeviceId(), request: binding });
-    const optionsHeaders: JsonHeaders = { 'Content-Type': 'application/json; charset=utf-8' };
+    const optionsHeaders: JsonHeaders = { 'Accept-Encoding': 'gzip', 'Content-Type': 'application/json; charset=utf-8' };
     const challenge = await this.requestJson<ComputerDeviceChallengeResponse>(
       'POST', DEVICE_AUTH_CHALLENGE_PATH, optionsBody, optionsHeaders, operationId);
     if (challenge.version !== 1 || challenge.challenge_id.length === 0 || challenge.nonce.length === 0 ||
@@ -294,6 +300,7 @@ export class ComputerTransferHttpClient {
       buildDeviceSignaturePayload(challenge.challenge_id, challenge.nonce, binding));
     const headers: Object = authenticatedHeaders(this.deviceId, challenge.challenge_id,
       signature, contentType, uploadOffset);
+    console.debug(`[sync] op=${operationId} path=${path} phase=authentication ms=${Date.now() - authStarted}`);
     onDispatch();
     return this.requestJson<T>(method, path, body.length === 0 ? undefined : body.buffer, headers, operationId);
   }
@@ -322,15 +329,19 @@ export class ComputerTransferHttpClient {
         usingCache: false,
         connectTimeout: CONNECT_TIMEOUT_MS,
         readTimeout: READ_TIMEOUT_MS,
-        expectDataType: http.HttpDataType.STRING,
+        expectDataType: http.HttpDataType.ARRAY_BUFFER,
+        maxLimit: COMPUTER_JSON_MAX_BYTES,
         caPath: this.caPath
       };
       if (body !== undefined) {
         options.extraData = body;
       }
       const response = await request.request(`${this.baseUrl}${path}`, options);
+      if (trace) {
+        console.debug(`[sync] id=${requestId} reused=${response.connectionExtraInfo?.isReusedConnection ?? 'unknown'} dns_ms=${response.performanceTiming?.dnsTiming ?? -1} tcp_ms=${response.performanceTiming?.tcpTiming ?? -1} tls_ms=${response.performanceTiming?.tlsTiming ?? -1} native_ms=${response.performanceTiming?.totalFinishTiming ?? -1}`);
+      }
       if (trace) { console.debug(`[sync] id=${requestId} phase=response status=${response.responseCode} ms=${Date.now() - started}`); }
-      const text = responseText(response.result);
+      const text = await computerJsonText(response.result);
       if (response.responseCode < 200 || response.responseCode >= 300) {
         const failure = new ComputerHttpError(response.responseCode, serverErrorMessage(response.responseCode, text));
         failure.path = path; failure.requestId = requestId; failure.mayHaveSent = true;
@@ -361,6 +372,7 @@ function authenticatedHeaders(deviceId: string, challengeId: string, signature: 
   contentType: string | undefined, uploadOffset: number | undefined): AuthenticatedHeaders {
   if (uploadOffset !== undefined) {
     return {
+      'Accept-Encoding': 'gzip',
       'X-AllDay-Device-ID': deviceId,
       'X-AllDay-Device-Challenge': challengeId,
       'X-AllDay-Device-Signature': signature,
@@ -370,6 +382,7 @@ function authenticatedHeaders(deviceId: string, challengeId: string, signature: 
   }
   if (contentType !== undefined) {
     return {
+      'Accept-Encoding': 'gzip',
       'X-AllDay-Device-ID': deviceId,
       'X-AllDay-Device-Challenge': challengeId,
       'X-AllDay-Device-Signature': signature,
@@ -377,7 +390,8 @@ function authenticatedHeaders(deviceId: string, challengeId: string, signature: 
     };
   }
   return {
-    'X-AllDay-Device-ID': deviceId,
+    'Accept-Encoding': 'gzip',
+      'X-AllDay-Device-ID': deviceId,
     'X-AllDay-Device-Challenge': challengeId,
     'X-AllDay-Device-Signature': signature
   };
@@ -403,16 +417,6 @@ function requestMethod(value: string): http.RequestMethod {
     case 'PUT': return http.RequestMethod.PUT;
     default: throw new Error(`不支持的电脑传输请求方法：${value}`);
   }
-}
-
-function responseText(value: string | Object | ArrayBuffer): string {
-  if (typeof value === 'string') {
-    return value;
-  }
-  if (value instanceof ArrayBuffer) {
-    return util.TextDecoder.create('utf-8').decodeToString(new Uint8Array(value));
-  }
-  return JSON.stringify(value);
 }
 
 function serverErrorMessage(code: number, body: string): string {

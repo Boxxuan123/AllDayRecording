@@ -142,9 +142,35 @@ export interface ComputerUploadRecord {
 
 export interface ComputerUploadResponse {
   upload: ComputerUploadRecord;
+  automation?: ComputerUploadAutomation;
+}
+
+export interface ComputerUploadAutomation {
+  v3?: ComputerSessionAdmission;
+}
+
+export interface ComputerSessionAdmission {
+  status: string;
+  session_id: string;
+  asset_count: number;
+  manifest_sha256: string;
+  input_revision?: number;
+}
+
+export function confirmedComputerSessionId(response: ComputerUploadResponse,
+  expectedSha256: string): string {
+  const admitted = response.automation?.v3;
+  if (admitted === undefined ||
+    (admitted.status !== 'ingested' && admitted.status !== 'already_ingested') ||
+    admitted.manifest_sha256 !== expectedSha256 || admitted.session_id.length === 0 ||
+    !Number.isSafeInteger(admitted.asset_count) || admitted.asset_count <= 0) {
+    throw new Error('电脑只确认了清单文件，尚未返回整场录音入库回执');
+  }
+  return admitted.session_id;
 }
 
 export interface ComputerStatusResponse {
+  v3?: DeviceV3StatusResponse | null;
   protocol: string;
   version: number;
   status: string;
@@ -158,6 +184,7 @@ export interface ComputerStatusResponse {
 }
 
 export interface DeviceV3StatusResponse {
+  sync_features?: Array<string>;
   contract_version: string;
   projection_version: number;
   server_time: string;
@@ -186,6 +213,7 @@ export interface DeviceV3AnnotationRequest {
 }
 
 export interface DeviceV3AnnotationResponse {
+  version?: string;
   items?: Array<DeviceV3AnnotationStatus>;
   people?: Array<DeviceV3PersonChoice>;
   reviews?: DeviceV3ReviewSnapshot;
@@ -202,6 +230,7 @@ export interface DeviceV3AnnotationStatus {
 }
 
 export interface DeviceV3ReviewSnapshot {
+  version?: string;
   items: Array<Object>;
 }
 
@@ -261,6 +290,8 @@ export interface DeviceV3ClientOperation {
 }
 
 export interface DeviceV3SyncRequest {
+  bootstrap?: boolean;
+  pull_bytes?: number;
   projection_version: number;
   cursor: string | null;
   client_operations: Array<DeviceV3ClientOperation>;
@@ -297,6 +328,7 @@ export interface DeviceV3Change {
 }
 
 export interface DeviceV3SyncResponse {
+  transaction_ms?: number;
   projection_version: number;
   receipts: Array<DeviceV3OperationReceipt>;
   changes: Array<DeviceV3Change>;

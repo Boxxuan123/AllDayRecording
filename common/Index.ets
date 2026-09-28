@@ -21,6 +21,7 @@ export {
   WifiTransferBatchCompletedHandler,
   sanitizeWifiRecordingFileName,
   isSafeWifiRecordingSourcePath,
+  isAllowedWifiRecordingSize,
   isExactWifiRecordingMatch,
   wifiRecordingTransferErrorMessage,
   WifiRecordingTransferService

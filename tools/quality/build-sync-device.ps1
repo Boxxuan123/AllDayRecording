@@ -1,4 +1,4 @@
-param([ValidateSet('phase1','phase2a','bcd','production')][string]$Mode = 'production')
+param([ValidateSet('phase1','phase2a','bcd','acceptance','production')][string]$Mode = 'production')
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 Set-Location -LiteralPath $root
@@ -10,7 +10,7 @@ $original = [IO.File]::ReadAllBytes($entry)
 $nativeRefresh = Join-Path $root 'phone/src/main/ets/pages/NativeRefresh.ets'
 if (Test-Path -LiteralPath $nativeRefresh) { throw 'Temporary NativeRefresh.ets already exists; preserve and inspect it first.' }
 if ($Mode -eq 'production') {
-  foreach ($name in @('sync-phase2a-config.json','sync-phase2a-ca.pem','sync-bcd-config.json','sync-bcd-ca.pem','voice-review-fixture.json','sync-phase1-test-ca.pem')) {
+  foreach ($name in @('sync-phase2a-config.json','sync-phase2a-ca.pem','sync-bcd-config.json','sync-bcd-ca.pem','voice-review-fixture.json','sync-phase1-test-ca.pem','sync-acceptance-config.json','sync-acceptance-ca.pem')) {
     if (Test-Path -LiteralPath (Join-Path $root "phone/src/main/resources/rawfile/$name")) {
       throw "Remove the generated test resource before production build: $name"
     }

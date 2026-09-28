@@ -1,5 +1,5 @@
 import { annotationTiming } from './PhoneAnnotationTiming';
-import { syncRequestBatch } from '../data/PhoneSyncBatch';
+import { syncRequestBatch, PhoneSyncBatchPolicy, jsonBytes } from '../data/PhoneSyncBatch';
 import { PhonePendingOperation } from '../data/PhoneSyncProjection';
 import { PHONE_V3_SOUND_KINDS, phoneV3SoundKindLabel } from '../domain/PhoneV3SoundKind';
 import { PhoneV3LocalAnnotation, PhoneV3AnnotationSentence, applyLocalAnnotations, applyAnnotationRows, applyAnnotationConflicts, annotationRows } from '../domain/PhoneV3LocalAnnotation';
@@ -11,6 +11,7 @@ import {
   DeviceV3ReviewActionRequest,
   DeviceV3ReviewActionResponse,
   DeviceV3ReviewAudioResponse,
+  DeviceV3ReviewSnapshot,
   DeviceV3SyncRequest
 } from '../../computer/ComputerTransferProtocol';
 import {
@@ -24,6 +25,7 @@ import { phoneV3ReviewItems, phoneV3ReviewSnapshotItems } from '../data/PhoneV3R
 import { phoneV3VoiceCandidates } from '../domain/PhoneV3ReviewModels';
 import { validateReviewSample } from '../domain/PhoneV3ReviewAudioValidation';
 import {
+  PhoneSessionCompletionRecord,
   PhoneV3LocalAudioFact,
   PhoneV3LocalAudioLink,
   PhoneV3ProjectionRow,
@@ -87,6 +89,7 @@ export class PhoneV3SyncResult {
   changed: boolean = false;
   utteranceIds: Array<string> = [];
   requiresReload: boolean = false;
+  reviewsChanged: boolean = false;
   batches: number;
   submittedOperations: number;
   finalCursor: string;
@@ -116,6 +119,9 @@ export class PhoneV3SyncResult {
 }
 
 export class PhoneV3UseCases {
+  private syncBatchPolicy: PhoneSyncBatchPolicy = new PhoneSyncBatchPolicy();
+  private reviewVersion: string | undefined = undefined;
+  private peopleVersion: string | undefined = undefined;
   onCommitted: (result: PhoneV3SyncResult) => void = (): void => {};
   private publishCommitted(result: PhoneV3SyncResult): void {
     try { this.onCommitted(result); }
@@ -165,7 +171,9 @@ export class PhoneV3UseCases {
     const paired = await this.remote.isPaired();
     const reminderValues = phoneV3Reminders(reminders);
     await this.reconcileReminders(reminderValues);
-    const sessions = mergePhoneV3Sessions(localFacts, links, recordings, processing, utterances);
+    const completions = await this.repository.localSessionCompletions();
+    const sessions = mergePhoneV3Sessions(localFacts, links, recordings, processing, utterances,
+      completions);
     applyLocalAnnotations(sessions, await this.repository.annotationOperations());
     applyAnnotationConflicts(sessions, conflicts);
     return new PhoneV3Snapshot(
@@ -196,8 +204,9 @@ export class PhoneV3UseCases {
     const operations = await this.repository.annotationOperations(ids);
     const status = await this.repository.v3Status();
     const changed = new Set<string>(ids);
+    const bySession = indexSessionUtterances(rows);
     const sessions = snapshot.sessions.map((session: PhoneV3SessionCard): PhoneV3SessionCard => {
-      const fresh = sessionUtterances(rows, session.sessionId);
+      const fresh = bySession.get(session.sessionId) ?? [];
       if (fresh.length === 0 && !session.utterances.some((row): boolean => changed.has(row.utteranceId))) { return session; }
       const merged = session.utterances.filter((row): boolean => !changed.has(row.utteranceId)).concat(fresh);
       merged.sort((a,b): number => a.startMs-b.startMs || a.utteranceId.localeCompare(b.utteranceId));
@@ -390,7 +399,6 @@ export class PhoneV3UseCases {
       let requiresReload = false;
       const statusBefore = await this.repository.v3Status();
       const pendingBefore = statusBefore.pendingOperations + (statusBefore.confirmedOperations ?? 0);
-      annotationTiming('T1-schedule-complete', (await this.repository.pendingOperations(500)).map((op): string => op.operation_id));
       onStatus('正在同步标注与电脑状态…');
       const session = await this.remote.connect();
       const status = await session.status();
@@ -399,37 +407,59 @@ export class PhoneV3UseCases {
         throw new Error('电脑 V3 Device API 版本与 Phone 投影不兼容');
       }
       let cursor = await this.repository.currentCursor();
+      const adaptive = (status.sync_features ?? []).indexOf('adaptive-batch-v1') >= 0;
+      const bootstrap = (status.sync_features ?? []).indexOf('snapshot-v1') >= 0;
+      const policy = this.syncBatchPolicy;
       let hasMore = true;
       let batches = 0;
       let submitted = 0;
       let stopped = '';
       const attempted: Array<string> = [];
       while (!this.syncCancelled && batches < maxBatches) {
-        const pending = pullOnly ? [] : await this.repository.pendingOperations(500, attempted);
+        const pending = pullOnly ? [] : await this.repository.pendingOperations(adaptive ? policy.operations : 32, attempted);
+        if (batches === 0) { annotationTiming('T1-schedule-complete', pending.map((op): string => op.operation_id)); }
         const candidates: Array<DeviceV3ClientOperation> = pending.filter((op): boolean =>
           attempted.indexOf(op.operation_id) < 0).map((op): DeviceV3ClientOperation => {
           return { operation_id: op.operation_id, kind: op.kind,
             base_revision: op.base_revision, payload: op.payload };
         });
         if (!hasMore && candidates.length === 0) { break; }
-        const request = syncRequestBatch(cursor, candidates);
+        const request = syncRequestBatch(cursor, candidates, adaptive ? policy.operations : 32,
+          adaptive ? policy.pullLimit : 500, adaptive ? policy.pullBytes : undefined, bootstrap);
         const operations = request.client_operations;
         onStatus(`正在同步转写与处理状态：第 ${batches + 1} 批`);
         dispatched = operations.map((operation): string => operation.operation_id);
         annotationTiming('T2-sync-dispatch', dispatched);
         const response = await session.sync(request);
+        annotationTiming('T4-response-decoded', dispatched);
+        const commitStarted = Date.now();
         await applySyncResponse(this.repository, response);
         // The transaction is durable. UI/network failures must never mark it failed.
         dispatched = [];
+        if (adaptive) {
+          policy.observe(operations.length, jsonBytes(JSON.stringify(request)), response.transaction_ms,
+            response.changes.length, jsonBytes(JSON.stringify(response)), Date.now() - commitStarted);
+        }
         const committed = new PhoneV3SyncResult(1, response.receipts.length, response.next_cursor, backup);
-        committed.changed = true;
+        committed.changed = response.receipts.length > 0 || response.changes.length > 0;
         committed.operationIds = response.receipts.map((receipt): string => receipt.operation_id);
         committed.receiptStates = response.receipts.map((receipt): string => receipt.status);
         committed.utteranceIds = response.changes.filter((change): boolean => change.resource_type === 'utterance')
           .map((change): string => change.resource_id);
-        committed.requiresReload = response.receipts.length > 0 || response.changes.some((change): boolean => change.resource_type !== 'utterance');
+        for (let op of operations) {
+          if (!response.receipts.some((receipt): boolean => receipt.operation_id === op.operation_id)) { continue; }
+          const payload = op.payload as PhoneV3LocalAnnotation;
+          for (let selection of payload.selections ?? []) { committed.utteranceIds.push(selection.utterance_id); }
+          if (op.kind === 'utterance.correct') { committed.utteranceIds.push((op.payload as UtteranceCorrectionPayload).utterance_id); }
+        }
+        committed.utteranceIds = Array.from(new Set<string>(committed.utteranceIds));
+        committed.requiresReload = response.receipts.some((receipt): boolean => receipt.status !== 'applied') ||
+          response.changes.some((change): boolean => change.resource_type !== 'utterance');
+        if (response.changes.some((change): boolean => change.resource_type === 'review_item')) { this.reviewVersion = undefined; }
+        for (let id of committed.utteranceIds) { utteranceIds.add(id); }
+        requiresReload = requiresReload || committed.requiresReload;
         annotationTiming('T5-receipt-commit', committed.operationIds);
-        this.publishCommitted(committed);
+        if (committed.changed) { this.publishCommitted(committed); }
         changed = changed || response.changes.length > 0 || response.receipts.length > 0;
         for (let change of response.changes) {
           if (change.resource_type === 'utterance') { utteranceIds.add(change.resource_id); }
@@ -474,16 +504,33 @@ export class PhoneV3UseCases {
   async refreshSupplementary(): Promise<void> {
     const session = await this.remote.connect();
     const reviews = await session.reviews();
-    await this.repository.replaceReviewItems(reviews.items);
-    const committed = new PhoneV3SyncResult(0, 0, '', new PhoneV3AudioBackupResult());
-    committed.changed = true; committed.requiresReload = true;
-    this.publishCommitted(committed);
+    if (await this.storeReviews(reviews)) {
+      const committed = new PhoneV3SyncResult(0, 0, '', new PhoneV3AudioBackupResult());
+      committed.changed = true; committed.reviewsChanged = true;
+      this.publishCommitted(committed);
+    }
     const people = await session.annotations({ action: 'people' });
-    await this.cacheRemotePeople(people.people ?? []);
-    this.publishCommitted(committed);
+    if (people.version === undefined || people.version !== this.peopleVersion) {
+      await this.cacheRemotePeople(people.people ?? []);
+      this.peopleVersion = people.version;
+    }
+  }
+
+  private async storeReviews(reviews: DeviceV3ReviewSnapshot): Promise<boolean> {
+    if (reviews.version !== undefined && reviews.version === this.reviewVersion) { return false; }
+    const changed = await this.repository.replaceReviewItems(reviews.items);
+    this.reviewVersion = reviews.version;
+    return changed;
+  }
+
+  async refreshReviewSnapshot(snapshot: PhoneV3Snapshot): Promise<PhoneV3Snapshot> {
+    const reviews = phoneV3ReviewItems(await this.repository.projectionRows('review_item'));
+    return new PhoneV3Snapshot(snapshot.sessions, snapshot.conflicts, snapshot.sync,
+      snapshot.paired, snapshot.reminders, reviews);
   }
 
   async rebuild(): Promise<PhoneV3SyncResult> {
+    this.reviewVersion = undefined; this.peopleVersion = undefined;
     await this.repository.rebuildFromComputer();
     return this.synchronize();
   }
@@ -498,7 +545,7 @@ export class PhoneV3UseCases {
       if (status !== undefined && status >= 400 && status < 500) { throw error as Error; }
       throw new PhoneV3ReviewSubmissionError(false);
     }
-    try { await this.repository.replaceReviewItems(response.reviews.items); }
+    try { await this.storeReviews(response.reviews); }
     catch (_) { throw new PhoneV3ReviewSubmissionError(true); }
     return phoneV3ReviewSnapshotItems(response.reviews.items);
   }
@@ -506,7 +553,7 @@ export class PhoneV3UseCases {
   async refreshReviews(): Promise<Array<PhoneV3ReviewItem>> {
     const session = await this.remote.connect();
     const response = await session.reviews();
-    await this.repository.replaceReviewItems(response.items);
+    await this.storeReviews(response);
     return phoneV3ReviewSnapshotItems(response.items);
   }
 
@@ -530,7 +577,7 @@ export class PhoneV3UseCases {
       }
     }
     if (response.reviews !== undefined) {
-      await this.repository.replaceReviewItems(response.reviews.items);
+      await this.storeReviews(response.reviews);
     }
     return response;
   }
@@ -578,8 +625,12 @@ export class PhoneV3UseCases {
   async clearReviewAudio(): Promise<void> { await this.reviewAudioCache?.clear(); }
 
   private async cacheRemotePeople(people: Array<DeviceV3PersonChoice>): Promise<void> {
+    const cached = await this.repository.cachedPeople();
+    const changed = people.filter((person): boolean => !cached.some((old): boolean =>
+      old.person_id === person.person_id && old.display_name === person.display_name && old.local === person.local));
+    if (changed.length === 0) { return; }
     await this.repository.beginTransaction();
-    try { await this.repository.cachePeople(people); await this.repository.commit(); }
+    try { await this.repository.cachePeople(changed); await this.repository.commit(); }
     catch (error) { await this.repository.rollback(); throw error as Error; }
   }
 
@@ -598,8 +649,10 @@ export class PhoneV3UseCases {
 export function mergePhoneV3Sessions(localFacts: Array<PhoneV3LocalAudioFact>,
   links: Array<PhoneV3LocalAudioLink>, recordingRows: Array<PhoneV3ProjectionRow>,
   processingRows: Array<PhoneV3ProjectionRow>,
-  utteranceRows: Array<PhoneV3ProjectionRow>): Array<PhoneV3SessionCard> {
+  utteranceRows: Array<PhoneV3ProjectionRow>,
+  completions: Array<PhoneSessionCompletionRecord> = []): Array<PhoneV3SessionCard> {
   const cards: Array<PhoneV3SessionCard> = [];
+  const bySession = indexSessionUtterances(utteranceRows);
   for (let rowIndex = 0; rowIndex < recordingRows.length; rowIndex += 1) {
     const row = recordingRows[rowIndex];
     const payload = parseRecording(row);
@@ -627,11 +680,12 @@ export function mergePhoneV3Sessions(localFacts: Array<PhoneV3LocalAudioFact>,
       text(payload.status_code, 'pending'), numberValue(payload.progress, 0),
       numberValue(payload.revision, row.revision), row.updatedAt,
       local === undefined ? [] : local.paths.slice(), local === undefined ? 0 : local.sizeBytes,
-      local === undefined ? 0 : local.durationMs, uploadStatus(links, sessionId, sessionKey),
+      local === undefined ? 0 : local.durationMs, uploadStatus(links, completions, sessionId,
+        sessionKey, local === undefined ? [] : local.paths),
       processing === undefined ? 'not_started' : text(processing.payload.status, 'pending'),
       processing === undefined ? '' : text(processing.payload.current_stage, ''),
       processing === undefined ? 0 : numberValue(processing.payload.progress, 0),
-      sessionUtterances(utteranceRows, sessionId)));
+      bySession.get(sessionId) ?? []));
   }
   for (let localIndex = 0; localIndex < localFacts.length; localIndex += 1) {
     const local = localFacts[localIndex];
@@ -639,12 +693,15 @@ export function mergePhoneV3Sessions(localFacts: Array<PhoneV3LocalAudioFact>,
     if (hasSessionIdentity(cards, linkedId, local.sessionKey, local.localGroupKey)) {
       continue;
     }
+    const localUploadStatus = uploadStatus(links, completions, linkedId,
+      local.sessionKey, local.paths);
     cards.push(new PhoneV3SessionCard(
       linkedId.length > 0 ? linkedId : local.sessionKey,
       linkedId, local.sessionKey, local.localGroupKey, '', local.startedAt, 'Watch', 'local',
-      linkedId.length > 0 ? 'uploaded' : 'phone_only', 0, 0, local.receivedAt,
+      localUploadStatus === 'uploaded' ? 'uploaded' : 'phone_only', 0, 0, local.receivedAt,
       local.paths.slice(), local.sizeBytes, local.durationMs,
-      uploadStatus(links, linkedId, local.sessionKey), 'not_started', '', 0, []));
+      localUploadStatus,
+      'not_started', '', 0, []));
   }
   cards.sort((left: PhoneV3SessionCard, right: PhoneV3SessionCard): number =>
     right.startedAt - left.startedAt || right.updatedAt - left.updatedAt);
@@ -677,14 +734,14 @@ function latestProcessing(rows: Array<PhoneV3ProjectionRow>, sessionId: string):
   return match;
 }
 
-function sessionUtterances(rows: Array<PhoneV3ProjectionRow>, sessionId: string): Array<PhoneV3Utterance> {
-  const values: Array<PhoneV3Utterance> = [];
+function indexSessionUtterances(rows: Array<PhoneV3ProjectionRow>): Map<string, Array<PhoneV3Utterance>> {
+  const bySession = new Map<string, Array<PhoneV3Utterance>>();
   for (let index = 0; index < rows.length; index += 1) {
     try {
       const payload = validateV3UtteranceDto(parseProjectionObject(rows[index]));
-      if (payload.session_id !== sessionId) {
-        continue;
-      }
+      const sessionId = payload.session_id;
+      const values = bySession.get(sessionId) ?? [];
+      bySession.set(sessionId, values);
       values.push(new PhoneV3Utterance(
         payload.utterance_id, sessionId, payload.speaker_track_id, payload.speaker_label,
         payload.original_speaker_track_id, payload.original_speaker_label,
@@ -696,9 +753,11 @@ function sessionUtterances(rows: Array<PhoneV3ProjectionRow>, sessionId: string)
       throw projectionRowError(rows[index], 'utterance', error as Object);
     }
   }
-  values.sort((left: PhoneV3Utterance, right: PhoneV3Utterance): number =>
-    left.startMs - right.startMs || left.utteranceId.localeCompare(right.utteranceId));
-  return values;
+  for (let values of bySession.values()) {
+    values.sort((left: PhoneV3Utterance, right: PhoneV3Utterance): number =>
+      left.startMs - right.startMs || left.utteranceId.localeCompare(right.utteranceId));
+  }
+  return bySession;
 }
 
 function phoneV3Reminders(rows: Array<PhoneV3ProjectionRow>): Array<PhoneV3Reminder> {
@@ -815,13 +874,26 @@ function linkedSessionKey(links: Array<PhoneV3LocalAudioLink>, sessionId: string
   return '';
 }
 
-function uploadStatus(links: Array<PhoneV3LocalAudioLink>, sessionId: string, sessionKey: string): string {
+function uploadStatus(links: Array<PhoneV3LocalAudioLink>,
+  completions: Array<PhoneSessionCompletionRecord>, sessionId: string, sessionKey: string,
+  localPaths: Array<string>): string {
   let value = 'local';
   for (let index = 0; index < links.length; index += 1) {
     if ((sessionId.length > 0 && links[index].sessionId === sessionId) ||
       (sessionKey.length > 0 && links[index].sessionKey === sessionKey)) {
-      value = links[index].uploadStatus;
+      value = links[index].uploadStatus === 'uploaded' ? 'file_uploaded' : links[index].uploadStatus;
     }
+  }
+  const receipt = completions.find((record: PhoneSessionCompletionRecord): boolean =>
+    record.sessionKey === sessionKey && record.manifestSha256.length === 64);
+  if (localPaths.length === 0) {
+    return sessionId.length > 0 ? 'uploaded' : value;
+  }
+  const allFilesAcknowledged = localPaths.every((path: string): boolean =>
+    links.some((link: PhoneV3LocalAudioLink): boolean => link.sessionKey === sessionKey &&
+      link.localPath === path && link.uploadStatus === 'uploaded' && /^[0-9a-fA-F]{64}$/.test(link.sha256)));
+  if (receipt !== undefined && receipt.completedSegments === localPaths.length && allFilesAcknowledged) {
+    return 'uploaded';
   }
   return value;
 }

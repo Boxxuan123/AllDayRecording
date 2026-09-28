@@ -473,14 +473,16 @@ export class PhoneV3DeviceRuntime {
     if (!this.lifecycle.isActive(token)) {
       return;
     }
-    this.receivedRecordingCount = storedRecordings.length;
-    this.receivedRecordings = storedRecordings.slice(0, 100);
+    const audioRecordings = storedRecordings.filter((item: ReceivedRecordingFile): boolean =>
+      item.fileName !== 'session_summary.json');
+    this.receivedRecordingCount = audioRecordings.length;
+    this.receivedRecordings = audioRecordings.slice(0, 100);
     this.rebuildRecordingGroups(storedRecordings);
-    if (storedRecordings.length > 0) {
+    if (audioRecordings.length > 0) {
       if (this.receivedRecordingGroups.length > 0) {
         this.selectRecordingGroup(this.receivedRecordingGroups[0]);
       } else {
-        this.latestRecording = storedRecordings[0];
+        this.latestRecording = audioRecordings[0];
       }
     }
     this.notifyLocalAudioChanged();
@@ -724,6 +726,10 @@ export class PhoneV3DeviceRuntime {
 
   private applyReceivedRecording(recording: ReceivedRecordingFile,
     storedRecordings: Array<ReceivedRecordingFile>): void {
+    if (recording.fileName === 'session_summary.json') {
+      this.notifyLocalAudioChanged();
+      return;
+    }
     this.latestRecording = recording;
     const remaining: Array<ReceivedRecordingFile> = this.receivedRecordings.filter(
       (item: ReceivedRecordingFile): boolean => item.path !== recording.path);

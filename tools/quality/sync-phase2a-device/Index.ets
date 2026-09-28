@@ -117,7 +117,7 @@ struct Index {
       await PhoneProjectionRepository.open(context, DB);
       const indexed = await store.querySql("SELECT COUNT(*) FROM outbox_selections WHERE resource_id='migration-target'");
       indexed.goToFirstRow(); const count = indexed.getLong(0); indexed.close();
-      if (store.version !== 11 || count !== 1) { throw new Error('原生迁移校验失败'); }
+      if (store.version !== 12 || count !== 1) { throw new Error('原生迁移校验失败'); }
       await store.executeSql("DELETE FROM outbox WHERE operation_id='00000000000000000000999999'");
       this.migration = '原生 RDB 10→11 通过';
       }

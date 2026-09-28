@@ -1,7 +1,8 @@
 import { common } from '@kit.AbilityKit';
 import { picker } from '@kit.CoreFileKit';
 import { scanBarcode, scanCore } from '@kit.ScanKit';
-import { PhoneComputerTransferViewModel } from './PhoneComputerTransferViewModel';
+import { LegacyCompletionCandidate, PhoneComputerTransferViewModel } from './PhoneComputerTransferViewModel';
+import { PhoneSessionTransferFailure } from '../../v3/domain/PhoneV3Models';
 
 @Component
 export struct PhoneComputerTransferPage {
@@ -208,13 +209,13 @@ export struct PhoneComputerTransferPage {
         Column({ space: 10 }) {
           this.sectionTitle('2. 上传录音')
 
-          Text(`可上传 ${this.transferViewModel.availableSessions} 个会话，` +
+          Text(`手机已有 ${this.transferViewModel.availableSessions} 个会话，` +
             `${this.transferViewModel.availableRecordings} 个录音分片`)
             .width('100%')
             .fontSize(14)
             .fontColor($r('app.color.text_secondary'))
 
-          if (this.transferViewModel.busy || this.transferViewModel.progressPercent > 0) {
+          if (this.transferViewModel.uploadProgressActive) {
             Progress({ value: this.transferViewModel.progressPercent, total: 100, type: ProgressType.Linear })
               .width('100%')
               .height(8)
@@ -232,7 +233,34 @@ export struct PhoneComputerTransferPage {
               this.transferViewModel.upload();
             })
 
-          this.explanation('上传前自动发现已配对电脑，再用 HUKS 设备密钥静默认证。录音支持断点续传，手机原文件不会删除。')
+          ForEach(this.transferViewModel.transferFailures, (failure: PhoneSessionTransferFailure): void => {
+            Text(`${failure.category === 'conflict' ? '清单冲突' : '等待重试'} · ${failure.sessionKey}：${failure.reason}`)
+              .width('100%')
+              .fontSize(12)
+              .fontColor($r('app.color.text_secondary'))
+            Button('单独重试这条录音', { type: ButtonType.Capsule })
+              .width('100%')
+              .enabled(!this.transferViewModel.busy && this.transferViewModel.paired)
+              .onClick((): void => { this.transferViewModel.upload(failure.sessionKey); })
+          }, (failure: PhoneSessionTransferFailure): string => failure.sessionKey)
+
+          ForEach(this.transferViewModel.legacyCandidates, (candidate: LegacyCompletionCandidate): void => {
+            Button(`确认旧录音完整：${candidate.completedSegments} 片`, { type: ButtonType.Capsule })
+              .width('100%')
+              .enabled(!this.transferViewModel.busy)
+              .onClick((): void => AlertDialog.show({
+                title: '确认旧录音已结束？',
+                message: `会话 ${candidate.sessionKey} 当前有 ${candidate.completedSegments} 片，` +
+                  `${candidate.totalSamples} 样本。仅在手表录音已结束且全部分片已同步到手机时确认；` +
+                  `随后电脑才会把这些文件当作完整录音。`,
+                primaryButton: { value: '取消', action: (): void => {} },
+                secondaryButton: { value: '确认完整', action: (): void => {
+                  this.transferViewModel.confirmLegacySession(candidate.sessionKey);
+                } }
+              }))
+          }, (candidate: LegacyCompletionCandidate): string => candidate.sessionKey)
+
+          this.explanation('分片可以先上传；收到手表结束记录且全部分片齐全后，电脑才返回整场备份确认。手机原文件不会删除。')
         }
         .width('100%')
         .padding(16)

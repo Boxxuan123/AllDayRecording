@@ -15,6 +15,8 @@ import {
 import { ComputerRecordingBackupReceiptPort } from '../../computer/ComputerRecordingBackupService';
 import { PhonePendingOperation, PhoneProjectionStorage } from '../data/PhoneSyncProjection';
 import {
+  PhoneSessionCompletionRecord,
+  PhoneSessionTransferFailure,
   PhoneV3Conflict,
   PhoneV3DeviceState,
   PhoneV3LocalAudioFact,
@@ -35,13 +37,18 @@ export interface PhoneV3ProjectionRepositoryPort extends PhoneProjectionStorage,
   currentCursor(): Promise<string>;
   projectionRows(resourceType: string, resourceIds?: Array<string>): Promise<Array<PhoneV3ProjectionRow>>;
   localAudioLinks(): Promise<Array<PhoneV3LocalAudioLink>>;
+  localSessionCompletions(): Promise<Array<PhoneSessionCompletionRecord>>;
+  recordSessionCompletion(record: PhoneSessionCompletionRecord): Promise<void>;
+  localSessionFailures(): Promise<Array<PhoneSessionTransferFailure>>;
+  recordSessionFailure(failure: PhoneSessionTransferFailure): Promise<void>;
+  clearSessionFailure(sessionKey: string): Promise<void>;
   conflictRows(): Promise<Array<PhoneV3Conflict>>;
   v3Status(): Promise<PhoneV3SyncStatus>;
   markSyncFailure(message: string, operationIds?: Array<string>): Promise<void>;
   rebuildFromComputer(): Promise<void>;
   linkLocalAudio(sessionKey: string, localPath: string, sha256: string,
     uploadStatus: string): Promise<void>;
-  replaceReviewItems(items: Array<Object>): Promise<void>;
+  replaceReviewItems(items: Array<Object>): Promise<boolean>;
 }
 
 export interface PhoneV3LocalAudioRepositoryPort {
@@ -50,6 +57,10 @@ export interface PhoneV3LocalAudioRepositoryPort {
 
 export class PhoneV3AudioBackupResult {
   more: boolean = false;
+  failedSessions: number = 0;
+  failureReason: string = '';
+  failureCategory: string = '';
+  retryAfterMs: number = 0;
   sessions: number;
   uploadedFiles: number;
   skippedFiles: number;

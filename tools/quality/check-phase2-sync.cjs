@@ -19,7 +19,7 @@ async function setup(count, sync) {
   stores.at(-1).db.exec('ALTER TABLE outbox DROP COLUMN applied_revision; PRAGMA user_version=8');
   // Reconstruct after a real database close/reopen, before synchronization.
   stores.at(-1).db.close(); repo = await Repository.open({ databasePath });
-  assert.equal(stores.at(-1).version,11);
+  assert.equal(stores.at(-1).version,12);
   const session = { status: async () => ({ contract_version: contract.V3_CONTRACT_VERSION,
     projection_version: contract.V3_PROJECTION_VERSION }), sync, reviews: async () => ({ items: [] }),
     annotations: async () => ({ people: [] }) };

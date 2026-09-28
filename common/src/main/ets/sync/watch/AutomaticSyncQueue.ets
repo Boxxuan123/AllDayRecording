@@ -1,5 +1,6 @@
 import { fileIo } from '@kit.CoreFileKit';
 import { RecordingFile } from '../../models/RecordingModels';
+import { isRecordingCompletionSourcePath } from './RecordingCompletionPath';
 import {
   JSON_LOAD_DAMAGED,
   JSON_LOAD_MISSING,
@@ -129,7 +130,8 @@ function isAutomaticQueueManifestEntry(entry: AutomaticQueueManifestEntry): bool
   if (entry.relativePath.startsWith('/') || entry.relativePath.includes('..')) {
     return false;
   }
-  return isSupportedAudioFile(entry.relativePath) && isSupportedAudioFile(entry.fileName);
+  return (isSupportedAudioFile(entry.relativePath) && isSupportedAudioFile(entry.fileName)) ||
+    (entry.fileName === 'session_summary.json' && isRecordingCompletionSourcePath(entry.relativePath));
 }
 
 function isSupportedAudioFile(path: string): boolean {
@@ -321,6 +323,13 @@ export class AutomaticSyncQueue {
   }
 
   private isSyncableRecording(recording: RecordingFile): boolean {
-    return !recording.path.endsWith('.part') && recording.size > 0 && recording.size <= MAX_RECORDING_BYTES;
+    const prefix = `${this.filesDirectory}/`;
+    if (!recording.path.startsWith(prefix) || recording.size <= 0 || recording.size > MAX_RECORDING_BYTES) {
+      return false;
+    }
+    return isAutomaticQueueManifestEntry({
+      relativePath: recording.path.substring(prefix.length), fileName: recording.fileName,
+      size: recording.size, durationMs: recording.durationMs
+    });
   }
 }

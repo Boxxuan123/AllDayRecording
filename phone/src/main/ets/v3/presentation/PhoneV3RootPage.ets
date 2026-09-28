@@ -147,7 +147,8 @@ export struct PhoneV3RootPage {
         PhoneV3RecordingListPage({
           viewModel: this.viewModel,
           stateRevision: this.stateRevision,
-          onOpenSession: (session: PhoneV3SessionCard): void => this.openSession(session)
+          onOpenSession: (session: PhoneV3SessionCard): void => this.openSession(session),
+          onOpenBackupIssues: (): void => this.onOpenComputerTransfer()
         })
       }
       .tabBar(this.bottomTabStyle($r('app.string.tab_recordings'), $r('sys.symbol.waveform')))

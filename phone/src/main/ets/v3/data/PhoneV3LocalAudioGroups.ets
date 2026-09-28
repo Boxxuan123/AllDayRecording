@@ -30,6 +30,8 @@ export function groupPhoneV3LocalAudio(recordings: Array<ReceivedRecordingFile>)
   const groups: Array<PhoneV3LocalAudioGroup> = [];
   for (let index = 0; index < recordings.length; index += 1) {
     const recording = recordings[index];
+    if (!recording.fileName.toLowerCase().endsWith('.wav') &&
+      !recording.fileName.toLowerCase().endsWith('.m4a')) { continue; }
     const sessionDirectory = continuousSessionDirectory(recording);
     const key = sessionDirectory.length > 0 ? `session:${sessionDirectory}` : `file:${recording.path}`;
     let group = findGroup(groups, key);

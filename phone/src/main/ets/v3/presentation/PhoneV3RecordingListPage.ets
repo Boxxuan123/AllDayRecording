@@ -9,6 +9,7 @@ import { PhoneV3SessionCard } from '../domain/PhoneV3Models';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 import { PHONE_V3_UI_STATE_STORAGE_KEY, PhoneV3UiState } from './PhoneV3UiState';
 import {
+  phoneV3BackupLabel,
   phoneV3SessionMeta,
   phoneV3SessionTitle,
   phoneV3TranscriptSummary
@@ -25,6 +26,7 @@ export struct PhoneV3RecordingListPage {
   @State private searchText: string = '';
   @State private filterIndex: number = 0;
   onOpenSession: (session: PhoneV3SessionCard) => void = (_session: PhoneV3SessionCard): void => {};
+  onOpenBackupIssues: () => void = (): void => {};
 
   private currentUiState(): PhoneV3UiState {
     const state = AppStorage.get<PhoneV3UiState>(PHONE_V3_UI_STATE_STORAGE_KEY);
@@ -46,7 +48,7 @@ export struct PhoneV3RecordingListPage {
         session.processingStatus !== 'running' && session.processingStatus !== 'queued') {
         return false;
       }
-      if (this.filterIndex === 3 && session.sessionId.length > 0) {
+      if (this.filterIndex === 3 && session.uploadStatus === 'uploaded') {
         return false;
       }
       if (search.length === 0) {
@@ -80,11 +82,11 @@ export struct PhoneV3RecordingListPage {
   }
 
   private storageLabel(session: PhoneV3SessionCard): string {
-    if (session.sessionId.length > 0) {
-      return '已同步电脑';
+    if (session.uploadStatus === 'file_uploaded') {
+      return '分片已到电脑，待整场确认';
     }
     if (session.uploadStatus === 'uploaded') {
-      return '等待电脑入库';
+      return '已备份';
     }
     return session.localPaths.length > 0 ? '仅手机' : '无本地音频';
   }
@@ -93,7 +95,9 @@ export struct PhoneV3RecordingListPage {
     if (this.viewModel.canDeleteLocalAudio(session)) {
       return '删除录音';
     }
-    return session.localPaths.length > 0 ? '已同步电脑，不能删除' : '手机没有本地音频';
+    return session.localPaths.length > 0 ?
+      (session.uploadStatus === 'file_uploaded' ? '整场未确认，暂不能删除' : '已同步电脑，不能删除') :
+      '手机没有本地音频';
   }
 
   private confirmDelete(session: PhoneV3SessionCard): void {
@@ -132,7 +136,7 @@ export struct PhoneV3RecordingListPage {
   @Builder
   private moreButton(session: PhoneV3SessionCard) {
     Button({ type: ButtonType.Circle, stateEffect: true }) {
-      if (this.viewModel.computerSyncActive &&
+      if (this.viewModel.backupActive &&
         session.uploadStatus !== 'uploaded' &&
         this.viewModel.completedSessionKeys.indexOf(session.sessionKey) < 0) {
         LoadingProgress()
@@ -173,12 +177,16 @@ export struct PhoneV3RecordingListPage {
           .fontColor($r('app.color.text_secondary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-        if (this.viewModel.computerSyncActive || this.viewModel.completedSessionKeys.indexOf(session.sessionKey) >= 0) {
-          Text(session.uploadStatus === 'uploaded' || this.viewModel.completedSessionKeys.indexOf(session.sessionKey) >= 0 ?
-            '已备份完成' : this.viewModel.computerProgress.sessionKey === session.sessionKey ?
-            '正在同步此录音' : '等待同步')
+        if (session.uploadStatus === 'uploaded' || session.uploadStatus === 'file_uploaded' ||
+          (this.viewModel.backupActive && this.viewModel.computerProgress.sessionKey === session.sessionKey)) {
+          Text(this.viewModel.backupActive && this.viewModel.computerProgress.sessionKey === session.sessionKey ?
+            this.viewModel.computerProgress.message : phoneV3BackupLabel(session))
             .fontSize(12)
             .fontColor($r('app.color.brand_primary'))
+        }
+        if (session.processingStatus === 'running' || session.processingStatus === 'queued') {
+          Progress({ value: Math.round(session.processingProgress * 100), total: 100,
+            type: ProgressType.Linear }).width('100%')
         }
         Text(phoneV3TranscriptSummary(session))
           .width('100%')
@@ -229,15 +237,26 @@ export struct PhoneV3RecordingListPage {
       .borderRadius(22)
       .backgroundColor($r('app.color.surface_secondary'))
 
-      if (this.viewModel.computerProgress.totalFiles > 0) {
-        Text(this.viewModel.computerSyncError || this.viewModel.computerSyncMessage)
+      if (this.viewModel.backupError.length > 0 || this.viewModel.backupMessage.length > 0 ||
+        this.viewModel.device.watchSyncing) {
+        Text(this.viewModel.backupError.length > 0 ?
+          `${this.viewModel.backupFailureCategory === 'conflict' ? '清单冲突' : '备份失败'}：${this.viewModel.backupError}` :
+          this.viewModel.device.watchSyncing && !this.viewModel.backupActive ?
+            `正在接收录音，已收到 ${this.viewModel.device.watchReceived} 片` : this.viewModel.backupMessage)
           .width('100%').fontSize(12).maxLines(4)
-        if (this.viewModel.computerProgress.activeFiles.length > 0) {
+        if (this.viewModel.backupActive && this.viewModel.computerProgress.activeFiles.length > 0) {
           Text('并行文件：\n' + this.viewModel.computerProgress.activeFiles.join('\n'))
             .width('100%').fontSize(11).maxLines(6)
         }
-        Progress({ value: this.viewModel.computerProgress.percent(), total: 100, type: ProgressType.Linear })
-          .width('100%')
+        if (this.viewModel.backupActive && this.viewModel.computerProgress.stage === 'uploading' &&
+          this.viewModel.computerProgress.totalBytes > 0) {
+          Progress({ value: this.viewModel.computerProgress.percent(), total: 100, type: ProgressType.Linear })
+            .width('100%')
+        }
+        if (this.viewModel.backupError.length > 0) {
+          Button('处理这条录音', { type: ButtonType.Capsule })
+            .onClick((): void => this.onOpenBackupIssues())
+        }
       }
       if (this.currentUiState().error.length > 0) {
         ExceptionPromptV2({

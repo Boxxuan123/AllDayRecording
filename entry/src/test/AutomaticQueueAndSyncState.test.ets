@@ -175,6 +175,26 @@ function recordingAck(requestId: string, actualState: string): WatchSyncProtocol
 
 export default function automaticQueueAndSyncStateTest() {
   describe('AutomaticSyncQueue', () => {
+    it('persistsSummaryBetweenAudioFilesAndRestoresAfterRestart', 0, () => {
+      const storage = new FakeQueueFileSystem();
+      const directory = '/files/pcm_session_1767225600000';
+      storage.files.set(`${directory}/segment_0.wav`, { size: 32044, isFile: true });
+      storage.files.set(`${directory}/session_summary.json`, { size: 200, isFile: true });
+      storage.files.set(`${directory}/segment_1.wav`, { size: 32044, isFile: true });
+      const queue = new AutomaticSyncQueue('/files', storage, new FakeSyncClock());
+      expect(queue.enqueue({ fileName: 'segment_0.wav', path: `${directory}/segment_0.wav`,
+        size: 32044, durationMs: 1000 })).assertEqual('enqueued');
+      expect(queue.enqueue({ fileName: 'session_summary.json', path: `${directory}/session_summary.json`,
+        size: 200, durationMs: 0 })).assertEqual('enqueued');
+      expect(queue.enqueue({ fileName: 'segment_1.wav', path: `${directory}/segment_1.wav`,
+        size: 32044, durationMs: 1000 })).assertEqual('enqueued');
+      const restarted = new AutomaticSyncQueue('/files', storage, new FakeSyncClock());
+      expect(restarted.restore()).assertEqual(AUTOMATIC_QUEUE_RESTORED);
+      expect(restarted.count()).assertEqual(3);
+      expect(restarted.first()?.relativePath).assertEqual('pcm_session_1767225600000/segment_0.wav');
+      expect(restarted.complete(`${directory}/segment_0.wav`)).assertTrue();
+      expect(restarted.first()?.relativePath).assertEqual('pcm_session_1767225600000/session_summary.json');
+    });
     it('restoresProductionManifestAndDropsMissingFile', 0, () => {
       const storage = new FakeQueueFileSystem();
       const clock = new FakeSyncClock();

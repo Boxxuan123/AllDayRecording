@@ -7,6 +7,7 @@ import {
   buildWifiFrameNonce,
   isExactWifiRecordingMatch,
   isSafeWifiRecordingSourcePath,
+  isAllowedWifiRecordingSize,
   isValidWifiTransferCredentials,
   wifiBytesToHex,
   wifiConstantTimeHexEqual,
@@ -22,6 +23,12 @@ export default function wifiRecordingTransferPolicyTest() {
       expect(isSafeWifiRecordingSourcePath('/data/audio.wav')).assertFalse();
       expect(isSafeWifiRecordingSourcePath('../audio.wav')).assertFalse();
       expect(isSafeWifiRecordingSourcePath('session/summary.json')).assertFalse();
+      expect(isSafeWifiRecordingSourcePath('pcm_session_1767225600000/session_summary.json')).assertTrue();
+      expect(isSafeWifiRecordingSourcePath('pcm_session_1/session_summary.json')).assertFalse();
+      expect(isSafeWifiRecordingSourcePath('other/session_summary.json')).assertFalse();
+      expect(isAllowedWifiRecordingSize('pcm_session_1767225600000/session_summary.json', 1024)).assertTrue();
+      expect(isAllowedWifiRecordingSize('pcm_session_1767225600000/session_summary.json', 2 * 1024 * 1024))
+        .assertFalse();
     });
 
     it('sanitizesReceivedFileNames', 0, () => {

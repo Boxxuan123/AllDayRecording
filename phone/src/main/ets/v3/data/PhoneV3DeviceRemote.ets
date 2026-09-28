@@ -11,7 +11,7 @@ import {
   DeviceV3SyncRequest,
   DeviceV3SyncResponse
 } from '../../computer/ComputerTransferProtocol';
-import { connectComputerReceiver, verifyConfiguration } from '../../computer/ComputerReceiverConnection';
+import { connectComputerReceiverSession, verifyConfiguration } from '../../computer/ComputerReceiverConnection';
 import { ComputerTransferConfigStore, ComputerTransferConfig } from '../../computer/ComputerTransferConfigStore';
 import { ComputerTransferHttpClient } from '../../computer/ComputerTransferHttpClient';
 import { PhoneV3RemotePort, PhoneV3RemoteSession } from '../application/PhoneV3Ports';
@@ -20,15 +20,17 @@ class PhoneV3HttpRemoteSession implements PhoneV3RemoteSession {
   private client: ComputerTransferHttpClient;
   private store: ComputerTransferConfigStore;
   private config: ComputerTransferConfig;
+  private verifiedStatus?: DeviceV3StatusResponse;
 
-  constructor(client: ComputerTransferHttpClient, store: ComputerTransferConfigStore, config: ComputerTransferConfig) {
+  constructor(client: ComputerTransferHttpClient, store: ComputerTransferConfigStore, config: ComputerTransferConfig, status?: DeviceV3StatusResponse) {
     this.client = client;
-    this.store = store; this.config = config;
+    this.store = store; this.config = config; this.verifiedStatus = status;
   }
 
   async status(): Promise<DeviceV3StatusResponse> {
     await verifyConfiguration(this.store, this.config);
-    const response = await this.client.v3Status();
+    const response = this.verifiedStatus ?? await this.client.v3Status();
+    this.verifiedStatus = response;
     await verifyConfiguration(this.store, this.config);
     return response;
   }
@@ -86,9 +88,10 @@ export class PhoneV3DeviceRemote implements PhoneV3RemotePort {
   }
 
   async connect(): Promise<PhoneV3RemoteSession> {
-    const updated = await connectComputerReceiver(this.context, this.configStore);
+    const connected = await connectComputerReceiverSession(this.context, this.configStore);
+    const updated = connected.config;
     return new PhoneV3HttpRemoteSession(new ComputerTransferHttpClient(
-      this.context, updated.baseUrl, updated.caPath, updated.deviceId, '', updated.signingKeyAlias), this.configStore, updated);
+      this.context, updated.baseUrl, updated.caPath, updated.deviceId, '', updated.signingKeyAlias), this.configStore, updated, connected.status.v3 ?? undefined);
   }
 
   async audioNamespace(): Promise<string> {
