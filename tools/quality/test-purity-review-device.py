@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import socket
 import sqlite3
 import subprocess
 import tempfile
@@ -38,6 +39,22 @@ def database_counts(path: Path) -> tuple[int, int]:
         tasks = connection.execute("SELECT COUNT(*) FROM speaker_profile_purity_tasks").fetchone()[0]
         reviews = connection.execute("SELECT COUNT(*) FROM speaker_profile_purity_reviews").fetchone()[0]
         return tasks, reviews
+    finally:
+        connection.close()
+
+
+def pending_count(path: Path) -> int:
+    connection = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+    try:
+        return connection.execute("""
+            SELECT COUNT(*) FROM speaker_profile_purity_tasks t
+            LEFT JOIN (
+              SELECT task_id, action, ROW_NUMBER() OVER (
+                PARTITION BY task_id ORDER BY revision DESC) AS position
+              FROM speaker_profile_purity_reviews
+            ) r ON r.task_id=t.task_id AND r.position=1
+            WHERE r.action IS NULL OR r.action!='submit'
+        """).fetchone()[0]
     finally:
         connection.close()
 
@@ -89,6 +106,8 @@ def main() -> None:
     parser.add_argument("--hdc", required=True, help="path to hdc executable")
     parser.add_argument("--device", help="hdc device ID; auto-select if only one is connected")
     parser.add_argument("--pc-db", required=True, type=Path, help="PC state/v3/core.sqlite3")
+    parser.add_argument("--offline", action="store_true",
+                        help="receiver/network is unavailable; verify already prefetched audio plays")
     args = parser.parse_args()
     device = args.device
     if not device:
@@ -98,19 +117,27 @@ def main() -> None:
             raise RuntimeError(f"Expected one connected device, found {len(devices)}")
         device = devices[0].split()[0]
     expected_tasks, starting_reviews = database_counts(args.pc_db)
+    expected_pending = pending_count(args.pc_db)
+    if args.offline:
+        try:
+            with socket.create_connection(("127.0.0.1", 8766), timeout=1):
+                raise AssertionError("PC receiver is still reachable; offline test is invalid")
+        except (OSError, TimeoutError):
+            pass
     if expected_tasks == 0:
         raise AssertionError("No generated purity tasks in the PC database")
     hdc(args.hdc, device, "shell", "aa", "start", "-a", "EntryAbility", "-b", BUNDLE)
     with tempfile.TemporaryDirectory(prefix="purity-device-smoke-") as directory:
         target = Path(directory) / "layout.json"
         try:
+            print("Checking cached review inbox", flush=True)
             items, _ = wait_for(args.hdc, device, target, "审核", exact=True)
             tabs = [item for item in items if item.get("text") == "审核"]
             click(args.hdc, device, tabs[-1])
             items, card = wait_for(args.hdc, device, target, "段待听")
             count_match = re.search(r"(\d+)\s*段待听", card["text"])
-            if count_match is None or int(count_match.group(1)) != expected_tasks:
-                raise AssertionError("Phone pending count differs from the PC audit task count")
+            if count_match is None or int(count_match.group(1)) != expected_pending:
+                raise AssertionError(f"Phone pending count differs: {card['text']} vs {expected_pending}")
             click(args.hdc, device, find(items, "开始审核", exact=True))
             items, _ = wait_for(args.hdc, device, target, "播放目标片段")
             for label in ("听前后文", "这段主要是谁在说话？", "稍后再看"):
@@ -119,23 +146,29 @@ def main() -> None:
             visible = "\n".join(item.get("text", "") for item in items)
             if any(value in visible for value in ("高风险", "最像本人", "cosine", "P0-special")):
                 raise AssertionError("Pre-verdict risk reason leaked into the phone UI")
+            print("Checking target audio", flush=True)
             click(args.hdc, device, find(items, "播放目标片段"))
             items, _ = wait_for(args.hdc, device, target, "重播目标片段", seconds=20)
+            print("Checking context audio", flush=True)
             click(args.hdc, device, find(items, "听前后文", exact=True))
             items, _ = wait_for(args.hdc, device, target, "上下文播放中", seconds=20)
             click(args.hdc, device, find(items, "稍后再看", exact=True))
             wait_for(args.hdc, device, target, "声纹纯度审核")
             if database_counts(args.pc_db) != (expected_tasks, starting_reviews):
                 raise AssertionError("Read-only device test changed the audit database")
+            print("Checking review history", flush=True)
             hdc(args.hdc, device, "shell", "uitest", "uiInput", "keyEvent", "Back")
             items, history_button = wait_for(args.hdc, device, target, "纯度已审核")
             click(args.hdc, device, history_button)
-            wait_for(args.hdc, device, target, "暂无已审核记录")
+            wait_for(args.hdc, device, target,
+                     "暂无已审核记录" if expected_pending == expected_tasks else "已审核")
         finally:
             hdc(args.hdc, device, "shell", "uitest", "uiInput", "keyEvent", "Back")
     if database_counts(args.pc_db) != (expected_tasks, starting_reviews):
         raise AssertionError("Audit database changed during device test")
     print(json.dumps({"status": "PASS", "device_tasks": expected_tasks,
+                      "pending_tasks": expected_pending,
+                      "offline": args.offline,
                       "review_rows_unchanged": True,
                       "checked": ["inbox", "target_audio", "context_audio", "skip", "history"]}))
 

@@ -475,9 +475,10 @@ export class PhoneV3ViewModel {
 
   submitPurityReview(reviewId: string, personId: string, unknown: boolean,
     purity: string, others: Array<string>, flags: Array<string>, undo: boolean,
-    onResolved: () => void = (): void => {}): void {
+    onResolved: () => void = (): void => {},
+    onFailed: () => void = (): void => {}): boolean {
     const useCases = this.useCases;
-    if (useCases === undefined || this.busy || this.reviewSubmissionState(reviewId)) { return; }
+    if (useCases === undefined || this.reviewSubmissionState(reviewId)) { return false; }
     const request: DeviceV3ReviewActionRequest = { review_id: reviewId, action: undo ? 'undo' : 'submit' };
     if (!undo) {
       request.primary_speaker_person_id = unknown ? null : personId;
@@ -486,34 +487,30 @@ export class PhoneV3ViewModel {
       request.other_speaker_ids = others;
       request.quality_flags = flags;
     }
-    this.reviewSubmissions.set(this.reviewObjectKey(reviewId, ''), new PhoneV3PendingReview(reviewId, '', request.action, 'sending'));
     const lifecycle = this.lifecycleGeneration;
-    this.stateChangeListener();
-    useCases.resolveReview(request).then((items): void => {
-      this.reviewSubmissions.delete(this.reviewObjectKey(reviewId, ''));
+    useCases.queuePurityReview(request).then((items): void => {
       if (lifecycle !== this.lifecycleGeneration) { return; }
       const current = this.snapshot;
       this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SNAPSHOT_READY,
         new PhoneV3Snapshot(current.sessions, current.conflicts, current.sync, current.paired,
-          current.reminders, items), undefined, '声纹纯度判断已保存'));
+          current.reminders, items)));
       onResolved();
     }).catch((error: Object): void => {
-      if (error instanceof PhoneV3ReviewSubmissionError) {
-        this.reviewSubmissions.set(this.reviewObjectKey(reviewId, ''),
-          new PhoneV3PendingReview(reviewId, '', request.action, error.committed ? 'committed' : 'unknown'));
-      } else { this.reviewSubmissions.delete(this.reviewObjectKey(reviewId, '')); }
       if (lifecycle === this.lifecycleGeneration) { this.fail(error); }
+      onFailed();
     });
+    return true;
   }
 
   playPurityContext(reviewId: string, taskId: string): void {
     const useCases = this.useCases;
     const player = this.reviewAudioPlayer;
-    if (useCases === undefined || player === undefined || this.busy) { return; }
+    if (useCases === undefined || player === undefined) { return; }
     const generation = ++this.audioRequestGeneration;
     this.reviewPlaybackPrototype = '';
     this.reviewPlaybackRange = '';
     this.audioLoading = true;
+    this.stateChangeListener();
     player.release().then((): void => {}, (): void => {});
     useCases.loadPurityContext(reviewId, taskId).then((response): void => {
       if (generation !== this.audioRequestGeneration) { return; }
@@ -528,7 +525,11 @@ export class PhoneV3ViewModel {
         this.reviewPlaybackPrototype = ''; this.reviewPlaybackRange = '';
         this.stateChangeListener();
       }, (message: string): void => {
-        if (generation === this.audioRequestGeneration) { this.reviewPlaybackPrototype = ''; this.fail(new Error(message)); }
+        if (generation === this.audioRequestGeneration) {
+          this.audioLoading = false; this.reviewPlaybackPrototype = ''; this.fail(new Error(message));
+        }
+      }).catch((error: Object): void => {
+        if (generation === this.audioRequestGeneration) { this.audioLoading = false; this.fail(error); }
       });
     }).catch((error: Object): void => {
       if (generation === this.audioRequestGeneration) { this.audioLoading = false; this.fail(error); }
@@ -803,7 +804,7 @@ export class PhoneV3ViewModel {
     onCompleted: () => void = (): void => {}): void {
     const useCases = this.useCases;
     const player = this.reviewAudioPlayer;
-    if (useCases === undefined || player === undefined || this.busy) {
+    if (useCases === undefined || player === undefined) {
       return;
     }
     this.playedReviewSampleKeys = [];
@@ -834,6 +835,7 @@ export class PhoneV3ViewModel {
         if (generation !== this.audioRequestGeneration) { return; }
         this.audioLoading = false;
         this.reviewPlaybackPrototype = prototypeId;
+        this.reviewPlaybackRange = '正在播放目标片段';
         this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SUCCESS,
           undefined, undefined, '正在完整串播，播放结束后才能确认'));
       }, (): void => {
@@ -1045,7 +1047,8 @@ export class PhoneV3ViewModel {
       await this.retirement;
       if (lifecycle !== this.lifecycleGeneration) { return; }
       const audioCache = new PhoneV3ReviewAudioCache(context);
-      this.reviewAudioPlayer = new PhoneV3ReviewAudioPlayer(context, audioCache);
+      const purityAudioCache = new PhoneV3ReviewAudioCache(context, 'purity-audio-v1');
+      this.reviewAudioPlayer = new PhoneV3ReviewAudioPlayer(context, audioCache, purityAudioCache);
       const local = new PhoneV3LocalAudioRepository(context.filesDir);
       this.localFacts = await local.list();
       this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.LOCAL_READY,
@@ -1065,8 +1068,10 @@ export class PhoneV3ViewModel {
           this.backupMessage = progress.stage === 'uploading' ?
             `${progress.message} · 本次上传 ${progress.percent()}%` : progress.message;
           this.stateChangeListener();
-        }), audioCache);
+        }), audioCache, purityAudioCache);
       await this.refreshSnapshot();
+      this.useCases.preparePurityAudioPack().catch((): void => {});
+      this.useCases.flushPurityReviews().catch((): void => {});
       if (lifecycle !== this.lifecycleGeneration) { return; }
       await this.startForegroundSync(context);
       if (this.refreshQueued) {

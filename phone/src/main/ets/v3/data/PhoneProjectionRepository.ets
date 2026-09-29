@@ -4,7 +4,8 @@ import {
   DeviceV3Change,
   DeviceV3ClientOperation,
   DeviceV3PersonChoice,
-  DeviceV3OperationReceipt
+  DeviceV3OperationReceipt,
+  DeviceV3ReviewActionRequest
 } from '../../computer/ComputerTransferProtocol';
 import { V3_PROJECTION_VERSION } from '../contracts/V3ContractModels';
 import {
@@ -22,7 +23,7 @@ import {
 import { PhoneV3ProjectionRepositoryPort } from '../application/PhoneV3Ports';
 
 const DATABASE_NAME: string = 'phone_v3_projection.db';
-const SCHEMA_VERSION: number = 15;
+const SCHEMA_VERSION: number = 16;
 const TABLES: Array<string> = [
   'projection_recordings', 'projection_audio_assets', 'projection_processing_runs',
   'projection_utterances', 'projection_review_items', 'projection_reminders'
@@ -142,6 +143,37 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
        VALUES (?, ?, ?, ?, 0, '', ?)`,
       [operation.operation_id, operation.kind, operation.base_revision,
         JSON.stringify(operation.payload), Date.now()]);
+  }
+
+  async enqueuePurityReview(request: DeviceV3ReviewActionRequest): Promise<void> {
+    if (!request.operation_id) { throw new Error('缺少本机审核编号'); }
+    await this.beginTransaction();
+    try {
+      await this.store.executeSql(
+        'INSERT INTO pending_purity_reviews(operation_id, review_id, payload_json, created_at) VALUES(?,?,?,?)',
+        [request.operation_id, request.review_id, JSON.stringify(request), Date.now()]);
+      await this.commit();
+    } catch (error) { await this.rollback(); throw error as Error; }
+  }
+
+  async pendingPurityReviews(): Promise<Array<DeviceV3ReviewActionRequest>> {
+    const result = await this.store.querySql(
+      'SELECT payload_json FROM pending_purity_reviews ORDER BY created_at, rowid');
+    const values: Array<DeviceV3ReviewActionRequest> = [];
+    try {
+      while (result.goToNextRow()) {
+        values.push(JSON.parse(result.getString(result.getColumnIndex('payload_json'))) as DeviceV3ReviewActionRequest);
+      }
+    } finally { result.close(); }
+    return values;
+  }
+
+  async removePurityReview(operationId: string): Promise<void> {
+    await this.beginTransaction();
+    try {
+      await this.store.executeSql('DELETE FROM pending_purity_reviews WHERE operation_id=?', [operationId]);
+      await this.commit();
+    } catch (error) { await this.rollback(); throw error as Error; }
   }
 
   async pendingOperations(limit: number = 500, excludedIds: Array<string> = []): Promise<Array<PhonePendingOperation>> {
@@ -883,6 +915,13 @@ async function migrate(store: relationalStore.RdbStore): Promise<void> {
       await store.executeSql(`CREATE INDEX idx_projection_utterances_session_time
         ON projection_utterances(session_id, status, start_ms, resource_id)`);
       store.version = 15;
+    }
+    if (store.version < 16) {
+      await store.executeSql(`CREATE TABLE IF NOT EXISTS pending_purity_reviews (
+        operation_id TEXT PRIMARY KEY, review_id TEXT NOT NULL,
+        payload_json TEXT NOT NULL, created_at INTEGER NOT NULL)`);
+      await store.executeSql('CREATE INDEX IF NOT EXISTS idx_pending_purity_review ON pending_purity_reviews(review_id, created_at)');
+      store.version = 16;
     }
     store.commit();
   } catch (error) {

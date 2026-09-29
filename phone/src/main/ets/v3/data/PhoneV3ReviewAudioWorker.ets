@@ -22,15 +22,17 @@ export function prepareTransientReviewAudio(directory: string, name: string, enc
 @Concurrent
 export async function reviewAudioFileTask(root: string, action: string, namespace: string,
   key: string, responseJson: string, pinnedJson: string, encodedAudio: string = ''): Promise<string> {
-  const maxBytes: number = 64 * 1024 * 1024;
+  const persistent: boolean = root.endsWith('/purity-audio-v1');
+  const maxBytes: number = persistent ? 512 * 1024 * 1024 : 64 * 1024 * 1024;
+  const maxEntries: number = persistent ? 512 : 48;
   const maxItem: number = 16 * 1024 * 1024;
   try { fileIo.mkdirSync(root); } catch (_error) { fileIo.statSync(root); }
   const indexPath = `${root}/index.json`;
   let entries: Array<AudioEntry> = [];
   try {
-    if (fileIo.statSync(indexPath).size > 256 * 1024) { throw new Error('invalid index'); }
+    if (fileIo.statSync(indexPath).size > (persistent ? 2 * 1024 * 1024 : 256 * 1024)) { throw new Error('invalid index'); }
     entries = JSON.parse(fileIo.readTextSync(indexPath)) as Array<AudioEntry>;
-    if (!Array.isArray(entries) || entries.length > 64) { entries = []; }
+    if (!Array.isArray(entries) || entries.length > (persistent ? 520 : 64)) { entries = []; }
   } catch (_error) { entries = []; }
   const pins = JSON.parse(pinnedJson) as Array<string>;
   entries = entries.filter((entry: AudioEntry): boolean => /^[a-f0-9]{64}\.wav$/.test(entry.name) &&
@@ -98,7 +100,7 @@ export async function reviewAudioFileTask(root: string, action: string, namespac
     let used = entries.reduce((sum: number, e: AudioEntry): number => sum + e.bytes, 0);
     const victims: Array<string> = [];
     for (const old of entries) {
-      if (used + bytes.length <= maxBytes && entries.length - victims.length < 48) { break; }
+      if (used + bytes.length <= maxBytes && entries.length - victims.length < maxEntries) { break; }
       if (pins.indexOf(`${root}/${old.name}`) >= 0 || old.holdUntil > Date.now()) { continue; }
       removeDerivedFile(`${root}/${old.name}`);
       used -= old.bytes; victims.push(old.name);
@@ -106,7 +108,7 @@ export async function reviewAudioFileTask(root: string, action: string, namespac
       saveAudioIndex(indexPath, entries.filter((e: AudioEntry): boolean => victims.indexOf(e.name) < 0));
     }
     entries = entries.filter((e: AudioEntry): boolean => victims.indexOf(e.name) < 0);
-    if (used + bytes.length > maxBytes || entries.length >= 48) { throw new Error('试听缓存空间暂不足，请稍后重试'); }
+    if (used + bytes.length > maxBytes || entries.length >= maxEntries) { throw new Error('试听缓存空间暂不足，请稍后重试'); }
     try {
       const file = fileIo.openSync(temp, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
       try {
@@ -129,7 +131,7 @@ export async function reviewAudioFileTask(root: string, action: string, namespac
   for (const item of entries) {
     const pinned = pins.indexOf(`${root}/${item.name}`) >= 0;
     const obsolete = action === 'clear' || (namespace.length > 0 && item.namespace !== ns);
-    const evict = obsolete || (item.holdUntil < Date.now() && (count > 48 || total > maxBytes));
+    const evict = obsolete || (item.holdUntil < Date.now() && (count > maxEntries || total > maxBytes));
     if (evict && !pinned) {
       try { removeDerivedFile(`${root}/${item.name}`); }
       catch (error) { saveAudioIndex(indexPath, retained.concat(entries.slice(entries.indexOf(item)))); throw error as Error; }

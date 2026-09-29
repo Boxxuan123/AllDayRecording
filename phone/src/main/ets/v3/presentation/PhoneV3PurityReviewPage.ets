@@ -2,6 +2,7 @@ import { HdsNavDestination, HdsNavDestinationTitleMode } from '@kit.UIDesignKit'
 import { DeviceV3PersonChoice } from '../../computer/ComputerTransferProtocol';
 import { PhoneV3ReviewItem, PhoneV3SessionCard } from '../domain/PhoneV3Models';
 import { PhoneV3VoiceCandidate, phoneV3ReviewIsHistory, phoneV3VoiceCandidates } from '../domain/PhoneV3ReviewModels';
+import { PhoneV3VoiceTask } from '../domain/PhoneV3VoiceReviewTask';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 import { PhoneV3PeopleLoader } from './PhoneV3PeopleLoader';
 import { PhoneV3PersonSelector } from './PhoneV3PersonSelector';
@@ -43,6 +44,7 @@ export struct PhoneV3PurityReviewPage {
   @State private pickingOther: boolean = false;
   @State private qualityOpen: boolean = false;
   @State private feedback: string = '';
+  @State private saving: boolean = false;
   @State private lastReviewId: string = '';
   private visible: boolean = false;
 
@@ -55,6 +57,7 @@ export struct PhoneV3PurityReviewPage {
 
   aboutToDisappear(): void {
     this.visible = false;
+    this.viewModel.setReviewAudioWindow([], false);
     this.viewModel.stopPlayback();
   }
 
@@ -74,6 +77,12 @@ export struct PhoneV3PurityReviewPage {
     this.task = this.tasks[0];
     this.candidate = this.task ? phoneV3VoiceCandidates(this.task)[0] : undefined;
     this.resetAnswer();
+    const upcoming: Array<PhoneV3VoiceTask> = [];
+    for (const item of this.tasks.slice(0, 3)) {
+      const candidate = phoneV3VoiceCandidates(item)[0];
+      if (candidate !== undefined) { upcoming.push(new PhoneV3VoiceTask(item, candidate)); }
+    }
+    this.viewModel.setReviewAudioWindow(upcoming, !this.history && upcoming.length > 0);
   }
 
   private current(): PhoneV3ReviewItem | undefined { return this.task; }
@@ -126,33 +135,45 @@ export struct PhoneV3PurityReviewPage {
     this.flags = this.flags.includes(flag) ? this.flags.filter((v: string): boolean => v !== flag) : this.flags.concat([flag]);
   }
 
+  private audioStatus(): string {
+    if (this.task === undefined || this.candidate === undefined) { return ''; }
+    if (this.viewModel.reviewPlaybackRange.startsWith('上下文播放中')) { return this.viewModel.reviewPlaybackRange; }
+    if (this.viewModel.reviewPlaybackPrototype === this.candidate.prototypeId) { return '正在播放目标片段…'; }
+    if (this.viewModel.reviewSampleWasPlayed(this.task.reviewId, this.candidate.prototypeId)) {
+      return '目标片段已播完，可以提交';
+    }
+    return '请先播放并听完整段目标原音';
+  }
+
   private submit(): void {
     const item = this.current();
-    if (item === undefined || (!this.primaryId && !this.unknown) || !this.purity) { return; }
-    const selectedPerson = this.primaryId;
-    this.viewModel.submitPurityReview(item.reviewId, this.primaryId, this.unknown,
+    if (this.saving || item === undefined || (!this.primaryId && !this.unknown) || !this.purity) { return; }
+    this.saving = true;
+    const started = this.viewModel.submitPurityReview(item.reviewId, this.primaryId, this.unknown,
       this.purity, this.others, this.flags, false, (): void => {
+        this.saving = false;
         this.lastReviewId = item.reviewId;
-        const historyItem = this.viewModel.snapshot.reviewItems.find((v: PhoneV3ReviewItem): boolean => v.reviewId === item.reviewId);
-        let target = '';
-        try { target = (JSON.parse(historyItem?.contextJson ?? '{}') as PurityAnswer).target_person_id ?? ''; }
-        catch (_) { target = ''; }
-        this.feedback = target && selectedPerson && target !== selectedPerson ? '已记录：该声纹样本可能标错' : '上一条已保存';
+        this.feedback = '';
         this.viewModel.stopPlayback();
         this.loadQueue();
-      });
+      }, (): void => { this.saving = false; this.feedback = '本机保存失败，请重试'; });
+    if (!started) { this.saving = false; this.feedback = '当前无法提交，请稍后重试'; }
   }
 
   private undo(): void {
-    if (!this.lastReviewId) { return; }
+    if (!this.lastReviewId || this.saving) { return; }
     const previous = this.lastReviewId;
-    this.viewModel.submitPurityReview(previous, '', true, '', [], [], true, (): void => {
-      this.lastReviewId = ''; this.feedback = '已撤销，任务回到待审核'; this.loadQueue();
-    });
+    this.saving = true;
+    const started = this.viewModel.submitPurityReview(previous, '', true, '', [], [], true, (): void => {
+      this.saving = false;
+      this.lastReviewId = ''; this.feedback = ''; this.loadQueue();
+    }, (): void => { this.saving = false; this.feedback = '本机撤销失败，请重试'; });
+    if (!started) { this.saving = false; this.feedback = '当前无法撤销，请稍后重试'; }
   }
 
   private skip(): void {
-    if (this.tasks.length > 1) {
+    if (!this.saving && this.tasks.length > 1) {
+      this.viewModel.stopPlayback();
       this.tasks = this.tasks.slice(1).concat([this.tasks[0]]);
       this.showCurrent(); this.feedback = this.history ? '' : '已排到队尾，仍待审核';
     }
@@ -182,7 +203,9 @@ export struct PhoneV3PurityReviewPage {
 
   @Builder
   private choice(label: string, selected: boolean, action: () => void) {
-    Button(label).buttonStyle(selected ? ButtonStyleMode.EMPHASIZED : ButtonStyleMode.NORMAL)
+    Button(selected ? `✓ ${label}` : label).buttonStyle(selected ? ButtonStyleMode.EMPHASIZED : ButtonStyleMode.NORMAL)
+      .backgroundColor(selected ? $r('app.color.brand_primary') : $r('app.color.surface_primary'))
+      .fontColor(selected ? Color.White : $r('app.color.text_primary'))
       .fontSize(15).constraintSize({ minHeight: 46 }).margin(4).onClick(action)
   }
 
@@ -191,7 +214,7 @@ export struct PhoneV3PurityReviewPage {
       Column({ space: 14 }) {
         Text(this.history ? `已审核 ${this.tasks.length} 条` : `声纹纯度审核 ${this.reviewedCount() + (this.task ? 1 : 0)} / ${this.totalCount()}`)
           .fontSize(16).width('100%')
-        if (this.feedback) { Text(this.feedback).fontSize(13).fontColor($r('app.color.brand_success')).width('100%') }
+        if (this.feedback) { Text(this.feedback).fontSize(15).fontColor($r('app.color.brand_primary')).width('100%') }
         if (this.lastReviewId) { Button('撤销上一条').buttonStyle(ButtonStyleMode.TEXTUAL).onClick((): void => this.undo()) }
         if (this.task === undefined || this.candidate === undefined) {
           Text(this.history ? '暂无已审核记录' : '当前没有待审核原音').fontSize(18).width('100%')
@@ -201,9 +224,16 @@ export struct PhoneV3PurityReviewPage {
             Column({ space: 16 }) {
               Text(`${this.sourceTitle()} · ${(this.context().duration_ms ?? this.candidate.totalMs) / 1000} 秒`)
                 .fontSize(13).fontColor($r('app.color.text_secondary')).width('100%')
-              Button(this.viewModel.reviewSampleWasPlayed(this.task.reviewId, this.candidate.prototypeId) ? '▶ 重播目标片段' : '▶ 播放目标片段')
+              Text(this.audioStatus()).fontSize(15).fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.brand_primary')).width('100%')
+              Button(this.viewModel.reviewPlaybackPrototype === this.candidate.prototypeId ? '停止播放' :
+                  this.viewModel.reviewSampleWasPlayed(this.task.reviewId, this.candidate.prototypeId) ? '▶ 重播目标片段' : '▶ 播放目标片段')
                 .width('100%').constraintSize({ minHeight: 52 }).enabled(this.candidate.hasAudio)
-                .onClick((): void => this.viewModel.playReviewSample(this.task!.reviewId, this.candidate!.prototypeId))
+                .onClick((): void => {
+                  if (this.viewModel.reviewPlaybackPrototype) {
+                    this.viewModel.stopPlayback();
+                  } else { this.viewModel.playReviewSample(this.task!.reviewId, this.candidate!.prototypeId); }
+                })
               Button('听前后文').buttonStyle(ButtonStyleMode.NORMAL).width('100%')
                 .onClick((): void => this.viewModel.playPurityContext(this.task!.reviewId, this.candidate!.prototypeId))
               Text('听前后文时，请只判断中间目标片段，不把上下文人物算进去。')
@@ -222,11 +252,21 @@ export struct PhoneV3PurityReviewPage {
                 this.choice('听不清', this.unknown && this.purity === 'uncertain', (): void => this.chooseUnknown())
               }.width('100%')
               if (this.primaryId || this.unknown) {
+                Text(`已选主要人物：${this.primaryName || '不知道是谁'}`).fontSize(14)
+                  .fontColor($r('app.color.brand_primary')).width('100%')
+              }
+              if (this.primaryId || this.unknown) {
                 Text('目标片段里还有别人的声音吗？').fontSize(19).fontWeight(FontWeight.Bold).width('100%')
                 this.choice('只有这个人', this.purity === 'clean_single', (): void => { this.purity = 'clean_single'; this.others = []; })
                 this.choice('有其他人 / 重叠', this.purity === 'mixed_overlap', (): void => { this.purity = 'mixed_overlap'; })
                 this.choice('切片边界跨到别人', this.purity === 'boundary_cross', (): void => { this.purity = 'boundary_cross'; this.others = []; })
                 this.choice('听不清 / 不确定', this.purity === 'uncertain', (): void => { this.purity = 'uncertain'; this.others = []; })
+              }
+              if (this.purity) {
+                Text(`已选纯度：${this.purity === 'clean_single' ? '只有这个人' :
+                  this.purity === 'mixed_overlap' ? '有其他人 / 重叠' :
+                    this.purity === 'boundary_cross' ? '切片边界跨到别人' : '听不清 / 不确定'}`)
+                  .fontSize(14).fontColor($r('app.color.brand_primary')).width('100%')
               }
               if (this.purity === 'mixed_overlap') {
                 Text('还能听到谁？可跳过').fontSize(14).width('100%')
@@ -257,10 +297,12 @@ export struct PhoneV3PurityReviewPage {
                 Text(this.viewModel.reviewSubmissionMessage(this.task.reviewId)).fontSize(13).fontColor($r('app.color.brand_warning'))
                 Button('核对电脑状态').onClick((): void => this.viewModel.refreshVoiceReviews((): void => this.loadQueue()))
               }
-              Button(this.history ? '保存修改' : '提交并听下一条').width('100%').constraintSize({ minHeight: 52 })
+              Button(this.history ? '保存修改' :
+                !this.viewModel.reviewSampleWasPlayed(this.task.reviewId, this.candidate.prototypeId) ?
+                  '听完整段后可提交' : '提交并听下一条').width('100%').constraintSize({ minHeight: 52 })
                 .enabled((!!this.primaryId || this.unknown) && !!this.purity &&
                   (this.history || this.viewModel.reviewSampleWasPlayed(this.task.reviewId, this.candidate.prototypeId)) &&
-                  !this.viewModel.reviewSubmissionState(this.task.reviewId))
+                  !this.saving && !this.viewModel.reviewSubmissionState(this.task.reviewId))
                 .onClick((): void => this.submit())
               if (!this.history) { Button('稍后再看').buttonStyle(ButtonStyleMode.TEXTUAL)
                 .enabled(!this.viewModel.reviewSubmissionState(this.task.reviewId)).onClick((): void => this.skip()) }

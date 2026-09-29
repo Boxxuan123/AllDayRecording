@@ -69,7 +69,7 @@ export default function v3ContractFixtureTest() {
   describe('V3ContractFixture', () => {
     it('matchesReleasedDatabaseSchemas', 0, () => {
       expect(V3_CORE_SCHEMA_VERSION).assertEqual(20);
-      expect(V3_PHONE_PROJECTION_SCHEMA_VERSION).assertEqual(15);
+      expect(V3_PHONE_PROJECTION_SCHEMA_VERSION).assertEqual(16);
     });
     it('decodesCanonicalComputerFixture', 0, () => {
       expect(CORE_FIXTURE_SHA256.length).assertEqual(64);

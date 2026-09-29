@@ -51,6 +51,9 @@ export interface PhoneV3ProjectionRepositoryPort extends PhoneProjectionStorage,
   linkLocalAudio(sessionKey: string, localPath: string, sha256: string,
     uploadStatus: string): Promise<void>;
   replaceReviewItems(items: Array<Object>): Promise<boolean>;
+  enqueuePurityReview(request: DeviceV3ReviewActionRequest): Promise<void>;
+  pendingPurityReviews(): Promise<Array<DeviceV3ReviewActionRequest>>;
+  removePurityReview(operationId: string): Promise<void>;
 }
 
 export interface PhoneV3LocalAudioRepositoryPort {

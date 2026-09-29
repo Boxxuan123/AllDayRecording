@@ -36,7 +36,7 @@ export class PhoneV3ReviewAudioCache implements PhoneV3ReviewAudioCachePort {
   joins: number = 0;
   constructor(context: common.UIAbilityContext, directory: string = 'review-audio-v1') {
     if (!/^[a-z0-9-]+$/.test(directory)) { throw new Error('invalid private cache directory'); }
-    this.root = `${context.cacheDir}/${directory}`;
+    this.root = `${directory === 'purity-audio-v1' ? context.filesDir : context.cacheDir}/${directory}`;
   }
 
   private file(action: string, namespace: string = '', key: string = '', response: string = '', encoded: string = ''): Promise<string> {
@@ -119,5 +119,6 @@ function copyMetadata(value: DeviceV3ReviewAudioResponse): DeviceV3ReviewAudioRe
     data_base64url: '', start_ms: value.start_ms, end_ms: value.end_ms,
     complete_sample: value.complete_sample, audition_key: value.audition_key, windows: value.windows,
     audio_content_key: value.audio_content_key, sha256: value.sha256, byte_length: value.byte_length,
+    target_start_ms: value.target_start_ms, target_end_ms: value.target_end_ms,
     cache_hit: value.cache_hit, local_audio_path: value.local_audio_path, local_worker_tid: value.local_worker_tid };
 }

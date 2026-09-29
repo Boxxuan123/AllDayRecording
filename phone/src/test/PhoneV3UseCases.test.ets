@@ -99,6 +99,13 @@ class FakePhoneV3Repository implements PhoneV3ProjectionRepositoryPort {
   operations: Array<DeviceV3ClientOperation> = [];
   pendingReads: number = 0;
   people: Array<DeviceV3PersonChoice> = [];
+  purityReviews: Array<DeviceV3ReviewActionRequest> = [];
+  async enqueuePurityReview(request: DeviceV3ReviewActionRequest): Promise<void> { this.purityReviews.push(request); }
+  async pendingPurityReviews(): Promise<Array<DeviceV3ReviewActionRequest>> { return this.purityReviews.slice(); }
+  async removePurityReview(operationId: string): Promise<void> {
+    this.purityReviews = this.purityReviews.filter((request: DeviceV3ReviewActionRequest): boolean =>
+      request.operation_id !== operationId);
+  }
   async cachedPeople(): Promise<Array<DeviceV3PersonChoice>> { return this.people; }
   async cachePeople(people: Array<DeviceV3PersonChoice>): Promise<void> {
     for (let person of people) {

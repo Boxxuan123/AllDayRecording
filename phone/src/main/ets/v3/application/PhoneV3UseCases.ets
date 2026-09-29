@@ -22,7 +22,7 @@ import {
   validateV3UtteranceDto
 } from '../contracts/V3ContractModels';
 import { applySyncResponse } from '../data/PhoneSyncProjection';
-import { phoneV3ReviewItems, phoneV3ReviewSnapshotItems } from '../data/PhoneV3ReviewProjection';
+import { phoneV3ReviewItems, phoneV3ReviewSnapshotItems, overlayPendingPurityReviews } from '../data/PhoneV3ReviewProjection';
 import { phoneV3VoiceCandidates } from '../domain/PhoneV3ReviewModels';
 import { validateReviewSample } from '../domain/PhoneV3ReviewAudioValidation';
 import {
@@ -130,6 +130,10 @@ export class PhoneV3UseCases {
   }
 
   private reviewAudioCache?: PhoneV3ReviewAudioCachePort;
+  private purityAudioCache?: PhoneV3ReviewAudioCachePort;
+  private purityFlush: Promise<void> | undefined = undefined;
+  private purityPack: Promise<void> | undefined = undefined;
+  private purityPackAgain: boolean = false;
   private syncActive: boolean = false;
   private syncCancelled: boolean = false;
   cancelSynchronize(): void { this.syncCancelled = true; }
@@ -148,8 +152,10 @@ export class PhoneV3UseCases {
   constructor(repository: PhoneV3ProjectionRepositoryPort,
     localAudio: PhoneV3LocalAudioRepositoryPort, remote: PhoneV3RemotePort,
     reminderScheduler?: PhoneV3ReminderSchedulerPort,
-    audioBackup?: PhoneV3AudioBackupPort, reviewAudioCache?: PhoneV3ReviewAudioCachePort) {
+    audioBackup?: PhoneV3AudioBackupPort, reviewAudioCache?: PhoneV3ReviewAudioCachePort,
+    purityAudioCache?: PhoneV3ReviewAudioCachePort) {
     this.reviewAudioCache = reviewAudioCache;
+    this.purityAudioCache = purityAudioCache;
     this.repository = repository;
     this.localAudio = localAudio;
     this.remote = remote;
@@ -221,7 +227,7 @@ export class PhoneV3UseCases {
     }
     return new PhoneV3Snapshot(
       sessions,
-      conflicts, status, paired, reminderValues, phoneV3ReviewItems(reviews));
+      conflicts, status, paired, reminderValues, await this.withPendingPurity(phoneV3ReviewItems(reviews)));
   }
 
   async localAudioIsProtected(sessionKey: string): Promise<boolean> {
@@ -549,13 +555,16 @@ export class PhoneV3UseCases {
   }
 
   async refreshSupplementary(): Promise<void> {
+    await this.flushPurityReviews().catch((): void => {});
     const session = await this.remote.connect();
     const reviews = await session.reviews();
-    if (await this.storeReviews(reviews)) {
+    const reviewsChanged = await this.storeReviews(reviews);
+    if (reviewsChanged) {
       const committed = new PhoneV3SyncResult(0, 0, '', new PhoneV3AudioBackupResult());
       committed.changed = true; committed.reviewsChanged = true;
       this.publishCommitted(committed);
     }
+    this.preparePurityAudioPack(reviewsChanged).catch((): void => {});
     const people = await session.annotations({ action: 'people' });
     if (people.version === undefined || people.version !== this.peopleVersion) {
       await this.cacheRemotePeople(people.people ?? []);
@@ -573,7 +582,37 @@ export class PhoneV3UseCases {
   async refreshReviewSnapshot(snapshot: PhoneV3Snapshot): Promise<PhoneV3Snapshot> {
     const reviews = phoneV3ReviewItems(await this.repository.projectionRows('review_item'));
     return new PhoneV3Snapshot(snapshot.sessions, snapshot.conflicts, snapshot.sync,
-      snapshot.paired, snapshot.reminders, reviews);
+      snapshot.paired, snapshot.reminders, await this.withPendingPurity(reviews));
+  }
+
+  private async withPendingPurity(items: Array<PhoneV3ReviewItem>): Promise<Array<PhoneV3ReviewItem>> {
+    return overlayPendingPurityReviews(items, await this.repository.pendingPurityReviews());
+  }
+
+  async queuePurityReview(request: DeviceV3ReviewActionRequest): Promise<Array<PhoneV3ReviewItem>> {
+    request.operation_id = newOperationId();
+    await this.repository.enqueuePurityReview(request);
+    const items = await this.withPendingPurity(phoneV3ReviewItems(await this.repository.projectionRows('review_item')));
+    this.flushPurityReviews().catch((): void => {});
+    return items;
+  }
+
+  flushPurityReviews(): Promise<void> {
+    if (this.purityFlush !== undefined) { return this.purityFlush; }
+    const run = async (): Promise<void> => {
+      const pending = await this.repository.pendingPurityReviews();
+      for (const request of pending) {
+        const session = await this.remote.connect();
+        const response = await session.resolveReview(request);
+        await this.storeReviews(response.reviews);
+        await this.repository.removePurityReview(request.operation_id ?? '');
+        const committed = new PhoneV3SyncResult(0, 0, '', new PhoneV3AudioBackupResult());
+        committed.changed = true; committed.reviewsChanged = true;
+        this.publishCommitted(committed);
+      }
+    };
+    this.purityFlush = run().finally((): void => { this.purityFlush = undefined; });
+    return this.purityFlush;
   }
 
   async rebuild(): Promise<PhoneV3SyncResult> {
@@ -595,14 +634,18 @@ export class PhoneV3UseCases {
     }
     try { await this.storeReviews(response.reviews); }
     catch (_) { throw new PhoneV3ReviewSubmissionError(true); }
-    return phoneV3ReviewSnapshotItems(response.reviews.items);
+    return this.withPendingPurity(phoneV3ReviewSnapshotItems(response.reviews.items));
   }
 
   async refreshReviews(): Promise<Array<PhoneV3ReviewItem>> {
+    if (this.purityFlush !== undefined) {
+      return this.withPendingPurity(phoneV3ReviewItems(await this.repository.projectionRows('review_item')));
+    }
     const session = await this.remote.connect();
     const response = await session.reviews();
     await this.storeReviews(response);
-    return phoneV3ReviewSnapshotItems(response.items);
+    this.preparePurityAudioPack().catch((): void => {});
+    return this.withPendingPurity(phoneV3ReviewSnapshotItems(response.items));
   }
 
   async annotations(request: DeviceV3AnnotationRequest): Promise<DeviceV3AnnotationResponse> {
@@ -632,15 +675,15 @@ export class PhoneV3UseCases {
   }
 
   async loadReviewAudio(reviewId: string, prototypeId: string, prefetch: boolean = false): Promise<DeviceV3ReviewAudioResponse> {
-    const cache = this.reviewAudioCache;
+    const items = phoneV3ReviewItems(await this.repository.projectionRows('review_item', [reviewId]));
+    const item = items.find((value): boolean => value.reviewId === reviewId);
+    const cache = item?.kind === 'speaker_profile_purity' ? this.purityAudioCache : this.reviewAudioCache;
     if (cache === undefined || this.remote.audioNamespace === undefined) {
       const session = await this.remote.connect();
       return session.reviewAudio({ review_id: reviewId, prototype_id: prototypeId });
     }
     const namespace = await this.remote.audioNamespace();
     if (!namespace) { await cache.clear(); throw new Error('请先连接受信任的电脑'); }
-    const items = phoneV3ReviewItems(await this.repository.projectionRows('review_item', [reviewId]));
-    const item = items.find((value): boolean => value.reviewId === reviewId);
     const candidate = item === undefined ? undefined : phoneV3VoiceCandidates(item).find((value): boolean => value.prototypeId === prototypeId);
     if (candidate === undefined || !candidate.hasAudio) { throw new Error('当前样本已不可用'); }
     const download = async (): Promise<DeviceV3ReviewAudioResponse> => {
@@ -669,12 +712,68 @@ export class PhoneV3UseCases {
     } catch (error) { if (!prefetch) { cache.release(response.local_audio_path ?? ''); } throw error as Error; }
   }
 
-  async loadPurityContext(reviewId: string, taskId: string): Promise<DeviceV3ReviewAudioResponse> {
-    const session = await this.remote.connect();
-    return session.reviewAudio({ review_id: reviewId, prototype_id: taskId, context: true });
+  async loadPurityContext(reviewId: string, taskId: string, prefetch: boolean = false): Promise<DeviceV3ReviewAudioResponse> {
+    const items = phoneV3ReviewItems(await this.repository.projectionRows('review_item', [reviewId]));
+    const item = items.find((value): boolean => value.reviewId === reviewId);
+    const candidate = item === undefined ? undefined : phoneV3VoiceCandidates(item).find((value): boolean => value.prototypeId === taskId);
+    if (candidate === undefined || !candidate.contextAudioContentKey) { throw new Error('上下文原音尚未准备好'); }
+    const cache = this.purityAudioCache;
+    if (cache === undefined || this.remote.audioNamespace === undefined) { throw new Error('上下文离线缓存不可用'); }
+    const namespace = await this.remote.audioNamespace();
+    if (!namespace) { throw new Error('请先连接受信任的电脑'); }
+    const response = await cache.prepare(namespace, candidate.contextAudioContentKey, async (): Promise<DeviceV3ReviewAudioResponse> => {
+      const session = await this.remote.connect();
+      const value = await session.reviewAudio({ review_id: reviewId, prototype_id: taskId,
+        audio_content_key: candidate.contextAudioContentKey, context: true, prefetch: prefetch });
+      if (value.audio_content_key !== candidate.contextAudioContentKey || await this.remote.audioNamespace!() !== namespace) {
+        throw new Error('上下文原音已变化');
+      }
+      return value;
+    }, prefetch);
+    response.review_id = reviewId; response.prototype_id = taskId;
+    return response;
   }
 
-  releaseReviewAudio(response: DeviceV3ReviewAudioResponse): void { this.reviewAudioCache?.release(response.local_audio_path ?? ''); }
+  preparePurityAudioPack(rerunIfActive: boolean = false): Promise<void> {
+    if (this.purityPack !== undefined) {
+      if (rerunIfActive) { this.purityPackAgain = true; }
+      return this.purityPack;
+    }
+    const run = async (): Promise<void> => {
+      const items = phoneV3ReviewItems(await this.repository.projectionRows('review_item'));
+      const total = items.filter((item: PhoneV3ReviewItem): boolean => item.kind === 'speaker_profile_purity').length;
+      let prepared = 0;
+      for (const item of items) {
+        if (item.kind !== 'speaker_profile_purity') { continue; }
+        const candidate = phoneV3VoiceCandidates(item)[0];
+        if (candidate === undefined || !candidate.hasAudio) { continue; }
+        try {
+          await this.loadReviewAudio(item.reviewId, candidate.prototypeId, true);
+          if (!candidate.contextAudioContentKey) { continue; }
+          await this.loadPurityContext(item.reviewId, candidate.prototypeId, true);
+        } catch (error) {
+          console.warn(`[purity-audio] interrupted after ${prepared}/${total}`);
+          throw error as Error;
+        }
+        prepared += 1;
+        if (prepared % 20 === 0 || prepared === total) { console.info(`[purity-audio] prepared ${prepared}/${total}`); }
+      }
+      console.info(`[purity-audio] pass complete ${prepared}/${total}`);
+    };
+    this.purityPack = run().finally((): void => {
+      this.purityPack = undefined;
+      if (this.purityPackAgain) {
+        this.purityPackAgain = false;
+        this.preparePurityAudioPack().catch((): void => {});
+      }
+    });
+    return this.purityPack;
+  }
+
+  releaseReviewAudio(response: DeviceV3ReviewAudioResponse): void {
+    this.reviewAudioCache?.release(response.local_audio_path ?? '');
+    this.purityAudioCache?.release(response.local_audio_path ?? '');
+  }
   cancelReviewPrefetch(): void { this.reviewAudioCache?.cancelPrefetch(); }
   async clearReviewAudio(): Promise<void> { await this.reviewAudioCache?.clear(); }
 

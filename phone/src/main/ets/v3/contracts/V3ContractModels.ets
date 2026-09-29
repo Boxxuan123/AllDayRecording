@@ -6,7 +6,7 @@
 export const V3_CONTRACT_VERSION: string = '3.7.1';
 export const V3_PROJECTION_VERSION: number = 4;
 export const V3_CORE_SCHEMA_VERSION: number = 20;
-export const V3_PHONE_PROJECTION_SCHEMA_VERSION: number = 15;
+export const V3_PHONE_PROJECTION_SCHEMA_VERSION: number = 16;
 export const V3_UNKNOWN_ENUM_VALUE: string = 'unknown';
 export const V3_FEATURE_ENABLED_BY_DEFAULT: boolean = true;
 

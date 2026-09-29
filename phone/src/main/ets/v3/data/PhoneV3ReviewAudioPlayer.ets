@@ -14,9 +14,12 @@ export class PhoneV3ReviewAudioPlayer {
   private generation: number = 0;
   private currentPath: string = '';
   private cache?: PhoneV3ReviewAudioCachePort;
+  private purityCache?: PhoneV3ReviewAudioCachePort;
 
-  constructor(context: common.UIAbilityContext, cache?: PhoneV3ReviewAudioCachePort) {
+  constructor(context: common.UIAbilityContext, cache?: PhoneV3ReviewAudioCachePort,
+    purityCache?: PhoneV3ReviewAudioCachePort) {
     this.cache = cache;
+    this.purityCache = purityCache;
     this.directory = `${context.cacheDir}/${REVIEW_AUDIO_DIRECTORY}`;
   }
 
@@ -28,7 +31,7 @@ export class PhoneV3ReviewAudioPlayer {
     await this.release();
     if (generation !== this.generation) { return; }
     const local = response.local_audio_path ?? '';
-    const leased = this.cache?.hasLease(local) === true;
+    const leased = this.cache?.hasLease(local) === true || this.purityCache?.hasLease(local) === true;
     validateReviewAudio(response, leased);
     const path = leased ? local : await taskpool.execute(prepareTransientReviewAudio,
       this.directory, `${Date.now()}-${generation}`, response.data_base64url) as string;
@@ -71,7 +74,7 @@ export class PhoneV3ReviewAudioPlayer {
 
   private removeFile(path: string): void {
     if (path.length === 0) { return; }
-    if (!path.startsWith(`${this.directory}/`)) { this.cache?.release(path); return; }
+    if (!path.startsWith(`${this.directory}/`)) { this.cache?.release(path); this.purityCache?.release(path); return; }
     fileIo.unlink(path).catch((): void => {});
   }
 }
