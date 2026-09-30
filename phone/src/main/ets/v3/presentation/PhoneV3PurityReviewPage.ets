@@ -11,6 +11,7 @@ import { phoneV3SessionTitle } from './PhoneV3UiFormat';
 interface PurityAnswer {
   primary_speaker_person_id?: string | null;
   primary_speaker_unknown?: boolean;
+  unknown_kind?: string;
   purity?: string;
   other_speaker_ids?: Array<string>;
   quality_flags?: Array<string>;
@@ -27,6 +28,7 @@ export struct PhoneV3PurityReviewPage {
   @ObjectLink viewModel: PhoneV3ViewModel;
   navStack: NavPathStack = new NavPathStack();
   reviewId: string = '';
+  reviewKind: string = 'speaker_profile_purity';
   history: boolean = false;
   @Prop @Watch('refreshState') stateRevision: number = 0;
   private peopleLoader: PhoneV3PeopleLoader = new PhoneV3PeopleLoader();
@@ -37,6 +39,7 @@ export struct PhoneV3PurityReviewPage {
   @State private primaryId: string = '';
   @State private primaryName: string = '';
   @State private unknown: boolean = false;
+  @State private unknownKind: string = 'dont_know';
   @State private purity: string = '';
   @State private others: Array<string> = [];
   @State private flags: Array<string> = [];
@@ -67,7 +70,7 @@ export struct PhoneV3PurityReviewPage {
 
   private loadQueue(): void {
     const all = this.viewModel.snapshot.reviewItems.filter((item: PhoneV3ReviewItem): boolean =>
-      item.kind === 'speaker_profile_purity' && phoneV3ReviewIsHistory(item) === this.history);
+      item.kind === this.reviewKind && phoneV3ReviewIsHistory(item) === this.history);
     const start = this.reviewId ? all.findIndex((item: PhoneV3ReviewItem): boolean => item.reviewId === this.reviewId) : 0;
     this.tasks = start > 0 ? all.slice(start).concat(all.slice(0, start)) : all;
     this.showCurrent();
@@ -107,6 +110,7 @@ export struct PhoneV3PurityReviewPage {
     const answer = this.context().purity_review;
     this.primaryId = answer?.primary_speaker_person_id ?? '';
     this.unknown = answer?.primary_speaker_unknown === true;
+    this.unknownKind = answer?.unknown_kind ?? 'dont_know';
     this.primaryName = this.people.find((p: DeviceV3PersonChoice): boolean => p.person_id === this.primaryId)?.display_name ?? '';
     this.purity = answer?.purity ?? '';
     this.others = answer?.other_speaker_ids ?? [];
@@ -122,8 +126,9 @@ export struct PhoneV3PurityReviewPage {
     this.pickerOpen = false;
   }
 
-  private chooseUnknown(): void {
+  private chooseUnknown(kind: string = 'dont_know'): void {
     this.primaryId = ''; this.primaryName = ''; this.unknown = true;
+    this.unknownKind = kind;
     this.purity = 'uncertain';
   }
 
@@ -156,7 +161,7 @@ export struct PhoneV3PurityReviewPage {
         this.feedback = '';
         this.viewModel.stopPlayback();
         this.loadQueue();
-      }, (): void => { this.saving = false; this.feedback = '本机保存失败，请重试'; });
+      }, (): void => { this.saving = false; this.feedback = '本机保存失败，请重试'; }, this.unknownKind);
     if (!started) { this.saving = false; this.feedback = '当前无法提交，请稍后重试'; }
   }
 
@@ -181,12 +186,12 @@ export struct PhoneV3PurityReviewPage {
 
   private reviewedCount(): number {
     return this.viewModel.snapshot.reviewItems.filter((v: PhoneV3ReviewItem): boolean =>
-      v.kind === 'speaker_profile_purity' && phoneV3ReviewIsHistory(v)).length;
+      v.kind === this.reviewKind && phoneV3ReviewIsHistory(v)).length;
   }
 
   private totalCount(): number {
     return this.viewModel.snapshot.reviewItems.filter((v: PhoneV3ReviewItem): boolean =>
-      v.kind === 'speaker_profile_purity').length;
+      v.kind === this.reviewKind).length;
   }
 
   @Builder
@@ -212,7 +217,7 @@ export struct PhoneV3PurityReviewPage {
   build() {
     HdsNavDestination() {
       Column({ space: 14 }) {
-        Text(this.history ? `已审核 ${this.tasks.length} 条` : `声纹纯度审核 ${this.reviewedCount() + (this.task ? 1 : 0)} / ${this.totalCount()}`)
+        Text(this.history ? `已审核 ${this.tasks.length} 条` : `${this.reviewKind === 'blind_identity_review' ? 'Blind 人物验收' : '声纹纯度审核'} ${this.reviewedCount() + (this.task ? 1 : 0)} / ${this.totalCount()}`)
           .fontSize(16).width('100%')
         if (this.feedback) { Text(this.feedback).fontSize(15).fontColor($r('app.color.brand_primary')).width('100%') }
         if (this.lastReviewId) { Button('撤销上一条').buttonStyle(ButtonStyleMode.TEXTUAL).onClick((): void => this.undo()) }
@@ -234,10 +239,12 @@ export struct PhoneV3PurityReviewPage {
                     this.viewModel.stopPlayback();
                   } else { this.viewModel.playReviewSample(this.task!.reviewId, this.candidate!.prototypeId); }
                 })
+              if (this.reviewKind !== 'blind_identity_review') {
               Button('听前后文').buttonStyle(ButtonStyleMode.NORMAL).width('100%')
                 .onClick((): void => this.viewModel.playPurityContext(this.task!.reviewId, this.candidate!.prototypeId))
               Text('听前后文时，请只判断中间目标片段，不把上下文人物算进去。')
                 .fontSize(13).fontColor($r('app.color.text_secondary')).width('100%')
+              }
               if (this.viewModel.reviewPlaybackRange) {
                 Text(this.viewModel.reviewPlaybackRange).fontSize(13).fontColor($r('app.color.brand_primary'))
               }
@@ -248,11 +255,14 @@ export struct PhoneV3PurityReviewPage {
                     (): void => this.choosePrimary(person.person_id, person.display_name))
                 }, (person: DeviceV3PersonChoice): string => person.person_id)
                 this.choice('其他人物', false, (): void => { this.pickingOther = false; this.pickerOpen = true; })
-                this.choice('不知道是谁', this.unknown, (): void => this.chooseUnknown())
-                this.choice('听不清', this.unknown && this.purity === 'uncertain', (): void => this.chooseUnknown())
+                if (this.reviewKind === 'blind_identity_review') {
+                  this.choice('陌生人 / 未建档', this.unknown && this.unknownKind === 'stranger', (): void => this.chooseUnknown('stranger'))
+                }
+                this.choice('不知道是谁', this.unknown && this.unknownKind === 'dont_know', (): void => this.chooseUnknown('dont_know'))
+                this.choice('听不清', this.unknown && this.unknownKind === 'inaudible', (): void => this.chooseUnknown('inaudible'))
               }.width('100%')
               if (this.primaryId || this.unknown) {
-                Text(`已选主要人物：${this.primaryName || '不知道是谁'}`).fontSize(14)
+                Text(`已选主要人物：${this.primaryName || (this.unknownKind === 'stranger' ? '陌生人 / 未建档' : this.unknownKind === 'inaudible' ? '听不清' : '不知道是谁')}`).fontSize(14)
                   .fontColor($r('app.color.brand_primary')).width('100%')
               }
               if (this.primaryId || this.unknown) {
@@ -268,7 +278,7 @@ export struct PhoneV3PurityReviewPage {
                     this.purity === 'boundary_cross' ? '切片边界跨到别人' : '听不清 / 不确定'}`)
                   .fontSize(14).fontColor($r('app.color.brand_primary')).width('100%')
               }
-              if (this.purity === 'mixed_overlap') {
+              if (this.purity === 'mixed_overlap' && this.reviewKind !== 'blind_identity_review') {
                 Text('还能听到谁？可跳过').fontSize(14).width('100%')
                 Flex({ wrap: FlexWrap.Wrap }) {
                   ForEach(this.quickPeople(), (person: DeviceV3PersonChoice) => {
@@ -278,6 +288,7 @@ export struct PhoneV3PurityReviewPage {
                   this.choice('不知道', this.others.includes('unknown'), (): void => this.toggleOther('unknown'))
                 }.width('100%')
               }
+              if (this.reviewKind !== 'blind_identity_review') {
               Button(this.qualityOpen ? '收起音质标记' : '⚑ 音质有问题（可选）').buttonStyle(ButtonStyleMode.TEXTUAL)
                 .onClick((): void => { this.qualityOpen = !this.qualityOpen; })
               if (this.qualityOpen) {
@@ -289,6 +300,7 @@ export struct PhoneV3PurityReviewPage {
                   this.choice('音量过低', this.flags.includes('low_volume'), (): void => this.toggleFlag('low_volume'))
                   this.choice('其他', this.flags.includes('other'), (): void => this.toggleFlag('other'))
                 }.width('100%')
+              }
               }
               if (this.history && this.context().purity_review) {
                 Text(`我的选择：${this.primaryName || '不知道是谁'} · ${this.purity}`).fontSize(14).width('100%')
@@ -315,7 +327,7 @@ export struct PhoneV3PurityReviewPage {
         }
       }.width('100%').height('100%').padding(18).alignItems(HorizontalAlign.Start)
         .backgroundColor($r('app.color.page_background'))
-    }.titleBar({ enableComponentSafeArea: true, content: { title: { mainTitle: this.history ? '已审核' : '声纹纯度审核' } } })
+    }.titleBar({ enableComponentSafeArea: true, content: { title: { mainTitle: this.history ? '已审核' : this.reviewKind === 'blind_identity_review' ? 'Blind 人物验收' : '声纹纯度审核' } } })
       .titleMode(HdsNavDestinationTitleMode.MINI).backgroundColor($r('app.color.page_background'))
       .bindSheet($$this.pickerOpen, this.picker(), { height: SheetSize.LARGE, showClose: false,
         keyboardAvoidMode: SheetKeyboardAvoidMode.RESIZE_ONLY })

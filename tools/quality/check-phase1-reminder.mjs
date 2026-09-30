@@ -51,7 +51,9 @@ const storage = {
     });
   },
   projectionRows: async type => [...rows.entries()].filter(([key]) => key.startsWith(type+':')).map(([,row]) => row),
-  localAudioLinks: async () => [], conflictRows: async () => [], v3Status: async () => ({}), annotationOperations: async () => []
+  localAudioLinks: async () => [], conflictRows: async () => [], v3Status: async () => ({}), annotationOperations: async () => [],
+  localSessionCompletions: async () => [], localSessionFailures: async () => [],
+  pendingPurityReviews: async () => [], pendingVoiceReviews: async () => []
 };
 Date.now = () => input.now;
 const useCases = new PhoneV3UseCases(storage, {}, { isPaired: async () => true }, new PhoneV3ReminderScheduler({}));

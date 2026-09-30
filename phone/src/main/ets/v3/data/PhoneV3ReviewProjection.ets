@@ -11,6 +11,7 @@ interface PurityOverlayContext {
 interface PurityOverlayAnswer {
   primary_speaker_person_id: string | null;
   primary_speaker_unknown: boolean;
+  unknown_kind?: string;
   purity: string;
   other_speaker_ids: Array<string>;
   quality_flags: Array<string>;
@@ -22,7 +23,7 @@ export function overlayPendingPurityReviews(items: Array<PhoneV3ReviewItem>,
   for (const request of pending) { latest.set(request.review_id, request); }
   return items.map((item: PhoneV3ReviewItem): PhoneV3ReviewItem => {
     const request = latest.get(item.reviewId);
-    if (item.kind !== 'speaker_profile_purity' || request === undefined) { return item; }
+    if ((item.kind !== 'speaker_profile_purity' && item.kind !== 'blind_identity_review') || request === undefined) { return item; }
     const context = JSON.parse(item.contextJson) as PurityOverlayContext;
     context.review_lane = request.action === 'undo' ? 'primary' : 'history';
     context.local_pending = true;
@@ -31,6 +32,7 @@ export function overlayPendingPurityReviews(items: Array<PhoneV3ReviewItem>,
       context.purity_review = {
         primary_speaker_person_id: request.primary_speaker_person_id ?? null,
         primary_speaker_unknown: request.primary_speaker_unknown === true,
+        unknown_kind: request.unknown_kind,
         purity: request.purity ?? '', other_speaker_ids: request.other_speaker_ids ?? [],
         quality_flags: request.quality_flags ?? []
       };

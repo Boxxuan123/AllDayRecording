@@ -78,6 +78,12 @@ interface ReviewActionResultFixture {
 }
 
 class FakePhoneV3Repository implements PhoneV3ProjectionRepositoryPort {
+  voiceReviews: Array<DeviceV3ReviewActionRequest> = [];
+  async enqueueVoiceReview(request: DeviceV3ReviewActionRequest): Promise<void> { this.voiceReviews.push(request); }
+  async pendingVoiceReviews(): Promise<Array<DeviceV3ReviewActionRequest>> { return this.voiceReviews.slice(); }
+  async removeVoiceReview(operationId: string): Promise<void> {
+    this.voiceReviews = this.voiceReviews.filter((r: DeviceV3ReviewActionRequest): boolean => r.operation_id !== operationId);
+  }
   completions: Array<PhoneSessionCompletionRecord> = [];
   async localSessionCompletions(): Promise<Array<PhoneSessionCompletionRecord>> { return this.completions; }
   async localSessionFailures(): Promise<Array<PhoneSessionTransferFailure>> { return []; }

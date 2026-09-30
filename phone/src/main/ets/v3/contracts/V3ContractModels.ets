@@ -5,7 +5,7 @@
 
 export const V3_CONTRACT_VERSION: string = '3.7.1';
 export const V3_PROJECTION_VERSION: number = 4;
-export const V3_CORE_SCHEMA_VERSION: number = 20;
+export const V3_CORE_SCHEMA_VERSION: number = 23;
 export const V3_PHONE_PROJECTION_SCHEMA_VERSION: number = 16;
 export const V3_UNKNOWN_ENUM_VALUE: string = 'unknown';
 export const V3_FEATURE_ENABLED_BY_DEFAULT: boolean = true;
@@ -205,7 +205,7 @@ export function validateV3ReminderDto(value: Object): V3ReminderDto {
 export function validateV3ReviewItemDto(value: Object): V3ReviewItemDto {
   const item = value as V3ReviewItemDto;
   if (typeof item.review_id !== 'string' || item.review_id.length === 0 ||
-    ['processing_gate', 'reminder', 'person_memory', 'voice_identity', 'knowledge_proposal', 'speaker_profile_purity']
+    ['processing_gate', 'reminder', 'person_memory', 'voice_identity', 'knowledge_proposal', 'speaker_profile_purity', 'blind_identity_review']
       .indexOf(item.kind) < 0 ||
     ['high', 'normal'].indexOf(item.priority) < 0 ||
     typeof item.source_id !== 'string' || item.source_id.length === 0 ||

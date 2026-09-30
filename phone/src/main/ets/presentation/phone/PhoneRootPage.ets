@@ -227,6 +227,7 @@ export struct PhoneRootPage {
         onConnect: (): void => this.openComputerTransfer() })
     } else if (name === 'purityReview') {
       PhoneV3PurityReviewPage({ viewModel: this.v3ViewModel, navStack: this.navStack,
+        reviewKind: (param as VoiceReviewRoute).reviewId.startsWith('blind:') ? 'blind_identity_review' : 'speaker_profile_purity',
         stateRevision: this.v3StateRevision, reviewId: (param as VoiceReviewRoute).reviewId,
         history: (param as VoiceReviewRoute).history })
     } else if (name === 'annotationList') {

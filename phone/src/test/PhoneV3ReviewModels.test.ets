@@ -10,6 +10,21 @@ import {
 
 export default function phoneV3ReviewModelsTest() {
   describe('PhoneV3ReviewModels', () => {
+    it('blindTruthAppearsInVoiceInboxAndHistoryLeavesPending', 0, () => {
+      const clip = '"voice_candidates":[{"prototype_id":"synthetic","audio_available":true,' +
+        '"representative_clips":[{"media_id":"synthetic","start_ms":0,"end_ms":8000},' +
+        '{"media_id":"synthetic","start_ms":12000,"end_ms":20000}]}]';
+      const pending = new PhoneV3ReviewItem('blind:synthetic', 'blind_identity_review', 'normal',
+        'synthetic', null, null, null, 'Blind', '', 'blind_identity_review', 2, '', '',
+        '{"voice_mode":"blind_identity_review","review_lane":"primary",' + clip + '}');
+      const history = new PhoneV3ReviewItem('blind:history', 'blind_identity_review', 'normal',
+        'history', 1, null, null, 'Blind', '', 'blind_identity_review', 2, '', '',
+        '{"voice_mode":"blind_identity_review","review_lane":"history",' + clip + '}');
+      expect(phoneV3PendingReviews([pending, history], 1).length).assertEqual(1);
+      expect(phoneV3ReviewIsHistory(history)).assertTrue();
+      expect(phoneV3VoiceCandidates(pending)[0].totalMs).assertEqual(16000);
+      expect(phoneV3VoiceCandidates(pending)[0].bestScore).assertEqual(null);
+    });
     it('missingSourceDisablesAudioWithoutRemovingHistory', 0, () => {
       const item = new PhoneV3ReviewItem('r', 'voice_identity', 'normal', 'c', null, null, 'p',
         'P', '', 'voice_grant_management', 1, '', '',

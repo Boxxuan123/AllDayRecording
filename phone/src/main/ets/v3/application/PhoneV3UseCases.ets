@@ -677,7 +677,7 @@ export class PhoneV3UseCases {
   async loadReviewAudio(reviewId: string, prototypeId: string, prefetch: boolean = false): Promise<DeviceV3ReviewAudioResponse> {
     const items = phoneV3ReviewItems(await this.repository.projectionRows('review_item', [reviewId]));
     const item = items.find((value): boolean => value.reviewId === reviewId);
-    const cache = item?.kind === 'speaker_profile_purity' ? this.purityAudioCache : this.reviewAudioCache;
+    const cache = item?.kind === 'speaker_profile_purity' || item?.kind === 'blind_identity_review' ? this.purityAudioCache : this.reviewAudioCache;
     if (cache === undefined || this.remote.audioNamespace === undefined) {
       const session = await this.remote.connect();
       return session.reviewAudio({ review_id: reviewId, prototype_id: prototypeId });
@@ -741,10 +741,10 @@ export class PhoneV3UseCases {
     }
     const run = async (): Promise<void> => {
       const items = phoneV3ReviewItems(await this.repository.projectionRows('review_item'));
-      const total = items.filter((item: PhoneV3ReviewItem): boolean => item.kind === 'speaker_profile_purity').length;
+      const total = items.filter((item: PhoneV3ReviewItem): boolean => item.kind === 'speaker_profile_purity' || item.kind === 'blind_identity_review').length;
       let prepared = 0;
       for (const item of items) {
-        if (item.kind !== 'speaker_profile_purity') { continue; }
+        if (item.kind !== 'speaker_profile_purity' && item.kind !== 'blind_identity_review') { continue; }
         const candidate = phoneV3VoiceCandidates(item)[0];
         if (candidate === undefined || !candidate.hasAudio) { continue; }
         try {

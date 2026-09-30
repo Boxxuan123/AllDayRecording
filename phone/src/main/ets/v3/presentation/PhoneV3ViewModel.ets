@@ -476,13 +476,14 @@ export class PhoneV3ViewModel {
   submitPurityReview(reviewId: string, personId: string, unknown: boolean,
     purity: string, others: Array<string>, flags: Array<string>, undo: boolean,
     onResolved: () => void = (): void => {},
-    onFailed: () => void = (): void => {}): boolean {
+    onFailed: () => void = (): void => {}, unknownKind: string = 'dont_know'): boolean {
     const useCases = this.useCases;
     if (useCases === undefined || this.reviewSubmissionState(reviewId)) { return false; }
     const request: DeviceV3ReviewActionRequest = { review_id: reviewId, action: undo ? 'undo' : 'submit' };
     if (!undo) {
       request.primary_speaker_person_id = unknown ? null : personId;
       request.primary_speaker_unknown = unknown;
+      if (reviewId.startsWith('blind:')) { request.unknown_kind = unknown ? unknownKind : 'none'; }
       request.purity = purity;
       request.other_speaker_ids = others;
       request.quality_flags = flags;

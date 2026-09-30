@@ -244,6 +244,7 @@ export interface DeviceV3ReviewActionRequest {
   reason?: string;
   primary_speaker_person_id?: string | null;
   primary_speaker_unknown?: boolean;
+  unknown_kind?: string;
   purity?: string;
   other_speaker_ids?: Array<string>;
   quality_flags?: Array<string>;

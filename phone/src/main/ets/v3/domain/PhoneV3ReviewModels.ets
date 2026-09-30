@@ -158,7 +158,7 @@ export function phoneV3ReviewIsHistory(item: PhoneV3ReviewItem): boolean {
 
 export function phoneV3PendingReviews(items: Array<PhoneV3ReviewItem>, filter: number = 0): Array<PhoneV3ReviewItem> {
   return items.filter((item: PhoneV3ReviewItem): boolean => !phoneV3ReviewIsHistory(item) &&
-    (filter === 0 || filter === 1 && (item.kind === 'voice_identity' || item.kind === 'speaker_profile_purity') || filter === 2 && item.kind === 'reminder' ||
+    (filter === 0 || filter === 1 && (item.kind === 'voice_identity' || item.kind === 'speaker_profile_purity' || item.kind === 'blind_identity_review') || filter === 2 && item.kind === 'reminder' ||
       filter === 3 && (item.kind === 'person_memory' || item.kind === 'knowledge_proposal')));
 }
 

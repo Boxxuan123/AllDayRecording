@@ -51,7 +51,12 @@ export struct PhoneV3ReviewInboxPage {
   private visibleReviews(): Array<PhoneV3ReviewItem> {
     const items = phoneV3PendingReviews(this.currentUiState().snapshot.reviewItems, this.selectedFilter);
     let purityShown: boolean = false;
+    let blindShown: boolean = false;
     return items.filter((item: PhoneV3ReviewItem): boolean => {
+      if (item.kind === 'blind_identity_review') {
+        if (blindShown) { return false; }
+        blindShown = true; return true;
+      }
       if (item.kind !== 'speaker_profile_purity') { return true; }
       if (purityShown) { return false; }
       purityShown = true;
@@ -62,6 +67,10 @@ export struct PhoneV3ReviewInboxPage {
   private purityPendingCount(): number {
     return this.currentUiState().snapshot.reviewItems.filter((item: PhoneV3ReviewItem): boolean =>
       item.kind === 'speaker_profile_purity' && !phoneV3ReviewIsHistory(item)).length;
+  }
+  private blindPendingCount(): number {
+    return this.currentUiState().snapshot.reviewItems.filter((item: PhoneV3ReviewItem): boolean =>
+      item.kind === 'blind_identity_review' && !phoneV3ReviewIsHistory(item)).length;
   }
 
   private groupedReviews(): Array<PhoneV3ReviewGroup> {
@@ -83,6 +92,7 @@ export struct PhoneV3ReviewInboxPage {
 
   private reviewGroupLabel(item: PhoneV3ReviewItem): string {
     if (item.kind === 'speaker_profile_purity') { return '声纹纯度审核'; }
+    if (item.kind === 'blind_identity_review') { return 'Blind 人物验收'; }
     if (this.groupMode === 0) {
       const session = this.matchingSession(item.sessionId);
       if (session !== undefined) {
@@ -106,6 +116,7 @@ export struct PhoneV3ReviewInboxPage {
     switch (kind) {
       case 'voice_identity': return '声音身份';
       case 'speaker_profile_purity': return '声纹纯度审核';
+      case 'blind_identity_review': return 'Blind 人物验收';
       case 'reminder': return '提醒确认';
       case 'person_memory': return '人物记忆';
       case 'knowledge_proposal': return '事件提案';
@@ -184,7 +195,15 @@ export struct PhoneV3ReviewInboxPage {
 
   @Builder
   private reviewCard(item: PhoneV3ReviewItem) {
-    if (item.kind === 'speaker_profile_purity') {
+    if (item.kind === 'blind_identity_review') {
+      Column({ space: 8 }) {
+        Text('Blind 人物验收').fontSize(17).fontWeight(FontWeight.Medium).width('100%')
+        Text(`${this.blindPendingCount()} 条待审核 · 听完整音频 → 选人物 → 判断纯度`)
+          .fontSize(13).fontColor($r('app.color.text_secondary')).width('100%')
+        Button('开始验收').width('100%').onClick((): void => this.onOpenPurity(item.reviewId, false))
+      }.width('100%').padding(16).alignItems(HorizontalAlign.Start)
+        .borderRadius(16).backgroundColor($r('app.color.surface_primary'))
+    } else if (item.kind === 'speaker_profile_purity') {
       Column({ space: 8 }) {
         Text('声纹纯度审核').fontSize(17).fontWeight(FontWeight.Medium).width('100%')
         Text(`${this.purityPendingCount()} 段待听 · 听原音 → 选人物 → 判断纯度`).fontSize(13).fontColor($r('app.color.text_secondary')).width('100%')
@@ -277,6 +296,8 @@ export struct PhoneV3ReviewInboxPage {
 
       Row() {
         Text(`当前缓存 · ${this.visibleReviews().length + this.annotationConflicts().length} 个任务`).fontSize(12).layoutWeight(1).fontColor($r('app.color.text_secondary'))
+        Button(`Blind 已审核 ${this.currentUiState().snapshot.reviewItems.filter((item: PhoneV3ReviewItem): boolean => item.kind === 'blind_identity_review' && phoneV3ReviewIsHistory(item)).length}`)
+          .buttonStyle(ButtonStyleMode.TEXTUAL).fontSize(12).onClick((): void => this.onOpenPurity('blind:', true))
         Button(`纯度已审核 ${this.currentUiState().snapshot.reviewItems.filter((item: PhoneV3ReviewItem): boolean => item.kind === 'speaker_profile_purity' && phoneV3ReviewIsHistory(item)).length}`)
           .buttonStyle(ButtonStyleMode.TEXTUAL).fontSize(12).onClick((): void => this.onOpenPurity('', true))
         Button(`已采纳样本 ${phoneV3VoiceTasks(this.currentUiState().snapshot.reviewItems, true).length}`)
