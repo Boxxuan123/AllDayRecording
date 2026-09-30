@@ -92,12 +92,21 @@ export class PhoneV3ComputerBackup implements PhoneV3AudioBackupPort {
 export async function retryLegacyCompletionConflictsOnce(filesDir: string,
   repository: PhoneV3ProjectionRepositoryPort,
   completions: Array<PhoneSessionCompletionRecord>): Promise<void> {
-  const marker = `${filesDir}/computer_completion_compat_v1.done`;
+  await retryCompletionConflictsOnce(filesDir, repository, completions,
+    'computer_completion_compat_v1.done', '新清单没有连续追加分片，不能替换已确认版本');
+  await retryCompletionConflictsOnce(filesDir, repository, completions,
+    'computer_duplicate_completion_v1.done', '原会话缺少可核验的清单，请人工修复');
+}
+
+async function retryCompletionConflictsOnce(filesDir: string,
+  repository: PhoneV3ProjectionRepositoryPort,
+  completions: Array<PhoneSessionCompletionRecord>, markerName: string, reason: string): Promise<void> {
+  const marker = `${filesDir}/${markerName}`;
   if (fileIo.accessSync(marker)) { return; }
   const failures = await repository.localSessionFailures();
   for (const failure of failures) {
     if (failure.category !== 'conflict' ||
-      !failure.reason.includes('新清单没有连续追加分片，不能替换已确认版本') ||
+      !failure.reason.includes(reason) ||
       !completions.some((receipt: PhoneSessionCompletionRecord): boolean =>
         receipt.sessionKey === failure.sessionKey && receipt.source === 'legacy_user_confirmed' &&
           receipt.manifestSha256.length === 0)) { continue; }
