@@ -1,4 +1,5 @@
 import { common } from '@kit.AbilityKit';
+import { fileIo } from '@kit.CoreFileKit';
 import {
   ComputerUploadProgressHandler,
   ComputerUploadResult,
@@ -37,10 +38,11 @@ export class PhoneV3ComputerBackup implements PhoneV3AudioBackupPort {
     const localRecordings = PhoneV3RecordingStore.shared(this.context.filesDir).list();
     const links = await this.repository.localAudioLinks();
     const completions = await this.repository.localSessionCompletions();
+    await retryLegacyCompletionConflictsOnce(this.context.filesDir, this.repository, completions);
     const failures = await this.repository.localSessionFailures();
     const recordings = await recordingsNeedingComputerBackup(localRecordings, links, completions,
       computerSessionManifestSha256, failures);
-    const sessions = prepareComputerSessions(recordings, computerTransferTimezone(), completions);
+    const sessions = prepareComputerSessions(recordings, computerTransferTimezone(), completions).reverse();
     if (sessions.length === 0) {
       const result = new PhoneV3AudioBackupResult();
       result.failedSessions = failures.length;
@@ -85,6 +87,26 @@ export class PhoneV3ComputerBackup implements PhoneV3AudioBackupPort {
   }
 }
 
+// Only stale failures from the old completion protocol are retried on upgrade.
+// The marker prevents a genuine conflict from entering an automatic retry loop.
+export async function retryLegacyCompletionConflictsOnce(filesDir: string,
+  repository: PhoneV3ProjectionRepositoryPort,
+  completions: Array<PhoneSessionCompletionRecord>): Promise<void> {
+  const marker = `${filesDir}/computer_completion_compat_v1.done`;
+  if (fileIo.accessSync(marker)) { return; }
+  const failures = await repository.localSessionFailures();
+  for (const failure of failures) {
+    if (failure.category !== 'conflict' ||
+      !failure.reason.includes('新清单没有连续追加分片，不能替换已确认版本') ||
+      !completions.some((receipt: PhoneSessionCompletionRecord): boolean =>
+        receipt.sessionKey === failure.sessionKey && receipt.source === 'legacy_user_confirmed' &&
+          receipt.manifestSha256.length === 0)) { continue; }
+    await repository.clearSessionFailure(failure.sessionKey);
+  }
+  const file = fileIo.openSync(marker, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+  fileIo.closeSync(file);
+}
+
 export async function recordingsNeedingComputerBackup(recordings: Array<ReceivedRecordingFile>,
   links: Array<PhoneV3LocalAudioLink>,
   completions: Array<PhoneSessionCompletionRecord> = [],
@@ -93,7 +115,7 @@ export async function recordingsNeedingComputerBackup(recordings: Array<Received
   Promise<Array<ReceivedRecordingFile>> {
   const sessions = prepareComputerSessions(recordings, computerTransferTimezone(), completions);
   const pending: Array<ReceivedRecordingFile> = [];
-  for (let sessionIndex = 0; sessionIndex < sessions.length; sessionIndex += 1) {
+  for (let sessionIndex = sessions.length - 1; sessionIndex >= 0; sessionIndex -= 1) {
     const session = sessions[sessionIndex];
     const failed = failures.find((value: PhoneSessionTransferFailure): boolean =>
       value.sessionKey === session.manifest.sessionKey);

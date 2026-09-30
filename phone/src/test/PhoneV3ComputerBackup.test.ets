@@ -25,6 +25,16 @@ function uploaded(recordingFile: ReceivedRecordingFile, sessionStartedAt: number
 
 export default function phoneV3ComputerBackupTest() {
   describe('PhoneV3ComputerBackup', () => {
+    it('prioritizesNewestRecordingBeforeHistoricalChecks', 0, async () => {
+      const oldTime = 1788000000000;
+      const newTime = oldTime + 100000;
+      const oldFile = recording(oldTime, 1);
+      const newFile = recording(newTime, 1);
+      const pending = await recordingsNeedingComputerBackup([oldFile, newFile], []);
+      expect(pending.length).assertEqual(2);
+      expect(pending[0].path).assertEqual(newFile.path);
+      expect(pending[1].path).assertEqual(oldFile.path);
+    });
     it('skipsFullyUploadedSessionsAndKeepsPendingSessionsWhole', 0, async () => {
       const uploadedSession = 1788000000000;
       const pendingSession = 1788001000000;

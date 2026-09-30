@@ -160,10 +160,12 @@ export class ComputerRecordingUploadService {
         let acknowledgedOffset = 0;
         let initialOffset = -1;
         activeFiles.set(recordingIndex, recording.fileName);
-        report(new ComputerUploadProgress(`正在核对已有文件（当前上限 ${concurrency.limit} 个）`,
-          completedFiles, totalFiles, transferredBytes, totalBytes));
         try {
           const receipt = knownReceipts.get(`${session.manifest.sessionKey}\u0000${recording.path}`);
+          if (receipt === undefined) {
+            report(new ComputerUploadProgress(`正在核对已有文件（当前上限 ${concurrency.limit} 个）`,
+              completedFiles, totalFiles, transferredBytes, totalBytes));
+          }
           const result = receipt === undefined ? await this.uploadRecording(recording, chunkBytes,
             (remoteOffset: number): void => {
               if (initialOffset < 0) {

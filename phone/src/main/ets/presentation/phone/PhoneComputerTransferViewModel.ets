@@ -24,7 +24,7 @@ import {
 } from '../../computer/ComputerTransferProtocol';
 import { prepareComputerSessions } from '../../computer/ComputerSessionManifest';
 import { PreparedComputerSession } from '../../computer/ComputerSessionManifest';
-import { recordingsNeedingComputerBackup } from '../../v3/data/PhoneV3ComputerBackup';
+import { recordingsNeedingComputerBackup, retryLegacyCompletionConflictsOnce } from '../../v3/data/PhoneV3ComputerBackup';
 import { PhoneV3RecordingStore } from '../../v3/runtime/PhoneV3RecordingStore';
 import { PhoneSessionCompletionRecord, PhoneSessionTransferFailure } from '../../v3/domain/PhoneV3Models';
 import { PhonePasskeyClient } from '../../computer/PhonePasskeyClient';
@@ -60,6 +60,7 @@ export class PhoneComputerTransferViewModel {
   paired: boolean = false;
   progressPercent: number = 0;
   uploadProgressActive: boolean = false;
+  uploadRunning: boolean = false;
   completedFiles: number = 0;
   totalFiles: number = 0;
   availableSessions: number = 0;
@@ -79,6 +80,7 @@ export class PhoneComputerTransferViewModel {
   private projectionPromise: Promise<PhoneProjectionRepository> | undefined = undefined;
   private retryTimer: number = -1;
   private uploadGeneration: number = 0;
+  private stopUploadRequested: boolean = false;
 
   async pairFromQr(value: string): Promise<void> {
     const context = this.requireContext();
@@ -250,12 +252,19 @@ export class PhoneComputerTransferViewModel {
     }
   }
 
+  stopFurtherChecks(): void {
+    this.stopUploadRequested = true;
+    this.status = '当前录音确认完成后停止后续检查，已上传文件和回执会保留';
+  }
+
   async upload(onlySessionKey: string = ''): Promise<void> {
     const context = this.requireContext();
     if (this.busy) {
       return;
     }
     this.busy = true;
+    this.uploadRunning = true;
+    this.stopUploadRequested = false;
     this.uploadProgressActive = true;
     const uploadGeneration = ++this.uploadGeneration;
     this.progressPercent = 0;
@@ -267,7 +276,10 @@ export class PhoneComputerTransferViewModel {
       const projection = await this.requireProjection();
       const completions = await projection.localSessionCompletions();
       const links = await projection.localAudioLinks();
-      let pending = await recordingsNeedingComputerBackup(this.recordings, links, completions);
+      await retryLegacyCompletionConflictsOnce(context.filesDir, projection, completions);
+      const failures = await projection.localSessionFailures();
+      let pending = await recordingsNeedingComputerBackup(this.recordings, links, completions,
+        undefined, onlySessionKey.length > 0 ? [] : failures);
       if (onlySessionKey.length > 0) {
         const selected = prepareComputerSessions(pending, computerTransferTimezone(), completions)
           .find((session: PreparedComputerSession): boolean => session.manifest.sessionKey === onlySessionKey);
@@ -279,23 +291,25 @@ export class PhoneComputerTransferViewModel {
           this.status = '此录音的当前完整清单已确认，或录音文件尚未齐全';
           return;
         }
-        this.status = '已同步，没有新录音';
+        this.status = failures.length > 0 ? `${failures.length} 条录音存在冲突或等待重试，请查看下方说明` :
+          '音频分片已备份；整场确认状态见录音列表';
         const connected = await new ComputerRecordingBackupRuntime(context).connect();
         this.applyConfig(connected);
         await new PhoneSyncCoordinator(new ComputerTransferHttpClient(context, connected.baseUrl,
           connected.caPath, connected.deviceId), projection).synchronize();
         this.cancelRetry();
         await this.refreshProjectionStatus(projection);
-        this.status = '已同步，没有新录音';
+        this.transferFailures = failures;
         return;
       }
-      const sessions = prepareComputerSessions(pending, computerTransferTimezone(), completions);
+      const sessions = prepareComputerSessions(pending, computerTransferTimezone(), completions).reverse();
       let connected: ComputerTransferConfig | undefined = undefined;
       let newFiles = 0;
       let skippedFiles = 0;
       let confirmedSessions = 0;
       const errors: Array<string> = [];
       for (let index = 0; index < sessions.length; index += 1) {
+        if (this.stopUploadRequested) { break; }
         const session = sessions[index];
         const files = pending.filter((recording: ReceivedRecordingFile): boolean =>
           recording.sourcePath.startsWith(`${session.directory}/`));
@@ -307,7 +321,8 @@ export class PhoneComputerTransferViewModel {
               this.uploadProgressActive = progress.stage === 'uploading';
               this.completedFiles = progress.completedFiles;
               this.totalFiles = progress.totalFiles;
-              this.status = progress.message;
+              this.status = this.stopUploadRequested ? '当前录音确认完成后停止后续检查' :
+                `第 ${index + 1}/${sessions.length} 场 · ${progress.message}`;
             }, completions, await projection.localAudioLinks(), await projection.localSessionFailures());
           connected = outcome.config;
           const uploaded = outcome.upload;
@@ -321,7 +336,7 @@ export class PhoneComputerTransferViewModel {
       this.knownCompletions = await projection.localSessionCompletions();
       this.updateRecordings(this.recordings);
       this.uploadProgressActive = false;
-      this.status = `上传检查完成：新增 ${newFiles} 个文件，电脑已有并跳过 ${skippedFiles} 个；` +
+      this.status = `${this.stopUploadRequested ? '已停止后续检查' : '上传检查完成'}：新增 ${newFiles} 个文件，电脑已有并跳过 ${skippedFiles} 个；` +
         `${confirmedSessions} 个会话已获得整场备份确认` +
         (errors.length > 0 ? `；${errors.length} 条录音待处理：${errors.join('；')}` : '');
       if (connected === undefined) { return; }
@@ -342,6 +357,7 @@ export class PhoneComputerTransferViewModel {
     } catch (error) {
       this.status = computerTransferError(error as Object).message;
     } finally {
+      this.uploadRunning = false;
       if (uploadGeneration === this.uploadGeneration) {
         this.uploadProgressActive = false;
         this.progressPercent = 0;

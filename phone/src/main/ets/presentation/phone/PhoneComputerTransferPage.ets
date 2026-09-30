@@ -233,6 +233,12 @@ export struct PhoneComputerTransferPage {
               this.transferViewModel.upload();
             })
 
+          if (this.transferViewModel.uploadRunning) {
+            Button('停止后续检查', { type: ButtonType.Capsule })
+              .width('100%')
+              .onClick((): void => { this.transferViewModel.stopFurtherChecks(); })
+          }
+
           ForEach(this.transferViewModel.transferFailures, (failure: PhoneSessionTransferFailure): void => {
             Text(`${failure.category === 'conflict' ? '清单冲突' : '等待重试'} · ${failure.sessionKey}：${failure.reason}`)
               .width('100%')
@@ -245,11 +251,11 @@ export struct PhoneComputerTransferPage {
           }, (failure: PhoneSessionTransferFailure): string => failure.sessionKey)
 
           ForEach(this.transferViewModel.legacyCandidates, (candidate: LegacyCompletionCandidate): void => {
-            Button(`确认旧录音完整：${candidate.completedSegments} 片`, { type: ButtonType.Capsule })
+            Button(`缺少结束记录：${candidate.completedSegments} 片 · 手动确认`, { type: ButtonType.Capsule })
               .width('100%')
               .enabled(!this.transferViewModel.busy)
               .onClick((): void => AlertDialog.show({
-                title: '确认旧录音已结束？',
+                title: '确认这场录音已结束？',
                 message: `会话 ${candidate.sessionKey} 当前有 ${candidate.completedSegments} 片，` +
                   `${candidate.totalSamples} 样本。仅在手表录音已结束且全部分片已同步到手机时确认；` +
                   `随后电脑才会把这些文件当作完整录音。`,
