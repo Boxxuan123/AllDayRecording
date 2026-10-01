@@ -26,10 +26,11 @@ class Store {
   }
 }
 const stores = [];
-const notifications = { current: [], cancelled: [], published: [] };
+const notifications = { current: [], cancelled: [], published: [], enabled: true, permissionRequests: 0 };
 const native = {
   '@kit.BasicServicesKit': { systemDateTime: { TimeType: { STARTUP: 0 }, getUptime: () => performance.now() } },
-  '@kit.NotificationKit': { notificationManager: { isNotificationEnabled: async () => true } },
+  '@kit.NotificationKit': { notificationManager: { isNotificationEnabled: async () => notifications.enabled,
+    requestEnableNotification: async () => { notifications.permissionRequests++; } } },
   '@kit.BackgroundTasksKit': { reminderAgentManager: {
     ReminderType: { REMINDER_TYPE_CALENDAR: 1 }, TimeZoneType: { FIXED_TIME_ZONE: 1 },
     getAllValidReminders: async () => notifications.current.slice(),

@@ -355,6 +355,7 @@ export class PhoneV3DeviceState {
 }
 
 export class PhoneV3Reminder {
+  pendingAction: string = '';
   eventId: string;
   sessionId: string;
   eventRevision: number;

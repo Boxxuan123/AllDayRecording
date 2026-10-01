@@ -1,4 +1,5 @@
 import { annotationTiming } from './PhoneAnnotationTiming';
+import { PhoneV3ReminderCommand, overlayReminderCommands, pendingReminderReview } from '../domain/PhoneV3ReminderCommands';
 import { syncRequestBatch, PhoneSyncBatchPolicy, jsonBytes } from '../data/PhoneSyncBatch';
 import { PhonePendingOperation } from '../data/PhoneSyncProjection';
 import { PHONE_V3_SOUND_KINDS, phoneV3SoundKindLabel } from '../domain/PhoneV3SoundKind';
@@ -120,6 +121,7 @@ export class PhoneV3SyncResult {
 }
 
 export class PhoneV3UseCases {
+  reminderSchedulingError: string = '';
   private syncBatchPolicy: PhoneSyncBatchPolicy = new PhoneSyncBatchPolicy();
   private reviewVersion: string | undefined = undefined;
   private peopleVersion: string | undefined = undefined;
@@ -197,7 +199,8 @@ export class PhoneV3UseCases {
     const conflicts = await this.repository.conflictRows();
     const status = await this.repository.v3Status();
     const paired = await this.remote.isPaired();
-    const reminderValues = phoneV3Reminders(reminders);
+    const commands = this.repository.reminderOperations === undefined ? [] : await this.repository.reminderOperations();
+    const reminderValues = overlayReminderCommands(phoneV3Reminders(reminders), commands);
     await this.reconcileReminders(reminderValues);
     const completions = await this.repository.localSessionCompletions();
     const sessions = mergePhoneV3Sessions(localFacts, links, recordings, processing, utterances,
@@ -228,7 +231,8 @@ export class PhoneV3UseCases {
     }
     return new PhoneV3Snapshot(
       sessions,
-      conflicts, status, paired, reminderValues, await this.withPendingPurity(phoneV3ReviewItems(reviews)));
+      conflicts, status, paired, reminderValues, await this.withPendingPurity(phoneV3ReviewItems(reviews).filter(
+        (item: PhoneV3ReviewItem): boolean => !pendingReminderReview(item, commands))));
   }
 
   async localAudioIsProtected(sessionKey: string): Promise<boolean> {
@@ -247,6 +251,21 @@ export class PhoneV3UseCases {
       }
     }
     return false;
+  }
+
+  async queueReminder(kind: string, payload: PhoneV3ReminderCommand, revision: number | null = null): Promise<void> {
+    if (['reminder.review', 'reminder.task'].indexOf(kind) < 0) { throw new Error('提醒操作无效'); }
+    await this.repository.beginTransaction();
+    try {
+      const pending = this.repository.reminderOperations === undefined ? [] : await this.repository.reminderOperations();
+      if (pending.some((operation: PhonePendingOperation): boolean => {
+        const command = operation.payload as PhoneV3ReminderCommand;
+        return command.candidate_id === payload.candidate_id && payload.candidate_id !== undefined ||
+          command.event_id === payload.event_id && payload.event_id !== undefined;
+      })) { throw new Error('此提醒已有待同步操作，请先完成同步'); }
+      await this.repository.enqueue({ operation_id: newOperationId(), kind: kind, base_revision: revision, payload: payload });
+      await this.repository.commit();
+    } catch (error) { await this.repository.rollback(); throw error as Error; }
   }
 
   async refreshUtterances(snapshot: PhoneV3Snapshot, ids: Array<string>): Promise<PhoneV3Snapshot> {
@@ -837,8 +856,10 @@ export class PhoneV3UseCases {
     }
     try {
       await this.reminderScheduler.reconcile(reminders);
+      this.reminderSchedulingError = '';
     } catch (error) {
-      // Notification permission is optional; the durable in-app reminder list remains available.
+      this.reminderSchedulingError = `系统提醒未调度：${error instanceof Error ? error.message : JSON.stringify(error)}`;
+      console.error(this.reminderSchedulingError);
     }
   }
 }

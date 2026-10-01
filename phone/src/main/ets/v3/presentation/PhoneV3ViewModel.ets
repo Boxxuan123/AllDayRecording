@@ -1,4 +1,5 @@
 import { annotationTiming } from '../application/PhoneAnnotationTiming';
+import { PhoneV3ReminderCommand, editedReminderTime } from '../domain/PhoneV3ReminderCommands';
 import { PhoneV3ReviewAudioRetry } from '../domain/PhoneV3ReviewAudioRetry';
 import { ComputerConnectionError } from '../../computer/ComputerConnectionError';
 import { phoneV3VoiceCandidates } from '../domain/PhoneV3ReviewModels';
@@ -1034,6 +1035,29 @@ export class PhoneV3ViewModel {
   reportUiError(message: string): void {
     this.lastRetryAction = PhoneV3RetryAction.NONE;
     this.fail(new Error(message));
+  }
+
+  reminderSchedulingError(): string { return this.useCases?.reminderSchedulingError ?? ''; }
+
+  reminderCommand(kind: string, targetId: string, action: string, revision: number | null = null,
+    title: string = '', due: string = ''): void {
+    const useCases = this.useCases;
+    if (useCases === undefined || this.busy) { return; }
+    const command: PhoneV3ReminderCommand = { action: action };
+    if (kind === 'reminder.review') { command.candidate_id = targetId; }
+    else { command.event_id = targetId; }
+    if (action === 'edit' || action === 'reschedule') {
+      try { command.scheduled_at = editedReminderTime(due); }
+      catch (error) { this.fail(error as Object); return; }
+      if (title.trim().length === 0) { this.fail(new Error('请填写待办内容')); return; }
+      command.title = title.trim();
+    }
+    this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.BUSY, undefined, undefined, '正在保存提醒操作…'));
+    useCases.queueReminder(kind, command, revision).then((): void => {
+      this.clearError('提醒操作已保存到手机，等待同步确认');
+      this.refresh();
+      this.synchronize();
+    }).catch((error: Object): void => this.fail(error));
   }
 
   retryLastAction(): void {

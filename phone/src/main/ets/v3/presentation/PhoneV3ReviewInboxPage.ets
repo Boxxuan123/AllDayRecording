@@ -1,4 +1,5 @@
 import { phoneV3VoiceTasks } from '../domain/PhoneV3VoiceReviewTask';
+import { reminderContext, localReminderTime } from '../domain/PhoneV3ReminderCommands';
 import { phoneV3PendingReviews, phoneV3ReviewIsHistory } from '../domain/PhoneV3ReviewModels';
 import { PhoneV3AnnotationConflictPanel } from './PhoneV3AnnotationConflictPanel';
 import { PhoneV3Conflict, PhoneV3ReviewItem, PhoneV3SessionCard } from '../domain/PhoneV3Models';
@@ -32,6 +33,9 @@ export struct PhoneV3ReviewInboxPage {
   @Prop stateRevision: number = 0;
   @State private selectedFilter: number = 0;
   @State private groupMode: number = 0;
+  @State private editingReminder: string = '';
+  @State private reminderTitle: string = '';
+  @State private reminderDue: string = '';
   onOpenSession: (session: PhoneV3SessionCard) => void = (_session: PhoneV3SessionCard): void => {};
 
   private currentUiState(): PhoneV3UiState {
@@ -174,10 +178,14 @@ export struct PhoneV3ReviewInboxPage {
   private standardActions(item: PhoneV3ReviewItem) {
     Row({ space: 8 }) {
       if (item.kind === 'reminder') {
-        this.decisionButton('创建提醒', true, true, (): void =>
-          this.viewModel.resolveReview(item.reviewId, 'confirm'))
+        this.decisionButton('创建提醒', true, reminderContext(item).actor_person_id === 'self', (): void =>
+          this.viewModel.reminderCommand('reminder.review', item.sourceId, 'confirm'))
+        this.decisionButton('修改', false, reminderContext(item).actor_person_id === 'self', (): void => {
+          this.editingReminder = item.sourceId; this.reminderTitle = item.title;
+          this.reminderDue = localReminderTime(reminderContext(item).scheduled_at ?? '');
+        })
         this.decisionButton('不提醒', false, true, (): void =>
-          this.viewModel.resolveReview(item.reviewId, 'ignore'))
+          this.viewModel.reminderCommand('reminder.review', item.sourceId, 'ignore'))
       } else if (item.kind === 'person_memory') {
         this.decisionButton('记住', true, true, (): void =>
           this.viewModel.resolveReview(item.reviewId, 'confirm'))
@@ -244,6 +252,19 @@ export struct PhoneV3ReviewInboxPage {
         .fontSize(13)
         .fontColor($r('app.color.text_secondary'))
         .maxLines(4)
+      if (item.kind === 'reminder') {
+        Text(`执行人：${reminderContext(item).actor_person_id === 'self' ? '本人' : '未确定'} · ${reminderContext(item).scheduled_at ? localReminderTime(reminderContext(item).scheduled_at as string) : '时间未确定'}`)
+          .fontSize(14).width('100%')
+        Text(`原话：${reminderContext(item).source_text ?? '请查看来源录音'}`).fontSize(14).width('100%')
+        if (this.editingReminder === item.sourceId) {
+          TextInput({ text: this.reminderTitle, placeholder: '要做什么' }).onChange((value: string): void => { this.reminderTitle = value; })
+          TextInput({ text: this.reminderDue, placeholder: 'YYYY-MM-DD HH:mm（手机本地时间）' }).onChange((value: string): void => { this.reminderDue = value; })
+          Button('保存修改并创建提醒').enabled(!this.currentUiState().busy).onClick((): void => {
+            this.viewModel.reminderCommand('reminder.review', item.sourceId, 'edit', null, this.reminderTitle, this.reminderDue);
+          })
+          Button('收起修改').onClick((): void => { this.editingReminder = ''; })
+        }
+      }
       Text(phoneV3ReviewReason(item.reason))
         .width('100%')
         .fontSize(12)

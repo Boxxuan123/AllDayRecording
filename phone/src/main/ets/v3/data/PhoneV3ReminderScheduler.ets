@@ -9,23 +9,43 @@ const BUNDLE_NAME: string = 'AllDayRecording.huawei.com';
 
 export class PhoneV3ReminderScheduler implements PhoneV3ReminderSchedulerPort {
   private context: common.UIAbilityContext;
+  private tail: Promise<void> = Promise.resolve();
 
   constructor(context: common.UIAbilityContext) {
     this.context = context;
   }
 
-  async reconcile(reminders: Array<PhoneV3Reminder>): Promise<void> {
-    if (!await notificationManager.isNotificationEnabled()) {
-      await notificationManager.requestEnableNotification(this.context);
-    }
+  reconcile(reminders: Array<PhoneV3Reminder>): Promise<void> {
+    const next = this.tail.catch((): void => {}).then((): Promise<void> => this.apply(reminders));
+    this.tail = next;
+    return next;
+  }
+
+  private async apply(reminders: Array<PhoneV3Reminder>): Promise<void> {
     const desired = futureReminders(reminders);
-    const current = await reminderAgentManager.getAllValidReminders();
+    let current = await reminderAgentManager.getAllValidReminders();
+    const retained = new Set<string>();
     for (let index = 0; index < current.length; index += 1) {
       const groupId = current[index].reminderReq.groupId;
       if (typeof groupId === 'string' && groupId.startsWith(GROUP_PREFIX) &&
-        findByGroup(desired, groupId) === undefined) {
+        (findByGroup(desired, groupId) === undefined || retained.has(groupId))) {
         await reminderAgentManager.cancelReminder(current[index].reminderId);
+      } else if (typeof groupId === 'string') {
+        retained.add(groupId);
       }
+    }
+    if (desired.length === 0) { return; }
+    if (!await notificationManager.isNotificationEnabled()) {
+      // An obsolete due time must not survive a refused permission request.
+      for (let reminder of desired) {
+        const existing = findCurrent(current, reminderGroup(reminder));
+        if (existing !== undefined && !sameRequest(existing.reminderReq, calendarRequest(reminder, reminderGroup(reminder)))) {
+          await reminderAgentManager.cancelReminder(existing.reminderId);
+          current = current.filter((item: reminderAgentManager.ReminderInfo): boolean => item.reminderId !== existing.reminderId);
+        }
+      }
+      await notificationManager.requestEnableNotification(this.context);
+      if (!await notificationManager.isNotificationEnabled()) { throw new Error('通知权限尚未允许'); }
     }
     for (let index = 0; index < desired.length; index += 1) {
       const reminder = desired[index];
@@ -36,6 +56,7 @@ export class PhoneV3ReminderScheduler implements PhoneV3ReminderSchedulerPort {
         await reminderAgentManager.publishReminder(request);
         continue;
       }
+      if (sameRequest(existing.reminderReq, request)) { continue; }
       try {
         await reminderAgentManager.updateReminder(existing.reminderId, request);
       } catch (error) {
@@ -44,6 +65,17 @@ export class PhoneV3ReminderScheduler implements PhoneV3ReminderSchedulerPort {
       }
     }
   }
+}
+
+function sameRequest(current: reminderAgentManager.ReminderRequest,
+  desired: reminderAgentManager.ReminderRequestCalendar): boolean {
+  if (current.reminderType !== reminderAgentManager.ReminderType.REMINDER_TYPE_CALENDAR) { return false; }
+  const calendar = current as reminderAgentManager.ReminderRequestCalendar;
+  return calendar.dateTime.year === desired.dateTime.year && calendar.dateTime.month === desired.dateTime.month &&
+    calendar.dateTime.day === desired.dateTime.day && calendar.dateTime.hour === desired.dateTime.hour &&
+    calendar.dateTime.minute === desired.dateTime.minute && (calendar.dateTime.second ?? 0) === (desired.dateTime.second ?? 0) &&
+    calendar.fixedTimeZone === desired.fixedTimeZone && current.content === desired.content &&
+    current.title === desired.title && current.notificationId === desired.notificationId;
 }
 
 function futureReminders(reminders: Array<PhoneV3Reminder>): Array<PhoneV3Reminder> {

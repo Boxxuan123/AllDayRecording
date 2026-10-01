@@ -66,7 +66,7 @@ for (const response of input.responses) {
 }
 assert.equal(cancelled.length, 0);
 assert.equal(published.length, 1);
-assert.equal(updated.length, input.responses.length - 1);
+assert.equal(updated.length, 0);
 // Preserve the real fail-closed treatment of stale schedules.
 const key = 'reminder:' + input.event_id;
 const row = rows.get(key); const payload = JSON.parse(row.payloadJson);

@@ -1,4 +1,5 @@
 import annotationIndexTest from './PhoneV3AnnotationIndex.test';
+import phoneV3ReminderCommandsTest from './PhoneV3ReminderCommands.test';
 import annotationStateTest from './PhoneV3AnnotationState.test';
 import annotationEditorTest from './PhoneV3AnnotationEditor.test';
 import computerUploadQueueTest from './ComputerUploadQueue.test';
@@ -14,6 +15,7 @@ import phoneV3ComputerBackupTest from './PhoneV3ComputerBackup.test';
 import phoneV3ReviewModelsTest from './PhoneV3ReviewModels.test';
 
 export default function testsuite() {
+  phoneV3ReminderCommandsTest();
   annotationIndexTest();
   annotationStateTest();
   annotationEditorTest();

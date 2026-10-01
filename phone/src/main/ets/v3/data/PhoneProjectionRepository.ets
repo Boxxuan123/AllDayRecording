@@ -306,6 +306,21 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
     }
   }
 
+  async reminderOperations(): Promise<Array<PhonePendingOperation>> {
+    const rows = await this.store.querySql(`SELECT operation_id,kind,base_revision,payload_json,
+      attempt_count,applied_revision FROM outbox WHERE kind IN ('reminder.review','reminder.task') ORDER BY created_at,rowid`);
+    const values: Array<PhonePendingOperation> = [];
+    try {
+      while (rows.goToNextRow()) {
+        values.push({ operation_id: rows.getString(0), kind: rows.getString(1),
+          base_revision: rows.isColumnNull(2) ? null : rows.getLong(2),
+          payload: JSON.parse(rows.getString(3)) as Object, attempt_count: rows.getLong(4),
+          applied_revision: rows.isColumnNull(5) ? undefined : rows.getLong(5) });
+      }
+    } finally { rows.close(); }
+    return values;
+  }
+
   async status(): Promise<PhoneProjectionStatus> {
     const result = await this.store.querySql(
       `SELECT cursor, last_server_time, last_error, retry_count,
@@ -591,11 +606,16 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
 
   async replaceReviewItems(items: Array<Object>): Promise<boolean> {
     const incoming = new Map<string, string>();
+    const resolved = new Set<string>();
+    const tombstones = await this.store.querySql("SELECT resource_id FROM projection_tombstones WHERE resource_type='review_item'");
+    try { while (tombstones.goToNextRow()) { resolved.add(tombstones.getString(0)); } }
+    finally { tombstones.close(); }
     for (let value of items) {
       const item = value as ReviewSnapshotPayload;
       if (typeof item.review_id !== 'string' || item.review_id.length === 0 || incoming.has(item.review_id)) {
         throw new Error('电脑返回的审核快照包含无效或重复 ID');
       }
+      if (resolved.has(item.review_id)) { continue; }
       incoming.set(item.review_id, JSON.stringify(item));
     }
     await this.beginTransaction();
@@ -614,6 +634,7 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
         if (typeof item.review_id !== 'string' || item.review_id.length === 0) {
           throw new Error('电脑返回的审核快照包含无效 ID');
         }
+        if (!incoming.has(item.review_id)) { continue; }
         if (previous.get(item.review_id) === incoming.get(item.review_id)) { continue; }
         const revision = typeof item.source_revision === 'number' && item.source_revision > 0 ?
           item.source_revision : 1;
@@ -728,12 +749,26 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
       // possibly on a later pull page. Applied rows are never sent again.
       await this.store.executeSql('UPDATE outbox SET applied_revision = ? WHERE operation_id = ?',
         [receipt.resource_revision, receipt.operation_id]);
-      const pending = await this.store.querySql('SELECT payload_json FROM outbox WHERE operation_id=?', [receipt.operation_id]);
+      const pending = await this.store.querySql('SELECT payload_json,kind FROM outbox WHERE operation_id=?', [receipt.operation_id]);
       try {
         if (pending.goToNextRow()) {
           const payload = JSON.parse(pending.getString(0)) as OperationDependencies;
           const selections = payload.selections ?? [];
-          if (receipt.resource_results !== undefined && (receipt.resource_results.length !== selections.length ||
+          const reminder = pending.getString(1).startsWith('reminder.');
+          if (pending.getString(1) === 'reminder.review') {
+            const source = pending.getString(0);
+            await this.store.executeSql(`DELETE FROM projection_review_items
+              WHERE resource_id='reminder:' || json_extract(?,'$.candidate_id')`, [source]);
+            await this.store.executeSql(`INSERT OR REPLACE INTO projection_tombstones(resource_type,resource_id,revision,updated_at)
+              VALUES ('review_item','reminder:' || json_extract(?,'$.candidate_id'),1,?)`, [source, Date.now()]);
+          }
+          if (reminder && receipt.resource_results !== undefined) {
+            for (let target of receipt.resource_results) {
+              await this.store.executeSql('INSERT OR IGNORE INTO outbox_resource_receipts VALUES(?,?,?,0)',
+                [receipt.operation_id, target.resource_id, target.revision]);
+            }
+          }
+          if (!reminder && receipt.resource_results !== undefined && (receipt.resource_results.length !== selections.length ||
             selections.some((s): boolean => !receipt.resource_results!.some((r): boolean => r.resource_id === s.utterance_id)))) {
             throw new Error('逐资源回执与原操作不一致');
           }
@@ -753,11 +788,16 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
   }
 
   private async clearProjectedOperations(): Promise<void> {
+    await this.store.executeSql(`UPDATE outbox_resource_receipts SET projected=1 WHERE projected=0
+      AND operation_id IN (SELECT operation_id FROM outbox WHERE kind IN ('reminder.review','reminder.task'))
+      AND EXISTS (SELECT 1 FROM projection_reminders p WHERE p.resource_id=outbox_resource_receipts.resource_id
+        AND p.revision>=outbox_resource_receipts.target_revision)`);
     await this.store.executeSql(`UPDATE outbox_resource_receipts SET projected=1 WHERE projected=0 AND (EXISTS (
       SELECT 1 FROM projection_utterances p WHERE p.resource_id=outbox_resource_receipts.resource_id AND p.revision>=outbox_resource_receipts.target_revision)
       OR EXISTS (SELECT 1 FROM projection_tombstones t WHERE t.resource_type='utterance'
         AND t.resource_id=outbox_resource_receipts.resource_id AND t.revision>=outbox_resource_receipts.target_revision))`);
     await this.store.executeSql(`DELETE FROM outbox WHERE applied_revision IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM outbox_resource_receipts pending WHERE pending.operation_id=outbox.operation_id AND pending.projected=0)
       AND NOT EXISTS (SELECT 1 FROM json_each(outbox.payload_json,'$.selections') selection
         WHERE NOT EXISTS (SELECT 1 FROM outbox_resource_receipts receipt
           WHERE receipt.operation_id=outbox.operation_id

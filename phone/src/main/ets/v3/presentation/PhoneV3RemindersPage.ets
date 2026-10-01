@@ -1,10 +1,14 @@
-import { PhoneV3Reminder, PhoneV3SessionCard } from '../domain/PhoneV3Models';
+import { PhoneV3Reminder, PhoneV3SessionCard, PhoneV3Conflict } from '../domain/PhoneV3Models';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 import { phoneV3ReminderState, phoneV3ReminderTime } from './PhoneV3UiFormat';
+import { localReminderTime, reminderConflictMessage } from '../domain/PhoneV3ReminderCommands';
 
 @Component
 export struct PhoneV3RemindersPage {
   @ObjectLink viewModel: PhoneV3ViewModel;
+  @State private editingId: string = '';
+  @State private editedTitle: string = '';
+  @State private editedDue: string = '';
   onOpenSession: (session: PhoneV3SessionCard) => void = (_session: PhoneV3SessionCard): void => {};
 
   private matchingSession(reminder: PhoneV3Reminder): PhoneV3SessionCard | undefined {
@@ -30,6 +34,9 @@ export struct PhoneV3RemindersPage {
         .fontSize(17)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
+      if (reminder.pendingAction.length > 0) {
+        Text('操作已保存在手机，待电脑确认').fontSize(13).fontColor($r('app.color.brand_warning'))
+      }
       if (reminder.location !== null && reminder.location.length > 0) {
         Text(`地点：${reminder.location}`)
           .fontSize(13)
@@ -40,6 +47,25 @@ export struct PhoneV3RemindersPage {
           .height(40)
           .buttonStyle(ButtonStyleMode.TEXTUAL)
           .onClick((): void => this.onOpenSession(this.matchingSession(reminder) as PhoneV3SessionCard))
+      }
+      if ((reminder.status === 'scheduled' || reminder.status === 'delivered') && reminder.pendingAction.length === 0) {
+        Row({ space: 8 }) {
+          Button('完成').enabled(!this.viewModel.busy).onClick((): void =>
+            this.viewModel.reminderCommand('reminder.task', reminder.eventId, 'complete', reminder.eventRevision))
+          Button('改时间').enabled(!this.viewModel.busy).onClick((): void => {
+            this.editingId = reminder.eventId; this.editedTitle = reminder.title;
+            this.editedDue = localReminderTime(reminder.scheduledAt);
+          })
+          Button('取消提醒').enabled(!this.viewModel.busy).onClick((): void =>
+            this.viewModel.reminderCommand('reminder.task', reminder.eventId, 'cancel', reminder.eventRevision))
+        }
+        if (this.editingId === reminder.eventId) {
+          TextInput({ text: this.editedTitle, placeholder: '要做什么' }).onChange((value: string): void => { this.editedTitle = value; })
+          TextInput({ text: this.editedDue, placeholder: 'YYYY-MM-DD HH:mm（手机本地时间）' }).onChange((value: string): void => { this.editedDue = value; })
+          Button('保存新时间').enabled(!this.viewModel.busy).onClick((): void =>
+            this.viewModel.reminderCommand('reminder.task', reminder.eventId, 'reschedule', reminder.eventRevision, this.editedTitle, this.editedDue))
+          Button('收起修改').onClick((): void => { this.editingId = ''; })
+        }
       }
     }
     .width('100%')
@@ -52,6 +78,13 @@ export struct PhoneV3RemindersPage {
   build() {
     Scroll() {
       Column({ space: 12 }) {
+        if (this.viewModel.reminderSchedulingError().length > 0) {
+          Text(this.viewModel.reminderSchedulingError()).fontSize(14).fontColor($r('app.color.brand_warning'))
+        }
+        ForEach(this.viewModel.snapshot.conflicts.filter((conflict: PhoneV3Conflict): boolean => conflict.kind.startsWith('reminder.')),
+          (conflict: PhoneV3Conflict) => {
+            Text(`提醒操作未被电脑接受：${reminderConflictMessage(conflict.errorJson)}`).fontSize(13).fontColor($r('app.color.brand_warning'))
+          }, (conflict: PhoneV3Conflict): string => conflict.operationId)
         Text(`${this.viewModel.snapshot.reminders.length} 条已确认提醒`)
           .width('100%')
           .fontSize(13)
