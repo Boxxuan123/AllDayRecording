@@ -246,6 +246,9 @@ export interface DeviceV3ReviewActionRequest {
   primary_speaker_unknown?: boolean;
   unknown_kind?: string;
   purity?: string;
+  review_schema_version?: number;
+  speaker_composition?: string;
+  boundary_quality?: string;
   other_speaker_ids?: Array<string>;
   quality_flags?: Array<string>;
 }

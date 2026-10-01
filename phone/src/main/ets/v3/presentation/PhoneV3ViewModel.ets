@@ -476,7 +476,8 @@ export class PhoneV3ViewModel {
   submitPurityReview(reviewId: string, personId: string, unknown: boolean,
     purity: string, others: Array<string>, flags: Array<string>, undo: boolean,
     onResolved: () => void = (): void => {},
-    onFailed: () => void = (): void => {}, unknownKind: string = 'dont_know'): boolean {
+    onFailed: () => void = (): void => {}, unknownKind: string = 'dont_know',
+    reviewSchemaVersion: number = 1, composition: string = '', boundary: string = 'clean'): boolean {
     const useCases = this.useCases;
     if (useCases === undefined || this.reviewSubmissionState(reviewId)) { return false; }
     const request: DeviceV3ReviewActionRequest = { review_id: reviewId, action: undo ? 'undo' : 'submit' };
@@ -484,7 +485,11 @@ export class PhoneV3ViewModel {
       request.primary_speaker_person_id = unknown ? null : personId;
       request.primary_speaker_unknown = unknown;
       if (reviewId.startsWith('blind:')) { request.unknown_kind = unknown ? unknownKind : 'none'; }
-      request.purity = purity;
+      if (reviewId.startsWith('blind:') && reviewSchemaVersion === 2) {
+        request.review_schema_version = 2;
+        request.speaker_composition = composition;
+        request.boundary_quality = boundary;
+      } else { request.purity = purity; }
       request.other_speaker_ids = others;
       request.quality_flags = flags;
     }

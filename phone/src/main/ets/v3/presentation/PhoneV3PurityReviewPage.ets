@@ -13,6 +13,8 @@ interface PurityAnswer {
   primary_speaker_unknown?: boolean;
   unknown_kind?: string;
   purity?: string;
+  speaker_composition?: string;
+  boundary_quality?: string;
   other_speaker_ids?: Array<string>;
   quality_flags?: Array<string>;
   target_person_id?: string;
@@ -21,6 +23,9 @@ interface PurityAnswer {
 interface PurityContext {
   purity_review?: PurityAnswer;
   duration_ms?: number;
+  review_schema_version?: number;
+  source_window_count?: number;
+  audio_composition?: string;
 }
 
 @Component
@@ -41,6 +46,8 @@ export struct PhoneV3PurityReviewPage {
   @State private unknown: boolean = false;
   @State private unknownKind: string = 'dont_know';
   @State private purity: string = '';
+  @State private composition: string = '';
+  @State private boundary: string = 'clean';
   @State private others: Array<string> = [];
   @State private flags: Array<string> = [];
   @State private pickerOpen: boolean = false;
@@ -106,6 +113,12 @@ export struct PhoneV3PurityReviewPage {
     return session ? phoneV3SessionTitle(session) : '来源日期暂不可用';
   }
 
+  private isV2(): boolean {
+    return this.reviewKind === 'blind_identity_review' && this.context().review_schema_version === 2;
+  }
+
+  private answerReady(): boolean { return this.isV2() ? !!this.composition : !!this.purity; }
+
   private resetAnswer(): void {
     const answer = this.context().purity_review;
     this.primaryId = answer?.primary_speaker_person_id ?? '';
@@ -113,6 +126,8 @@ export struct PhoneV3PurityReviewPage {
     this.unknownKind = answer?.unknown_kind ?? 'dont_know';
     this.primaryName = this.people.find((p: DeviceV3PersonChoice): boolean => p.person_id === this.primaryId)?.display_name ?? '';
     this.purity = answer?.purity ?? '';
+    this.composition = answer?.speaker_composition ?? '';
+    this.boundary = answer?.boundary_quality ?? 'clean';
     this.others = answer?.other_speaker_ids ?? [];
     this.flags = answer?.quality_flags ?? [];
   }
@@ -152,7 +167,7 @@ export struct PhoneV3PurityReviewPage {
 
   private submit(): void {
     const item = this.current();
-    if (this.saving || item === undefined || (!this.primaryId && !this.unknown) || !this.purity) { return; }
+    if (this.saving || item === undefined || (!this.primaryId && !this.unknown) || !this.answerReady()) { return; }
     this.saving = true;
     const started = this.viewModel.submitPurityReview(item.reviewId, this.primaryId, this.unknown,
       this.purity, this.others, this.flags, false, (): void => {
@@ -161,7 +176,8 @@ export struct PhoneV3PurityReviewPage {
         this.feedback = '';
         this.viewModel.stopPlayback();
         this.loadQueue();
-      }, (): void => { this.saving = false; this.feedback = '本机保存失败，请重试'; }, this.unknownKind);
+      }, (): void => { this.saving = false; this.feedback = '本机保存失败，请重试'; }, this.unknownKind,
+      this.isV2() ? 2 : 1, this.composition, this.boundary);
     if (!started) { this.saving = false; this.feedback = '当前无法提交，请稍后重试'; }
   }
 
@@ -231,6 +247,10 @@ export struct PhoneV3PurityReviewPage {
                 .fontSize(13).fontColor($r('app.color.text_secondary')).width('100%')
               Text(this.audioStatus()).fontSize(15).fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.brand_primary')).width('100%')
+              if (this.context().audio_composition === 'multiple_clips') {
+                Text(`由 ${this.context().source_window_count ?? 0} 个来源片段组成，按录音时间播放。`)
+                  .fontSize(13).fontColor($r('app.color.text_secondary')).width('100%')
+              }
               Button(this.viewModel.reviewPlaybackPrototype === this.candidate.prototypeId ? '停止播放' :
                   this.viewModel.reviewSampleWasPlayed(this.task.reviewId, this.candidate.prototypeId) ? '▶ 重播目标片段' : '▶ 播放目标片段')
                 .width('100%').constraintSize({ minHeight: 52 }).enabled(this.candidate.hasAudio)
@@ -265,14 +285,26 @@ export struct PhoneV3PurityReviewPage {
                 Text(`已选主要人物：${this.primaryName || (this.unknownKind === 'stranger' ? '陌生人 / 未建档' : this.unknownKind === 'inaudible' ? '听不清' : '不知道是谁')}`).fontSize(14)
                   .fontColor($r('app.color.brand_primary')).width('100%')
               }
-              if (this.primaryId || this.unknown) {
+              if ((this.primaryId || this.unknown) && this.isV2()) {
+                Text('目标片段中的说话情况').fontSize(19).fontWeight(FontWeight.Bold).width('100%')
+                this.choice('只有一个人', this.composition === 'clean_single', (): void => { this.composition = 'clean_single'; })
+                this.choice('两人同时说', this.composition === 'simultaneous_overlap', (): void => { this.composition = 'simultaneous_overlap'; })
+                this.choice('中途串入别人', this.composition === 'sequential_multi_speaker', (): void => { this.composition = 'sequential_multi_speaker'; })
+                this.choice('短回应 / 嗯 / 对 / 笑', this.composition === 'backchannel', (): void => { this.composition = 'backchannel'; })
+                this.choice('听不清 / 不确定', this.composition === 'uncertain', (): void => { this.composition = 'uncertain'; })
+                Text('片段边界').fontSize(17).fontWeight(FontWeight.Bold).width('100%')
+                this.choice('边界正常', this.boundary === 'clean', (): void => { this.boundary = 'clean'; })
+                this.choice('说话被截断', this.boundary === 'cut', (): void => { this.boundary = 'cut'; })
+                this.choice('边界不确定', this.boundary === 'uncertain', (): void => { this.boundary = 'uncertain'; })
+              }
+              if ((this.primaryId || this.unknown) && !this.isV2()) {
                 Text('目标片段里还有别人的声音吗？').fontSize(19).fontWeight(FontWeight.Bold).width('100%')
                 this.choice('只有这个人', this.purity === 'clean_single', (): void => { this.purity = 'clean_single'; this.others = []; })
                 this.choice('有其他人 / 重叠', this.purity === 'mixed_overlap', (): void => { this.purity = 'mixed_overlap'; })
                 this.choice('切片边界跨到别人', this.purity === 'boundary_cross', (): void => { this.purity = 'boundary_cross'; this.others = []; })
                 this.choice('听不清 / 不确定', this.purity === 'uncertain', (): void => { this.purity = 'uncertain'; this.others = []; })
               }
-              if (this.purity) {
+              if (this.purity && !this.isV2()) {
                 Text(`已选纯度：${this.purity === 'clean_single' ? '只有这个人' :
                   this.purity === 'mixed_overlap' ? '有其他人 / 重叠' :
                     this.purity === 'boundary_cross' ? '切片边界跨到别人' : '听不清 / 不确定'}`)
@@ -303,7 +335,7 @@ export struct PhoneV3PurityReviewPage {
               }
               }
               if (this.history && this.context().purity_review) {
-                Text(`我的选择：${this.primaryName || '不知道是谁'} · ${this.purity}`).fontSize(14).width('100%')
+                Text(`我的选择：${this.primaryName || '不知道是谁'}`).fontSize(14).width('100%')
               }
               if (this.viewModel.reviewSubmissionState(this.task.reviewId)) {
                 Text(this.viewModel.reviewSubmissionMessage(this.task.reviewId)).fontSize(13).fontColor($r('app.color.brand_warning'))
@@ -312,7 +344,7 @@ export struct PhoneV3PurityReviewPage {
               Button(this.history ? '保存修改' :
                 !this.viewModel.reviewSampleWasPlayed(this.task.reviewId, this.candidate.prototypeId) ?
                   '听完整段后可提交' : '提交并听下一条').width('100%').constraintSize({ minHeight: 52 })
-                .enabled((!!this.primaryId || this.unknown) && !!this.purity &&
+                .enabled((!!this.primaryId || this.unknown) && this.answerReady() &&
                   (this.history || this.viewModel.reviewSampleWasPlayed(this.task.reviewId, this.candidate.prototypeId)) &&
                   !this.saving && !this.viewModel.reviewSubmissionState(this.task.reviewId))
                 .onClick((): void => this.submit())
