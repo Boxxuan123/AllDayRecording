@@ -52,12 +52,13 @@ const tick=()=>new Promise(r=>setImmediate(r));
  snapshot.reviewItems=[{reviewId:'r',title:'Synthetic',contextJson:JSON.stringify({voice_candidates:[{prototype_id:'p',audio_available:true,audition_key:'key',representative_clips:[{media_id:'m',start_ms:0,end_ms:3000},{media_id:'m',start_ms:3500,end_ms:6500},{media_id:'m',start_ms:7000,end_ms:10000}]}]})}];
  const full={...response,complete_sample:true,audition_key:'key',windows:[{media_id:'m',start_ms:0,end_ms:3000,playback_start_ms:0},{media_id:'m',start_ms:3500,end_ms:6500,playback_start_ms:3000},{media_id:'m',start_ms:7000,end_ms:10000,playback_start_ms:6000}]};
  let submissions=[]; vm.snapshot=snapshot;vm.reviewAudioPlayer=wrapper;
- vm.useCases={loadReviewAudio:async()=>full,loadLocal:async()=>[],loadCached:async()=>snapshot,resolveReview:async r=>{submissions.push(r);return snapshot.reviewItems}};
+ vm.useCases={loadReviewAudio:async()=>full,loadLocal:async()=>[],loadCached:async()=>snapshot,
+  pendingVoiceReviews:async()=>[],queueVoiceReview:async r=>{submissions.push(r)},flushVoiceReviews:async()=>{}};
  vm.playReviewSample('r','p');await tick();assert.equal(vm.reviewSampleWasPlayed('r','p'),false);
  vm.resolveReview('r','confirm','p');assert.equal(submissions.length,0);
  const oldPageGeneration=vm.playbackGeneration()-1;vm.stopPlayback(oldPageGeneration);
  players.at(-1).emit('completed');await tick();assert.equal(vm.reviewSampleWasPlayed('r','p'),true);
- vm.resolveReview('r','confirm','p');await tick();assert.equal(submissions.length,1);
+ vm.resolveReview('r','confirm','p');await tick();assert.equal(submissions.length,1);await vm.refreshSnapshot();
  vm.stopPlayback();assert.equal(vm.reviewSampleWasPlayed('r','p'),false);
  vm.resolveReview('r','retract','p');await tick();assert.equal(submissions.length,2);
  console.log('PASS real ViewModel blocks first-start confirmation, allows completion, clears on stop; withdrawal needs no audition');
@@ -71,49 +72,40 @@ const tick=()=>new Promise(r=>setImmediate(r));
  assert(vm.error.includes('完整试听'));await wrapper.release();assert.equal(files.size,0);
  console.log('PASS unrelated refresh preserves full audition; changed review/grant invalidates credential; partial responses fail closed');
 
- // Real ViewModel remote outcome guard: never advance on failed/ambiguous submission.
- const {PhoneV3ReviewSubmissionError}=require(path.join(root,'phone/src/main/ets/v3/application/PhoneV3UseCases.ets'));
- const remoteVm=new PhoneV3ViewModel();let remoteWrites=0, advanced=0, reads=0;
+ // Real ViewModel advances only after durable local save; the same sample
+ // cannot be double-tapped or bypassed through another entry while saving.
+ const remoteVm=new PhoneV3ViewModel();let queueCalls=0,advanced=0,releaseQueue;
  const pendingReview={reviewId:'remote',kind:'voice_identity',contextJson:JSON.stringify({voice_mode:'known_person',voice_candidates:[{prototype_id:'sample',review_status:'pending'}]})};
  remoteVm.snapshot=new PhoneV3Snapshot();remoteVm.snapshot.reviewItems=[pendingReview];
- remoteVm.useCases={resolveReview:async()=>{remoteWrites++;throw new PhoneV3ReviewSubmissionError(true)},refreshReviews:async()=>{reads++;return []}};
- remoteVm.resolveReview('remote','uncertain','sample','',()=>advanced++);await tick();
- assert.equal(advanced,0);assert.equal(remoteVm.reviewSubmissionState('remote','sample'),'committed');
- remoteVm.resolveReview('remote','uncertain','sample');await tick();assert.equal(remoteWrites,1);
- remoteVm.refreshVoiceReviews();await tick();assert.equal(reads,1);assert.equal(remoteWrites,1);assert.equal(remoteVm.reviewSubmissionState('remote','sample'),'');
- remoteVm.snapshot.reviewItems=[pendingReview];
- remoteVm.useCases.resolveReview=async()=>{remoteWrites++;throw new PhoneV3ReviewSubmissionError(false)};
- remoteVm.useCases.refreshReviews=async()=>{reads++;return [pendingReview]};
- remoteVm.resolveReview('remote','uncertain','sample','',()=>advanced++);await tick();
- remoteVm.refreshVoiceReviews();await tick();assert.equal(remoteVm.reviewSubmissionState('remote','sample'),'unknown');
- remoteVm.resolveReview('remote','uncertain','sample');await tick();assert.equal(remoteWrites,2);assert.equal(advanced,0);
- remoteVm.useCases.refreshReviews=async()=>[];remoteVm.refreshVoiceReviews();await tick();
- assert.equal(remoteVm.reviewSubmissionState('remote','sample'),'');assert.equal(advanced,0);assert.equal(remoteWrites,2);
- // Multiple unresolved objects survive independent submissions and alternate entry IDs.
- remoteVm.snapshot.reviewItems=[pendingReview];
- remoteVm.useCases.resolveReview=async()=>{remoteWrites++;throw new PhoneV3ReviewSubmissionError(false)};
- remoteVm.resolveReview('remote','uncertain','sample');await tick();const writesA=remoteWrites;
- remoteVm.resolveReview('another-entry','uncertain','sample');await tick();assert.equal(remoteWrites,writesA);assert.match(remoteVm.error,/核对结果/);
- remoteVm.resolveReview('second','uncertain','b');await tick();assert.equal(remoteWrites,writesA+1);
- assert.equal(remoteVm.reviewSubmissionState('remote','sample'),'unknown');assert.equal(remoteVm.reviewSubmissionState('second','b'),'unknown');
- remoteVm.useCases.resolveReview=async()=>{remoteWrites++;return remoteVm.snapshot.reviewItems};
- remoteVm.resolveReview('third','uncertain','c');await tick();remoteVm.resolveReview('reminder','confirm');await tick();remoteVm.resolveReview('memory','confirm');await tick();
- assert.equal(remoteWrites,writesA+4);assert.equal(remoteVm.reviewSubmissionState('remote','sample'),'unknown');assert.equal(remoteVm.reviewSubmissionState('second','b'),'unknown');
- remoteVm.useCases.resolveReview=async()=>{remoteWrites++;throw Error('not sent')};
- remoteVm.resolveReview('not-sent','uncertain','d');await tick();remoteVm.resolveReview('not-sent','uncertain','d');await tick();assert.equal(remoteWrites,writesA+6);assert.equal(remoteVm.reviewSubmissionState('not-sent','d'),'');
- // Reconcile one outcome while retaining another unresolved candidate.
- remoteVm.useCases.refreshReviews=async()=>[{...pendingReview,contextJson:JSON.stringify({voice_candidates:[{prototype_id:'b',review_status:'pending'}]})}];
- remoteVm.refreshVoiceReviews();await tick();assert.equal(remoteVm.reviewSubmissionState('remote','sample'),'');assert.equal(remoteVm.reviewSubmissionState('second','b'),'unknown');
- const writesBeforeEvidence=remoteWrites;
- console.log('PASS unresolved A cannot be bypassed by another entry; B/reminders/memory proceed; multiple pending outcomes survive; not-sent retries');
+ let saved=[];
+ remoteVm.useCases={queueVoiceReview:async request=>{queueCalls++;await new Promise(resolve=>{releaseQueue=resolve});saved.push(request)},
+  flushVoiceReviews:async()=>{throw Error('offline')},refreshReviews:async()=>[pendingReview],
+  loadLocal:async()=>[],loadCached:async()=>remoteVm.snapshot,pendingVoiceReviews:async()=>saved};
+ remoteVm.resolveReview('remote','uncertain','sample','',()=>advanced++);
+ assert.equal(remoteVm.reviewSubmissionState('remote','sample'),'saving');assert.equal(advanced,0);
+ remoteVm.resolveReview('another-entry','uncertain','sample');assert.equal(queueCalls,1);
+ releaseQueue();await tick();assert.equal(advanced,1);assert.equal(remoteVm.reviewSubmissionState('remote','sample'),'queued');
+ remoteVm.refreshVoiceReviews();await tick();assert.equal(remoteVm.reviewSubmissionState('remote','sample'),'queued');assert.equal(queueCalls,1);
+ remoteVm.useCases.queueVoiceReview=async request=>{queueCalls++;saved.push(request)};
+ remoteVm.resolveReview('second','uncertain','b','',()=>advanced++);await tick();assert.equal(advanced,2);
+ await remoteVm.refreshSnapshot();assert.equal(remoteVm.reviewSubmissionState('remote','sample'),'queued');
+ saved=saved.filter(r=>r.prototype_id!=='sample');await remoteVm.refreshSnapshot();
+ assert.equal(remoteVm.reviewSubmissionState('remote','sample'),'');assert.equal(remoteVm.reviewSubmissionState('second','b'),'queued');
+ remoteVm.useCases.queueVoiceReview=async()=>{queueCalls++;throw Error('disk full')};
+ remoteVm.resolveReview('failed','uncertain','c','',()=>advanced++);await tick();
+ assert.equal(remoteVm.reviewSubmissionState('failed','c'),'');assert.equal(advanced,2);assert.match(remoteVm.error,/数据库保存失败/);
+ remoteVm.useCases.queueVoiceReview=async request=>{queueCalls++;saved.push(request)};
+ remoteVm.resolveReview('failed','uncertain','c','',()=>advanced++);await tick();assert.equal(advanced,3);
+ console.log('PASS durable save is required to advance; repeated taps blocked; offline queue survives refresh; other samples proceed; disk failure can retry');
+ const writesBeforeEvidence=queueCalls;
  const mappedCandidate={prototype_id:'sample',session_id:'s',representative_clips:[{media_id:'m',start_ms:0,end_ms:500}],evidence_utterances:[{utterance_id:'u',session_id:'s',revision:1,utterance_start_ms:0,utterance_end_ms:900,window_index:0,media_id:'m',clip_start_ms:0,clip_end_ms:500,session_start_ms:0,session_end_ms:500}]};
  remoteVm.snapshot.reviewItems=[{...pendingReview,contextJson:JSON.stringify({voice_mode:'known_person',voice_candidates:[mappedCandidate]})}];
  const changedSource={utteranceId:'u',sessionId:'s',revision:1,status:'active',startMs:0,endMs:900,annotationFacts:{person:'pending',sound:''}};
  remoteVm.snapshot.sessions=[{sessionId:'s',utterances:[changedSource]}];
- remoteVm.resolveReview('remote','uncertain','sample');await tick();assert.equal(remoteWrites,writesBeforeEvidence);assert.match(remoteVm.error,/依据已修改/);
+ remoteVm.resolveReview('remote','uncertain','sample');await tick();assert.equal(queueCalls,writesBeforeEvidence);assert.match(remoteVm.error,/依据已修改/);
  changedSource.annotationFacts.person='';changedSource.revision=2;
- remoteVm.resolveReview('remote','uncertain','sample');await tick();assert.equal(remoteWrites,writesBeforeEvidence);
- console.log('PASS remote committed/read failure only re-reads; ambiguous timeout stays locked while pending; disappearance never fakes success');
+ remoteVm.resolveReview('remote','uncertain','sample');await tick();assert.equal(queueCalls,writesBeforeEvidence);
+ console.log('PASS changed source/revision cannot be authorized through the durable queue');
 
  // Exercise actual HTTP client authentication/dispatch boundary (native crypto only mocked).
  native['@kit.ArkTS'].util.TextEncoder={create:()=>({encodeInto:s=>Buffer.from(s)})};
@@ -129,31 +121,31 @@ const tick=()=>new Promise(r=>setImmediate(r));
 
  // Real ViewModel save boundary: UI success is independent of the following read.
  const saveVm = new PhoneV3ViewModel();
- let queueCalls = 0, saved = [], releaseSave;
+ let annotationQueueCalls = 0, annotationSaved = [], releaseSave;
  const target = { utteranceId: 'u', revision: 7 };
  saveVm.useCases = { queueAnnotation: async (rows, personId, name, personChanged, sound) => {
-   queueCalls++; assert.equal(rows[0].revision, 7); assert.equal(name, 'Alice');
+   annotationQueueCalls++; assert.equal(rows[0].revision, 7); assert.equal(name, 'Alice');
    await new Promise(resolve => { releaseSave = resolve; });
    return [];
- }, loadLocal: async () => [], loadCached: async () => new PhoneV3Snapshot() };
- const submit = () => saveVm.saveAnnotation([target], '', 'Alice', true, '', fresh => saved.push(fresh));
- submit(); submit(); assert.equal(queueCalls, 1); assert.equal(saveVm.annotationSaving, true);
+ }, loadLocal: async () => [], loadCached: async () => new PhoneV3Snapshot(), pendingVoiceReviews: async () => [] };
+ const submit = () => saveVm.saveAnnotation([target], '', 'Alice', true, '', fresh => annotationSaved.push(fresh));
+ submit(); submit(); assert.equal(annotationQueueCalls, 1); assert.equal(saveVm.annotationSaving, true);
  releaseSave(); await tick(); await tick();
- assert.deepEqual(saved, [true]); assert.equal(saveVm.annotationSaving, false);
- saveVm.useCases.queueAnnotation = async () => { queueCalls++; throw Error('disk full'); };
- submit(); await tick(); assert.deepEqual(saved, [true]); assert.match(saveVm.error, /数据库保存失败/);
- saveVm.useCases.queueAnnotation = async () => { queueCalls++; return []; };
+ assert.deepEqual(annotationSaved, [true]); assert.equal(saveVm.annotationSaving, false);
+ saveVm.useCases.queueAnnotation = async () => { annotationQueueCalls++; throw Error('disk full'); };
+ submit(); await tick(); assert.deepEqual(annotationSaved, [true]); assert.match(saveVm.error, /数据库保存失败/);
+ saveVm.useCases.queueAnnotation = async () => { annotationQueueCalls++; return []; };
  // A post-commit display failure must not be reported as a failed transaction.
  const clearSavedError = saveVm.clearError.bind(saveVm);
  saveVm.clearError = () => { throw Error('display failed'); };
  saveVm.useCases.loadCached = async () => { throw Error('save must not read'); };
- submit(); await tick(); await tick(); assert.deepEqual(saved, [true, false]);
+ submit(); await tick(); await tick(); assert.deepEqual(annotationSaved, [true, false]);
  assert.match(saveVm.error, /已在手机保存/);
  saveVm.clearError = clearSavedError;
- const submitted = queueCalls;
+ const submitted = annotationQueueCalls;
  saveVm.useCases.loadCached = async () => new PhoneV3Snapshot();
  let reloaded = 0; saveVm.reloadAnnotationResult(() => reloaded++); await tick();
- assert.equal(reloaded, 1); assert.equal(queueCalls, submitted);
+ assert.equal(reloaded, 1); assert.equal(annotationQueueCalls, submitted);
  console.log('PASS ViewModel double-click guard, DB failure does not advance, committed-read failure and read-only retry');
 
  const utterance = { utteranceId:'u', revision:1, status:'active', sessionId: 's', startMs: 0, endMs: 9000 };

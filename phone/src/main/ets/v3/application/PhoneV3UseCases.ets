@@ -132,6 +132,7 @@ export class PhoneV3UseCases {
   private reviewAudioCache?: PhoneV3ReviewAudioCachePort;
   private purityAudioCache?: PhoneV3ReviewAudioCachePort;
   private purityFlush: Promise<void> | undefined = undefined;
+  private voiceFlush: Promise<void> | undefined = undefined;
   private purityPack: Promise<void> | undefined = undefined;
   private purityPackAgain: boolean = false;
   private syncActive: boolean = false;
@@ -555,6 +556,7 @@ export class PhoneV3UseCases {
   }
 
   async refreshSupplementary(): Promise<void> {
+    await this.flushVoiceReviews().catch((): void => {});
     await this.flushPurityReviews().catch((): void => {});
     const session = await this.remote.connect();
     const reviews = await session.reviews();
@@ -589,6 +591,39 @@ export class PhoneV3UseCases {
     return overlayPendingPurityReviews(items, await this.repository.pendingPurityReviews());
   }
 
+  async pendingVoiceReviews(): Promise<Array<DeviceV3ReviewActionRequest>> {
+    return this.repository.pendingVoiceReviews();
+  }
+
+  async queueVoiceReview(request: DeviceV3ReviewActionRequest): Promise<void> {
+    request.operation_id = newOperationId();
+    await this.repository.enqueueVoiceReview(request);
+  }
+
+  flushVoiceReviews(): Promise<void> {
+    if (this.voiceFlush !== undefined) { return this.voiceFlush; }
+    const run = async (): Promise<void> => {
+      const pending = await this.repository.pendingVoiceReviews();
+      let failure: Error | undefined = undefined;
+      for (const request of pending) {
+        try {
+          const session = await this.remote.connect();
+          const response = await session.resolveReview(request);
+          await this.storeReviews(response.reviews);
+          await this.repository.removeVoiceReview(request.operation_id ?? '');
+          const committed = new PhoneV3SyncResult(0, 0, '', new PhoneV3AudioBackupResult());
+          committed.changed = true; committed.reviewsChanged = true;
+          this.publishCommitted(committed);
+        } catch (error) {
+          failure = error instanceof Error ? error : new Error(JSON.stringify(error));
+        }
+      }
+      if (failure !== undefined) { throw failure; }
+    };
+    this.voiceFlush = run().finally((): void => { this.voiceFlush = undefined; });
+    return this.voiceFlush;
+  }
+
   async queuePurityReview(request: DeviceV3ReviewActionRequest): Promise<Array<PhoneV3ReviewItem>> {
     request.operation_id = newOperationId();
     await this.repository.enqueuePurityReview(request);
@@ -601,15 +636,24 @@ export class PhoneV3UseCases {
     if (this.purityFlush !== undefined) { return this.purityFlush; }
     const run = async (): Promise<void> => {
       const pending = await this.repository.pendingPurityReviews();
+      let failure: Error | undefined = undefined;
+      const blockedReviews = new Set<string>();
       for (const request of pending) {
-        const session = await this.remote.connect();
-        const response = await session.resolveReview(request);
-        await this.storeReviews(response.reviews);
-        await this.repository.removePurityReview(request.operation_id ?? '');
-        const committed = new PhoneV3SyncResult(0, 0, '', new PhoneV3AudioBackupResult());
-        committed.changed = true; committed.reviewsChanged = true;
-        this.publishCommitted(committed);
+        if (blockedReviews.has(request.review_id)) { continue; }
+        try {
+          const session = await this.remote.connect();
+          const response = await session.resolveReview(request);
+          await this.storeReviews(response.reviews);
+          await this.repository.removePurityReview(request.operation_id ?? '');
+          const committed = new PhoneV3SyncResult(0, 0, '', new PhoneV3AudioBackupResult());
+          committed.changed = true; committed.reviewsChanged = true;
+          this.publishCommitted(committed);
+        } catch (error) {
+          blockedReviews.add(request.review_id);
+          failure = error instanceof Error ? error : new Error(JSON.stringify(error));
+        }
       }
+      if (failure !== undefined) { throw failure; }
     };
     this.purityFlush = run().finally((): void => { this.purityFlush = undefined; });
     return this.purityFlush;

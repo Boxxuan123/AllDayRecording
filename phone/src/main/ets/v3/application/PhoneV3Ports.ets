@@ -54,6 +54,9 @@ export interface PhoneV3ProjectionRepositoryPort extends PhoneProjectionStorage,
   enqueuePurityReview(request: DeviceV3ReviewActionRequest): Promise<void>;
   pendingPurityReviews(): Promise<Array<DeviceV3ReviewActionRequest>>;
   removePurityReview(operationId: string): Promise<void>;
+  enqueueVoiceReview(request: DeviceV3ReviewActionRequest): Promise<void>;
+  pendingVoiceReviews(): Promise<Array<DeviceV3ReviewActionRequest>>;
+  removeVoiceReview(operationId: string): Promise<void>;
 }
 
 export interface PhoneV3LocalAudioRepositoryPort {

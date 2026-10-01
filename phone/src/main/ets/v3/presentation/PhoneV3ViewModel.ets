@@ -416,7 +416,9 @@ export class PhoneV3ViewModel {
 
   reviewSubmissionMessage(reviewId: string, prototypeId: string = ''): string {
     const state = this.reviewSubmissionState(reviewId, prototypeId);
-    return state === 'sending' ? '此项正在提交，请等待结果' : state === 'committed' ? '此项结果已提交，状态待更新；请核对结果' :
+    return state === 'saving' ? '正在保存审核选择，请稍候' :
+      state === 'queued' ? '审核选择已保存在手机，待电脑可用时同步' :
+      state === 'sending' ? '此项正在提交，请等待结果' : state === 'committed' ? '此项结果已提交，状态待更新；请核对结果' :
       state === 'unknown' ? '此项结果尚未确认，请先核对结果；不会重复提交' : '';
   }
 
@@ -452,6 +454,23 @@ export class PhoneV3ViewModel {
     }
     this.lastRetryAction = PhoneV3RetryAction.NONE;
     const objectKey = this.reviewObjectKey(reviewId, prototypeId);
+    if (prototypeId.length > 0 && ['confirm', 'reject', 'uncertain', 'retract'].indexOf(action) >= 0) {
+      const lifecycle = this.lifecycleGeneration;
+      this.reviewSubmissions.set(objectKey, new PhoneV3PendingReview(reviewId, prototypeId, action, 'saving'));
+      this.stateChangeListener();
+      useCases.queueVoiceReview(request).then((): void => {
+        this.reviewSubmissions.set(objectKey, new PhoneV3PendingReview(reviewId, prototypeId, action, 'queued'));
+        if (lifecycle !== this.lifecycleGeneration) { return; }
+        this.clearError('审核选择已保存在手机，待同步到电脑');
+        onResolved();
+        this.stateChangeListener();
+        useCases.flushVoiceReviews().catch((): void => {});
+      }).catch((error: Object): void => {
+        this.reviewSubmissions.delete(objectKey);
+        if (lifecycle === this.lifecycleGeneration) { this.fail(new Error(`数据库保存失败：${error instanceof Error ? error.message : JSON.stringify(error)}`)); }
+      });
+      return;
+    }
     this.reviewSubmissions.set(objectKey, new PhoneV3PendingReview(reviewId, prototypeId, action, 'sending'));
     const lifecycle = this.lifecycleGeneration;
     this.stateChangeListener();
@@ -551,7 +570,7 @@ export class PhoneV3ViewModel {
         new PhoneV3Snapshot(current.sessions, current.conflicts, current.sync, current.paired, current.reminders, items)));
       const all = phoneV3VoiceTasks(items).concat(phoneV3VoiceTasks(items, true));
       this.reviewSubmissions.forEach((pending: PhoneV3PendingReview, key: string): void => {
-        if (pending.state === 'sending') { return; }
+        if (pending.state === 'sending' || pending.state === 'queued' || pending.state === 'saving') { return; }
         const task = all.find((value): boolean => value.candidate.prototypeId === pending.prototypeId);
         const expected = pending.action === 'confirm' ? 'confirmed' : pending.action === 'reject' ? 'rejected' : pending.action;
         const resolved = pending.prototypeId ? task === undefined || task.candidate.reviewStatus === expected :
@@ -1078,6 +1097,7 @@ export class PhoneV3ViewModel {
       await this.refreshSnapshot();
       this.useCases.preparePurityAudioPack().catch((): void => {});
       this.useCases.flushPurityReviews().catch((): void => {});
+      this.useCases.flushVoiceReviews().catch((): void => {});
       if (lifecycle !== this.lifecycleGeneration) { return; }
       await this.startForegroundSync(context);
       if (this.refreshQueued) {
@@ -1141,6 +1161,18 @@ export class PhoneV3ViewModel {
     }
     if (scanLocal) { this.localFacts = await useCases.loadLocal(); }
     const snapshot = await useCases.loadCached(this.localFacts);
+    const pendingVoice = await useCases.pendingVoiceReviews();
+    if (generation !== this.snapshotGeneration || this.annotationSaving) { return; }
+    const pendingKeys = new Set<string>();
+    for (const request of pendingVoice) {
+      const key = this.reviewObjectKey(request.review_id, request.prototype_id ?? '');
+      pendingKeys.add(key);
+      this.reviewSubmissions.set(key, new PhoneV3PendingReview(request.review_id,
+        request.prototype_id ?? '', request.action, 'queued'));
+    }
+    this.reviewSubmissions.forEach((pending: PhoneV3PendingReview, key: string): void => {
+      if (pending.state === 'queued' && !pendingKeys.has(key)) { this.reviewSubmissions.delete(key); }
+    });
     if (generation !== this.snapshotGeneration || this.annotationSaving) { return; }
     this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SNAPSHOT_READY, snapshot,
       undefined, `已合并 ${snapshot.sessions.length} 条会话；最后游标 ${snapshot.sync.cursor}`));

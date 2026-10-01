@@ -128,7 +128,7 @@ export struct PhoneV3VoiceReviewPage {
     // Do not stop playback here: the VM checks the complete-audition credential first.
     this.viewModel.resolveReview(current.item.reviewId, action, current.candidate.prototypeId, '', (): void => {
       if (this.task?.key !== current.key) { return; }
-      this.feedback = action === 'uncertain' ? '上一条已提交不确定；电脑仍可能保留此候选' : action === 'retract' ? '上一条样本授权已撤回' : '上一条审核结果已提交';
+      this.feedback = action === 'uncertain' ? '不确定的选择已在手机保存，待同步' : action === 'retract' ? '撤回选择已在手机保存，待同步' : '审核选择已在手机保存，待同步';
       this.viewModel.stopPlayback(); this.next();
     });
   }
@@ -234,7 +234,7 @@ export struct PhoneV3VoiceReviewPage {
             Column({ space: 20 }) {
               Text(this.history ? `「${this.task.candidate.personName}」的样本授权` : this.editing() ? '确认所选原句中的人物' : `这段声音都是「${this.task.candidate.personName}」吗？`)
                 .fontSize(21).fontWeight(FontWeight.Bold).width('100%')
-              Text(this.history ? '已采纳。重听为可选操作，可单独撤回此授权。' : this.editing() ? '只修改明确勾选的完整原句，不采纳声纹、不确认整组声音。' : '确认后采纳此声纹样本，用于人物匹配；可能触发历史重匹配。')
+              Text(this.history ? '已采纳。重听为可选操作，可单独撤回此授权。' : this.editing() ? '只修改明确勾选的完整原句，不采纳声纹、不确认整组声音。' : '确认后采纳此声纹样本；能否用于自动匹配由人物策略决定。')
                 .fontSize(14).fontColor($r('app.color.text_secondary')).width('100%')
               Text(`${this.sourceTitle()} · ${this.task.candidate.windowCount} 段窗口 · 共 ${this.task.candidate.totalMs / 1000} 秒`)
                 .fontSize(13).fontColor($r('app.color.text_secondary')).width('100%')
@@ -247,7 +247,7 @@ export struct PhoneV3VoiceReviewPage {
                 })
               if (this.overflow) { Button(this.expanded ? '收起摘要' : '展开摘要').buttonStyle(ButtonStyleMode.TEXTUAL).onClick((): void => { this.expanded = !this.expanded; }) }
               Text(this.viewModel.reviewAudioState(this.task.key)).fontSize(12).fontColor($r('app.color.text_secondary'))
-              Text('离线试听依据本机已知证据；审核提交仍需电脑确认').fontSize(12).fontColor($r('app.color.text_secondary'))
+              Text('审核选择先保存在手机；电脑可用时自动同步并确认结果').fontSize(12).fontColor($r('app.color.text_secondary'))
               Button(this.viewModel.annotationPlaybackState() === '正在加载' ? '取消加载' : this.viewModel.reviewPlaybackPrototype === this.task.candidate.prototypeId ? '停止试听' : this.viewModel.reviewSampleWasPlayed(this.task.item.reviewId, this.task.candidate.prototypeId) ? '重新播放完整样本' : '▶ 播放完整样本')
                 .buttonStyle(ButtonStyleMode.NORMAL).width('100%').constraintSize({ minHeight: 48 })
                 .enabled(this.task.candidate.hasAudio && !this.stale && (!this.viewModel.busy || this.viewModel.annotationPlaybackState() === '正在加载'))

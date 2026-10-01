@@ -23,7 +23,7 @@ import {
 import { PhoneV3ProjectionRepositoryPort } from '../application/PhoneV3Ports';
 
 const DATABASE_NAME: string = 'phone_v3_projection.db';
-const SCHEMA_VERSION: number = 16;
+const SCHEMA_VERSION: number = 17;
 const TABLES: Array<string> = [
   'projection_recordings', 'projection_audio_assets', 'projection_processing_runs',
   'projection_utterances', 'projection_review_items', 'projection_reminders'
@@ -172,6 +172,36 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
     await this.beginTransaction();
     try {
       await this.store.executeSql('DELETE FROM pending_purity_reviews WHERE operation_id=?', [operationId]);
+      await this.commit();
+    } catch (error) { await this.rollback(); throw error as Error; }
+  }
+
+  async enqueueVoiceReview(request: DeviceV3ReviewActionRequest): Promise<void> {
+    if (!request.operation_id || !request.prototype_id) { throw new Error('缺少本机声音审核编号'); }
+    await this.beginTransaction();
+    try {
+      await this.store.executeSql(
+        'INSERT INTO pending_voice_reviews(operation_id, review_id, prototype_id, payload_json, created_at) VALUES(?,?,?,?,?)',
+        [request.operation_id, request.review_id, request.prototype_id, JSON.stringify(request), Date.now()]);
+      await this.commit();
+    } catch (error) { await this.rollback(); throw error as Error; }
+  }
+
+  async pendingVoiceReviews(): Promise<Array<DeviceV3ReviewActionRequest>> {
+    const result = await this.store.querySql('SELECT payload_json FROM pending_voice_reviews ORDER BY created_at, rowid');
+    const values: Array<DeviceV3ReviewActionRequest> = [];
+    try {
+      while (result.goToNextRow()) {
+        values.push(JSON.parse(result.getString(result.getColumnIndex('payload_json'))) as DeviceV3ReviewActionRequest);
+      }
+    } finally { result.close(); }
+    return values;
+  }
+
+  async removeVoiceReview(operationId: string): Promise<void> {
+    await this.beginTransaction();
+    try {
+      await this.store.executeSql('DELETE FROM pending_voice_reviews WHERE operation_id=?', [operationId]);
       await this.commit();
     } catch (error) { await this.rollback(); throw error as Error; }
   }
@@ -922,6 +952,12 @@ async function migrate(store: relationalStore.RdbStore): Promise<void> {
         payload_json TEXT NOT NULL, created_at INTEGER NOT NULL)`);
       await store.executeSql('CREATE INDEX IF NOT EXISTS idx_pending_purity_review ON pending_purity_reviews(review_id, created_at)');
       store.version = 16;
+    }
+    if (store.version < 17) {
+      await store.executeSql(`CREATE TABLE IF NOT EXISTS pending_voice_reviews (
+        operation_id TEXT PRIMARY KEY, review_id TEXT NOT NULL, prototype_id TEXT NOT NULL UNIQUE,
+        payload_json TEXT NOT NULL, created_at INTEGER NOT NULL)`);
+      store.version = 17;
     }
     store.commit();
   } catch (error) {
