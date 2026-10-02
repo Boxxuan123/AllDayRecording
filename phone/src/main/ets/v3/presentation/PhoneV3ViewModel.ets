@@ -1,4 +1,5 @@
 import { annotationTiming } from '../application/PhoneAnnotationTiming';
+import { PhoneDailyCache, PhoneDailyEvidence } from '../domain/PhoneV3DailyModels';
 import { PhoneV3ReminderCommand, editedReminderTime } from '../domain/PhoneV3ReminderCommands';
 import { PhoneV3ReviewAudioRetry } from '../domain/PhoneV3ReviewAudioRetry';
 import { ComputerConnectionError } from '../../computer/ComputerConnectionError';
@@ -695,6 +696,23 @@ export class PhoneV3ViewModel {
   annotationPlaybackState(): string {
     return this.audioLoading ? '正在加载' : this.annotationAudioPlaying || this.device.isPlaying ? '正在播放' :
       this.device.playbackBusy ? '正在加载' : '';
+  }
+
+  async loadDailyCache(): Promise<PhoneDailyCache> {
+    if (this.useCases === undefined) { return new PhoneDailyCache(); }
+    return this.useCases.loadDailyCache();
+  }
+
+  playDailyEvidence(evidence: PhoneDailyEvidence): void {
+    const session = this.snapshot.sessions.find((value: PhoneV3SessionCard): boolean =>
+      value.sessionId === evidence.session_id);
+    const utterance = session?.utterances.find((value: PhoneV3Utterance): boolean =>
+      value.utteranceId === evidence.utterance_id && value.revision === evidence.revision);
+    if (utterance === undefined) {
+      this.fail(new Error('来源转写已更新或尚未缓存，请同步后再播放'));
+      return;
+    }
+    this.playUtterance(utterance);
   }
 
   playUtterance(utterance: PhoneV3Utterance, withContext: boolean = false): void {

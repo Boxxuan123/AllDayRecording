@@ -3,10 +3,10 @@
  * Canonical schemas and enums remain in the Computer repository.
  */
 
-export const V3_CONTRACT_VERSION: string = '3.7.1';
-export const V3_PROJECTION_VERSION: number = 4;
-export const V3_CORE_SCHEMA_VERSION: number = 24;
-export const V3_PHONE_PROJECTION_SCHEMA_VERSION: number = 16;
+export const V3_CONTRACT_VERSION: string = '3.8.0';
+export const V3_PROJECTION_VERSION: number = 5;
+export const V3_CORE_SCHEMA_VERSION: number = 27;
+export const V3_PHONE_PROJECTION_SCHEMA_VERSION: number = 19;
 export const V3_UNKNOWN_ENUM_VALUE: string = 'unknown';
 export const V3_FEATURE_ENABLED_BY_DEFAULT: boolean = true;
 
@@ -25,7 +25,8 @@ const PROCESSING_STATUSES: string[] = [
 ];
 const RECEIPT_STATUSES: string[] = ['pending', 'applied', 'conflict', 'rejected'];
 const RESOURCE_TYPES: string[] = [
-  'recording_session', 'audio_asset', 'processing_run', 'utterance', 'review_item', 'reminder'
+  'recording_session', 'audio_asset', 'processing_run', 'utterance', 'review_item', 'reminder',
+  'daily_event', 'daily_summary'
 ];
 const SYNC_OPERATIONS: string[] = ['upsert', 'tombstone'];
 const STABLE_ID: RegExp = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[0-9A-HJKMNP-TV-Z]{26})$/;

@@ -19,6 +19,7 @@ import { PhoneV3CacheConflictsPage } from '../../v3/presentation/PhoneV3CacheCon
 import { PhoneV3DataPage } from '../../v3/presentation/PhoneV3DataPage';
 import { PhoneV3ProcessingCenterPage } from '../../v3/presentation/PhoneV3ProcessingCenterPage';
 import { PhoneV3RemindersPage } from '../../v3/presentation/PhoneV3RemindersPage';
+import { PhoneV3DailyPage } from '../../v3/presentation/PhoneV3DailyPage';
 import { PhoneV3RootPage } from '../../v3/presentation/PhoneV3RootPage';
 import { PhoneV3SessionDetailPage } from '../../v3/presentation/PhoneV3SessionDetailPage';
 import { PhoneV3SyncCenterPage } from '../../v3/presentation/PhoneV3SyncCenterPage';
@@ -34,6 +35,7 @@ const PHONE_V3_SESSION_ROUTE: string = 'phoneV3SessionDetail';
 const PHONE_V3_SYNC_ROUTE: string = 'phoneV3Sync';
 const PHONE_V3_CONFLICTS_ROUTE: string = 'phoneV3Conflicts';
 const PHONE_V3_REMINDERS_ROUTE: string = 'phoneV3Reminders';
+const PHONE_V3_DAILY_ROUTE: string = 'phoneV3Daily';
 const PHONE_V3_PROCESSING_ROUTE: string = 'phoneV3Processing';
 const PHONE_V3_DATA_ROUTE: string = 'phoneV3Data';
 
@@ -276,6 +278,15 @@ export struct PhoneRootPage {
       })
       .titleMode(HdsNavDestinationTitleMode.MINI)
       .backgroundColor($r('app.color.page_background'))
+    } else if (name === PHONE_V3_DAILY_ROUTE) {
+      HdsNavDestination() {
+        PhoneV3DailyPage({ viewModel: this.v3ViewModel, stateRevision: this.v3StateRevision,
+          onOpenSession: (session: PhoneV3SessionCard): void => this.openV3Session(session) })
+      }
+      .titleBar({ enableComponentSafeArea: true, content: { title: { mainTitle: '每日总结' } },
+        style: this.immersiveTitleBarStyle() })
+      .titleMode(HdsNavDestinationTitleMode.MINI)
+      .backgroundColor($r('app.color.page_background'))
     } else if (name === PHONE_V3_REMINDERS_ROUTE) {
       HdsNavDestination() {
         PhoneV3RemindersPage({
@@ -369,6 +380,7 @@ export struct PhoneRootPage {
         onOpenComputerTransfer: (): void => this.openComputerTransfer(),
         onOpenSync: (): void => this.openSecondary(PHONE_V3_SYNC_ROUTE),
         onOpenReminders: (): void => this.openSecondary(PHONE_V3_REMINDERS_ROUTE),
+        onOpenDaily: (): void => this.openSecondary(PHONE_V3_DAILY_ROUTE),
         onOpenProcessing: (): void => this.openSecondary(PHONE_V3_PROCESSING_ROUTE),
         onOpenData: (): void => this.openSecondary(PHONE_V3_DATA_ROUTE)
       })

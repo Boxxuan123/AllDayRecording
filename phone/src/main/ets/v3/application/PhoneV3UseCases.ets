@@ -1,4 +1,5 @@
 import { annotationTiming } from './PhoneAnnotationTiming';
+import { PhoneDailyCache, PhoneDailyEvent, PhoneDailySummary } from '../domain/PhoneV3DailyModels';
 import { PhoneV3ReminderCommand, overlayReminderCommands, pendingReminderReview } from '../domain/PhoneV3ReminderCommands';
 import { syncRequestBatch, PhoneSyncBatchPolicy, jsonBytes } from '../data/PhoneSyncBatch';
 import { PhonePendingOperation } from '../data/PhoneSyncProjection';
@@ -188,6 +189,17 @@ export class PhoneV3UseCases {
       }
     }
     return Array.from(matches);
+  }
+
+  async loadDailyCache(): Promise<PhoneDailyCache> {
+    const value = new PhoneDailyCache();
+    value.events = (await this.repository.projectionRows('daily_event')).map(
+      (row: PhoneV3ProjectionRow): PhoneDailyEvent => JSON.parse(row.payloadJson) as PhoneDailyEvent)
+      .sort((a: PhoneDailyEvent, b: PhoneDailyEvent): number => Date.parse(a.start_at) - Date.parse(b.start_at));
+    value.summaries = (await this.repository.projectionRows('daily_summary')).map(
+      (row: PhoneV3ProjectionRow): PhoneDailySummary => JSON.parse(row.payloadJson) as PhoneDailySummary)
+      .sort((a: PhoneDailySummary, b: PhoneDailySummary): number => b.summary_date.localeCompare(a.summary_date));
+    return value;
   }
 
   async loadCached(localFacts: Array<PhoneV3LocalAudioFact>): Promise<PhoneV3Snapshot> {

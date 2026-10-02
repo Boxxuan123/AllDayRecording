@@ -84,7 +84,7 @@ const { Repository, UseCases, stores } = require('./phone-sqlite-harness.cjs');
   db.exec('DROP TABLE pending_voice_reviews; PRAGMA user_version=16');
   db.close();
   repo = await Repository.open({ databasePath });
-  assert.equal(stores.at(-1).version, 18);
+  assert.equal(stores.at(-1).version, 19);
   assert.equal((await repo.pendingPurityReviews())[0].operation_id, before.operation_id);
   assert.equal((await repo.pendingVoiceReviews()).length, 0);
   for (const store of stores) { try { store.db.close(); } catch (_) {} }

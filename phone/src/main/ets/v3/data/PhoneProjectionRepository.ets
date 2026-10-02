@@ -24,10 +24,11 @@ import { PhoneV3ProjectionRepositoryPort } from '../application/PhoneV3Ports';
 import { CalendarReminderMapping, CalendarReminderStoragePort } from '../application/CalendarReminderPorts';
 
 const DATABASE_NAME: string = 'phone_v3_projection.db';
-const SCHEMA_VERSION: number = 18;
+const SCHEMA_VERSION: number = 19;
 const TABLES: Array<string> = [
   'projection_recordings', 'projection_audio_assets', 'projection_processing_runs',
-  'projection_utterances', 'projection_review_items', 'projection_reminders'
+  'projection_utterances', 'projection_review_items', 'projection_reminders',
+  'projection_daily_events', 'projection_daily_summaries'
 ];
 const CREATE_STATEMENTS: Array<string> = [
   `CREATE TABLE IF NOT EXISTS projection_recordings (
@@ -1050,6 +1051,15 @@ async function migrate(store: relationalStore.RdbStore): Promise<void> {
         calendar_sync_state TEXT NOT NULL, last_error TEXT NOT NULL DEFAULT '')`);
       store.version = 18;
     }
+    if (store.version < 19) {
+      await store.executeSql(`CREATE TABLE IF NOT EXISTS projection_daily_events (
+        resource_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, payload_json TEXT NOT NULL, updated_at INTEGER NOT NULL)`);
+      await store.executeSql(`CREATE TABLE IF NOT EXISTS projection_daily_summaries (
+        resource_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, payload_json TEXT NOT NULL, updated_at INTEGER NOT NULL)`);
+      // New resource types do not reset the existing cursor or audio bindings.
+      await store.executeSql('UPDATE sync_state SET projection_version=5 WHERE singleton_id=1');
+      store.version = 19;
+    }
     store.commit();
   } catch (error) {
     store.rollBack();
@@ -1092,6 +1102,8 @@ function projectionTable(resourceType: string): string {
     case 'utterance': return 'projection_utterances';
     case 'review_item': return 'projection_review_items';
     case 'reminder': return 'projection_reminders';
+    case 'daily_event': return 'projection_daily_events';
+    case 'daily_summary': return 'projection_daily_summaries';
     default: throw new Error(`不支持的 V3 投影资源：${resourceType}`);
   }
 }

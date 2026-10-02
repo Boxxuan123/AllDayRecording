@@ -213,13 +213,13 @@ class FakePhoneV3RemoteSession implements PhoneV3RemoteSession {
   }
 
   async status(): Promise<DeviceV3StatusResponse> {
-    return { contract_version: '3.7.0', projection_version: 4, server_time: '2026-08-31T00:00:00Z' };
+    return { contract_version: '3.8.0', projection_version: 5, server_time: '2026-08-31T00:00:00Z' };
   }
 
   async sync(_request: DeviceV3SyncRequest): Promise<DeviceV3SyncResponse> {
     this.syncRequests.push(_request);
     return {
-      projection_version: 4,
+      projection_version: 5,
       receipts: [],
       changes: [],
       next_cursor: 'cursor-1',

@@ -35,6 +35,7 @@ export struct PhoneV3RootPage {
   onOpenComputerTransfer: () => void = (): void => {};
   onOpenSync: () => void = (): void => {};
   onOpenReminders: () => void = (): void => {};
+  onOpenDaily: () => void = (): void => {};
   onOpenProcessing: () => void = (): void => {};
   onOpenData: () => void = (): void => {};
 
@@ -186,6 +187,7 @@ export struct PhoneV3RootPage {
           stateRevision: this.stateRevision,
           onOpenSync: (): void => this.onOpenSync(),
           onOpenReminders: (): void => this.onOpenReminders(),
+          onOpenDaily: (): void => this.onOpenDaily(),
           onOpenProcessing: (): void => this.onOpenProcessing(),
           onOpenComputerConnection: (): void => this.onOpenComputerTransfer(),
           onOpenData: (): void => this.onOpenData()

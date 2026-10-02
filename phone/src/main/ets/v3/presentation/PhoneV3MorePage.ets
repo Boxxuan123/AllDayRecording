@@ -8,6 +8,7 @@ export struct PhoneV3MorePage {
   @Prop stateRevision: number = 0;
   onOpenSync: () => void = (): void => {};
   onOpenReminders: () => void = (): void => {};
+  onOpenDaily: () => void = (): void => {};
   onOpenProcessing: () => void = (): void => {};
   onOpenComputerConnection: () => void = (): void => {};
   onOpenData: () => void = (): void => {};
@@ -88,6 +89,7 @@ export struct PhoneV3MorePage {
     Scroll() {
       Column({ space: 12 }) {
         this.sectionLabel('功能')
+        this.menuRow($r('sys.symbol.calendar'), '每日总结', '查看每日事件和原始证据', this.onOpenDaily)
         this.menuRow($r('sys.symbol.arrow_2_circlepath'), '同步与备份',
           this.syncDetail(), this.onOpenSync)
         this.menuRow($r('sys.symbol.bell'), '提醒',

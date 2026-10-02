@@ -15,9 +15,9 @@ import {
 // Generated with the fixture bodies. Python contract tests verify these receipts
 // against the canonical JSON files when both repositories are checked out.
 const CORE_FIXTURE_SHA256: string =
-  '317e3bceb71514f8dbd31137beb4cd9f8a73e67b8951b957d5a268ee8427d3d8';
+  '65e9c8058ee412ba5e0972a2b1e407233bf77fd8ab20bbb88f90f0cf815c5511';
 const FORWARD_FIXTURE_SHA256: string =
-  'f9065d3cd41f096beb17eba178c7a9c9051b8a7dcfa9b584e3dcdf4795f5883d';
+  '48b9953a58f50b18400bbff03c120052692e4b477f739bcab0c0c4d6304799c0';
 
 interface UtteranceEvidenceFixture {
   media_id: string;
@@ -32,7 +32,7 @@ interface IdentityEvidenceFixture {
 
 function canonicalFixture(): V3ContractFixture {
   return {
-    contract_version: '3.7.1',
+    contract_version: '3.8.0',
     recording_session: {
       state: 'ready_for_processing',
       status_code: 'ready'
@@ -48,7 +48,7 @@ function canonicalFixture(): V3ContractFixture {
 
 function futureEnumFixture(): V3ContractFixture {
   return {
-    contract_version: '3.7.1',
+    contract_version: '3.8.0',
     recording_session: {
       state: 'future_archived_state',
       status_code: 'future_aggregate_status'
@@ -68,13 +68,13 @@ function expectDecoded(actual: V3DecodedFixture, expected: V3DecodedFixture): vo
 export default function v3ContractFixtureTest() {
   describe('V3ContractFixture', () => {
     it('matchesReleasedDatabaseSchemas', 0, () => {
-      expect(V3_CORE_SCHEMA_VERSION).assertEqual(24);
-      expect(V3_PHONE_PROJECTION_SCHEMA_VERSION).assertEqual(16);
+      expect(V3_CORE_SCHEMA_VERSION).assertEqual(27);
+      expect(V3_PHONE_PROJECTION_SCHEMA_VERSION).assertEqual(19);
     });
     it('decodesCanonicalComputerFixture', 0, () => {
       expect(CORE_FIXTURE_SHA256.length).assertEqual(64);
       expectDecoded(decodeV3ContractFixture(canonicalFixture()), {
-        contract_version: '3.7.1',
+        contract_version: '3.8.0',
         session_state: 'ready_for_processing',
         aggregate_status: 'ready',
         processing_status: 'running',
@@ -88,7 +88,7 @@ export default function v3ContractFixtureTest() {
     it('degradesUnknownEnumsAndKeepsV3EnabledByDefault', 0, () => {
       expect(FORWARD_FIXTURE_SHA256.length).assertEqual(64);
       expectDecoded(decodeV3ContractFixture(futureEnumFixture()), {
-        contract_version: '3.7.1',
+        contract_version: '3.8.0',
         session_state: 'unknown',
         aggregate_status: 'unknown',
         processing_status: 'unknown',
