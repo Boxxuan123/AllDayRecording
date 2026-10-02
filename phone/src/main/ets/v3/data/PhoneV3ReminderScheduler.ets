@@ -24,6 +24,8 @@ export class PhoneV3ReminderScheduler implements PhoneV3ReminderSchedulerPort {
   private async apply(reminders: Array<PhoneV3Reminder>): Promise<void> {
     const desired = futureReminders(reminders);
     let current = await reminderAgentManager.getAllValidReminders();
+    console.info(`Reminder inventory: system=${current.length}, desired=${desired.length}, owned=${current.filter(
+      (item: reminderAgentManager.ReminderInfo): boolean => (item.reminderReq.groupId ?? '').startsWith(GROUP_PREFIX)).length}`);
     const retained = new Set<string>();
     for (let index = 0; index < current.length; index += 1) {
       const groupId = current[index].reminderReq.groupId;
@@ -74,7 +76,7 @@ function sameRequest(current: reminderAgentManager.ReminderRequest,
   return calendar.dateTime.year === desired.dateTime.year && calendar.dateTime.month === desired.dateTime.month &&
     calendar.dateTime.day === desired.dateTime.day && calendar.dateTime.hour === desired.dateTime.hour &&
     calendar.dateTime.minute === desired.dateTime.minute && (calendar.dateTime.second ?? 0) === (desired.dateTime.second ?? 0) &&
-    calendar.fixedTimeZone === desired.fixedTimeZone && current.content === desired.content &&
+    (calendar.fixedTimeZone ?? 0) === (desired.fixedTimeZone ?? 0) && current.content === desired.content &&
     current.title === desired.title && current.notificationId === desired.notificationId;
 }
 
@@ -106,17 +108,19 @@ function findCurrent(current: Array<reminderAgentManager.ReminderInfo>,
 function calendarRequest(reminder: PhoneV3Reminder,
   groupId: string): reminderAgentManager.ReminderRequestCalendar {
   const date = new Date(reminder.scheduledAt);
+  // Calendar's native constructor validates local time before reading the
+  // optional time-zone mode. UTC fields can therefore look expired on UTC+8
+  // devices. Convert the persisted absolute instant to the device's local time.
   return {
     reminderType: reminderAgentManager.ReminderType.REMINDER_TYPE_CALENDAR,
     dateTime: {
-      year: date.getUTCFullYear(),
-      month: date.getUTCMonth() + 1,
-      day: date.getUTCDate(),
-      hour: date.getUTCHours(),
-      minute: date.getUTCMinutes(),
-      second: date.getUTCSeconds()
+      year: date.getFullYear(),
+      month: date.getMonth() + 1,
+      day: date.getDate(),
+      hour: date.getHours(),
+      minute: date.getMinutes(),
+      second: date.getSeconds()
     },
-    fixedTimeZone: reminderAgentManager.TimeZoneType.FIXED_TIME_ZONE,
     title: '全天候录音提醒',
     content: reminder.location === null || reminder.location.length === 0 ?
       reminder.title : `${reminder.title} · ${reminder.location}`,

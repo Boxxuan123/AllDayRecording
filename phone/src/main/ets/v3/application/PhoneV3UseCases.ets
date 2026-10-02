@@ -120,6 +120,10 @@ export class PhoneV3SyncResult {
   }
 }
 
+interface ReminderSchedulingFailure {
+  code?: number;
+}
+
 export class PhoneV3UseCases {
   reminderSchedulingError: string = '';
   private syncBatchPolicy: PhoneSyncBatchPolicy = new PhoneSyncBatchPolicy();
@@ -858,7 +862,9 @@ export class PhoneV3UseCases {
       await this.reminderScheduler.reconcile(reminders);
       this.reminderSchedulingError = '';
     } catch (error) {
-      this.reminderSchedulingError = `系统提醒未调度：${error instanceof Error ? error.message : JSON.stringify(error)}`;
+      this.reminderSchedulingError = (error as ReminderSchedulingFailure).code === 1700002 ?
+        '系统提醒额度不可用（1700002）。任务已保存，但提醒未安排。' :
+        `系统提醒未调度：${error instanceof Error ? error.message : JSON.stringify(error)}`;
       console.error(this.reminderSchedulingError);
     }
   }

@@ -1,6 +1,7 @@
 // PRODUCT_REMINDER_E2E_TEST: real ArkTS use cases/repository and on-disk SQLite.
 // HarmonyOS APIs are mocked: this never claims a real device notification.
 const assert = require('node:assert/strict');
+process.env.TZ = 'Asia/Singapore';
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const { Repository, UseCases, stores, apply, contract, root, notifications } = require('./phone-sqlite-harness.cjs');
 const { PhoneV3ReminderScheduler: Scheduler } = require(path.join(root, 'data/PhoneV3ReminderScheduler.ets'));
@@ -46,6 +47,11 @@ const response = (changes = [], receipts = []) => ({ projection_version: contrac
   assert.equal((await repository.reminderOperations()).length, 0);
   await use.loadCached([]);
   assert.equal(notifications.current.length, 1);
+  const calendar = notifications.current[0].reminderReq;
+  const wall = calendar.dateTime;
+  assert.equal(new Date(wall.year, wall.month - 1, wall.day, wall.hour, wall.minute, wall.second).getTime(),
+    Math.floor(Date.parse(due) / 1000) * 1000, 'native Calendar must receive local fields for the persisted absolute instant');
+  assert.equal(calendar.fixedTimeZone, undefined, 'avoid UTC fields validated as an expired local time by native Calendar');
   const published = notifications.published.length;
   await use.loadCached([]); await use.loadCached([]);
   assert.equal(notifications.published.length, published, 'duplicate sync/reload must not publish twice');
@@ -106,6 +112,11 @@ const response = (changes = [], receipts = []) => ({ projection_version: contrac
   const invalid = new UseCases(repository, {}, remote, { reconcile: async () => { throw Error('permission denied'); } });
   await invalid.loadCached([]);
   assert.match(invalid.reminderSchedulingError, /permission denied/);
+  const unavailable = new UseCases(repository, {}, remote, { reconcile: async () => {
+    throw { code: 1700002, message: 'The number of reminders exceeds the limit.' };
+  } });
+  await unavailable.loadCached([]);
+  assert.match(unavailable.reminderSchedulingError, /1700002.*任务已保存.*提醒未安排/);
   const editReview = { ...review, review_id: 'reminder:' + id(30), source_id: id(30) };
   const ignoreReview = { ...review, review_id: 'reminder:' + id(31), source_id: id(31) };
   await repository.replaceReviewItems([editReview, ignoreReview]);

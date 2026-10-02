@@ -294,6 +294,11 @@ export struct PhoneV3SessionDetailPage {
         .width('100%')
         .fontSize(15)
         .fontColor($r('app.color.text_primary'))
+      if (utterance.identity !== 'unknown') {
+        Text(`身份：${this.identityLabel(utterance.identity)}`)
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+      }
       Text(phoneV3AnnotationLabel(utterance))
         .width('100%')
         .fontSize(12)
