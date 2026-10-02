@@ -20,7 +20,8 @@ import { PhoneProjectionRepository } from '../data/PhoneProjectionRepository';
 import { PhoneV3ComputerBackup } from '../data/PhoneV3ComputerBackup';
 import { PhoneV3DeviceRemote } from '../data/PhoneV3DeviceRemote';
 import { PhoneV3LocalAudioRepository } from '../data/PhoneV3LocalAudioRepository';
-import { PhoneV3ReminderScheduler } from '../data/PhoneV3ReminderScheduler';
+import { CalendarReminderScheduler } from '../application/CalendarReminderScheduler';
+import { CalendarReminderBackend } from '../data/CalendarReminderBackend';
 import { PhoneV3ReviewAudioPlayer } from '../data/PhoneV3ReviewAudioPlayer';
 import {
   PhoneV3DeviceState,
@@ -1039,6 +1040,20 @@ export class PhoneV3ViewModel {
 
   reminderSchedulingError(): string { return this.useCases?.reminderSchedulingError ?? ''; }
 
+  private calendarScheduler?: CalendarReminderScheduler;
+
+  calendarReminderState(taskId: string): string { return this.calendarScheduler?.state(taskId) ?? ''; }
+
+  retryCalendarReminder(taskId: string): void {
+    if (this.busy || this.calendarScheduler === undefined) { return; }
+    this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.BUSY, undefined, undefined, '正在重新安排日历提醒…'));
+    const generation = this.lifecycleGeneration;
+    this.calendarScheduler.retry(taskId, this.snapshot.reminders).then((): void => {
+      if (generation !== this.lifecycleGeneration) { return; }
+      this.clearError('已检查系统日历提醒'); this.refresh();
+    }).catch((error: Object): void => { if (generation === this.lifecycleGeneration) { this.fail(error); } });
+  }
+
   reminderCommand(kind: string, targetId: string, action: string, revision: number | null = null,
     title: string = '', due: string = ''): void {
     const useCases = this.useCases;
@@ -1104,8 +1119,9 @@ export class PhoneV3ViewModel {
         new PhoneV3Snapshot(mergePhoneV3Sessions(this.localFacts, [], [], [], [])),
         undefined, `手机本地已有 ${this.localFacts.length} 条录音`));
       const repository = await PhoneProjectionRepository.open(context);
+      this.calendarScheduler = new CalendarReminderScheduler(new CalendarReminderBackend(context), repository);
       this.useCases = new PhoneV3UseCases(repository, local, new PhoneV3DeviceRemote(context),
-        new PhoneV3ReminderScheduler(context), new PhoneV3ComputerBackup(context, repository, (progress: ComputerUploadProgress): void => {
+        this.calendarScheduler, new PhoneV3ComputerBackup(context, repository, (progress: ComputerUploadProgress): void => {
           if (lifecycle !== this.lifecycleGeneration) { return; }
           const now = Date.now();
           if (progress.stage === 'uploading' && now - this.lastProgressAt < 150) { return; }

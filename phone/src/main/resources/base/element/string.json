@@ -1,5 +1,6 @@
 {
   "string": [
+    { "name": "calendar_permission_reason", "value": "为已确认任务创建和管理系统日历提醒" },
     {
       "name": "module_desc",
       "value": "接收、管理并播放手表录音"

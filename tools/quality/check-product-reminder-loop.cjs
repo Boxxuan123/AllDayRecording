@@ -1,4 +1,6 @@
-// PRODUCT_REMINDER_E2E_TEST: real ArkTS use cases/repository and on-disk SQLite.
+// Historical Agent backend regression only; this is NOT the production READY criterion.
+// Calendar backend acceptance lives in check-calendar-reminders.cjs and real-device E2E.
+// Real ArkTS use cases/repository and on-disk SQLite.
 // HarmonyOS APIs are mocked: this never claims a real device notification.
 const assert = require('node:assert/strict');
 process.env.TZ = 'Asia/Singapore';

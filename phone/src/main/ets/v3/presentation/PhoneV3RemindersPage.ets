@@ -37,6 +37,21 @@ export struct PhoneV3RemindersPage {
       if (reminder.pendingAction.length > 0) {
         Text('操作已保存在手机，待电脑确认').fontSize(13).fontColor($r('app.color.brand_warning'))
       }
+      if (this.viewModel.calendarReminderState(reminder.eventId) === 'permission_required') {
+        Text('需要日历权限才能按时提醒').fontSize(13).fontColor($r('app.color.brand_warning'))
+        Button('授权日历并重试').enabled(!this.viewModel.busy).onClick((): void => this.viewModel.retryCalendarReminder(reminder.eventId))
+      } else if (this.viewModel.calendarReminderState(reminder.eventId) === 'externally_removed') {
+        Text('系统提醒已被删除').fontSize(13).fontColor($r('app.color.brand_warning'))
+        Button('重新启用提醒').enabled(!this.viewModel.busy).onClick((): void => this.viewModel.retryCalendarReminder(reminder.eventId))
+      } else if (this.viewModel.calendarReminderState(reminder.eventId) === 'externally_modified') {
+        Text('系统提醒已被修改，已保留日历中的修改').fontSize(13).fontColor($r('app.color.brand_warning'))
+        Button('按任务时间重新启用提醒').enabled(!this.viewModel.busy).onClick((): void => this.viewModel.retryCalendarReminder(reminder.eventId))
+      } else if (this.viewModel.calendarReminderState(reminder.eventId) === 'error') {
+        Text('日历提醒同步失败，任务已保留').fontSize(13).fontColor($r('app.color.brand_warning'))
+        Button('重试日历提醒').enabled(!this.viewModel.busy).onClick((): void => this.viewModel.retryCalendarReminder(reminder.eventId))
+      } else if (this.viewModel.calendarReminderState(reminder.eventId) === 'scheduled') {
+        Text('已安排系统日历提醒').fontSize(13).fontColor($r('app.color.text_secondary'))
+      }
       if (reminder.location !== null && reminder.location.length > 0) {
         Text(`地点：${reminder.location}`)
           .fontSize(13)

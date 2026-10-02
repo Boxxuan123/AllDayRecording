@@ -142,6 +142,30 @@ node tools/quality/check-blind-review-v2.cjs
 这些脚本使用合成数据；ArkTS 转译依赖 TypeScript，可通过 `PHONE_TEST_TYPESCRIPT` 指定其模块路径。
 宿主机 Hypium 和签名构建仍按上面的门禁执行。
 
+## 已确认任务写入系统日历
+
+手机默认通过 Calendar Kit 将已确认的未来任务写入应用专用日历 `AllDayRecording`。
+任务候选、审核、同步及生命周期继续使用现有业务流程。旧 Agent Reminder 实现保留为历史回归代码，
+生产入口不再调用它，也不再申请 `PUBLISH_AGENT_REMINDER`。原 `1700002` 路线已放弃，未声称修复。
+
+首次需要写入任务时申请 `READ_CALENDAR` / `WRITE_CALENDAR`（normal / user_grant）；
+拒绝后保留任务，任务页显示授权与重试入口。事件只包含任务标题、到期时间、15 分钟结束时间、
+到点提醒 `[0]` 和“由 AllDayRecording 创建”，不复制录音上下文。
+
+数据库版本 18 新增独立日历账户及任务事件映射，重新获取电脑数据也保留映射。
+重复同步复用同一事件；改期更新原 ID；取消/完成删除日历事件，业务记录保留。
+外部删除/修改分别标记 `externally_removed` / `externally_modified`，仅用户主动重新启用才恢复。
+API 或删除失败标记 `error`，支持重试；创建请求在回包或落库失败后通过稳定事件 identifier 恢复，避免按标题去重。
+
+```sh
+node tools/quality/check-calendar-reminders.cjs
+```
+
+该检查使用 Calendar port fake 和真实 SQLite，覆盖已有审核回包到任务投影的接入。
+API 26 实机已验证专用账户、事件写入/查询和 `[0]` 提醒配置。
+系统日历通知关闭时，事件写入成功不能代表通知成功；后台/锁屏通知不属于此次缩减后的验收范围。
+日后若要标记 `READY_FOR_DAILY_REMINDER_TRIAL`，仍须真实观察系统日历通知并完成后台/锁屏业务 E2E。
+
 ## 许可
 
 本仓库公开源码仅供查看，并非开源软件。除 GitHub 服务条款和适用法律明确要求的

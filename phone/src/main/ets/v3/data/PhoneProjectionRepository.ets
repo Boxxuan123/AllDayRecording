@@ -21,9 +21,10 @@ import {
   PhoneV3SyncStatus
 } from '../domain/PhoneV3Models';
 import { PhoneV3ProjectionRepositoryPort } from '../application/PhoneV3Ports';
+import { CalendarReminderMapping, CalendarReminderStoragePort } from '../application/CalendarReminderPorts';
 
 const DATABASE_NAME: string = 'phone_v3_projection.db';
-const SCHEMA_VERSION: number = 17;
+const SCHEMA_VERSION: number = 18;
 const TABLES: Array<string> = [
   'projection_recordings', 'projection_audio_assets', 'projection_processing_runs',
   'projection_utterances', 'projection_review_items', 'projection_reminders'
@@ -99,13 +100,53 @@ export interface PhoneProjectionStatus {
   retry_count: number;
 }
 
-export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPort {
+export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPort, CalendarReminderStoragePort {
   private store: relationalStore.RdbStore;
   private transactionTail: Promise<void> = Promise.resolve();
   private releaseTransaction: () => void = (): void => {};
 
   private constructor(store: relationalStore.RdbStore) {
     this.store = store;
+  }
+
+  async calendarAccountId(): Promise<number> {
+    const result = await this.store.querySql('SELECT calendar_account_id FROM calendar_reminder_account WHERE singleton_id=1');
+    try { return result.goToNextRow() ? result.getLong(0) : -1; } finally { result.close(); }
+  }
+
+  async saveCalendarAccountId(id: number): Promise<void> {
+    await this.beginTransaction();
+    try {
+      await this.store.executeSql('INSERT OR REPLACE INTO calendar_reminder_account(singleton_id,calendar_account_id) VALUES(1,?)', [id]);
+      await this.commit();
+    } catch (error) { await this.rollback(); throw error as Error; }
+  }
+
+  async calendarMappings(): Promise<Array<CalendarReminderMapping>> {
+    const result = await this.store.querySql(`SELECT task_id,calendar_account_id,calendar_event_id,
+      scheduled_due_at,scheduled_title,calendar_sync_state,last_error FROM calendar_reminder_mappings`);
+    const values: Array<CalendarReminderMapping> = [];
+    try {
+      while (result.goToNextRow()) {
+        const mapping = new CalendarReminderMapping();
+        mapping.taskId = result.getString(0); mapping.calendarAccountId = result.getLong(1);
+        mapping.calendarEventId = result.getLong(2); mapping.scheduledDueAt = result.getString(3);
+        mapping.scheduledTitle = result.getString(4); mapping.calendarSyncState = result.getString(5);
+        mapping.lastError = result.getString(6); values.push(mapping);
+      }
+    } finally { result.close(); }
+    return values;
+  }
+
+  async saveCalendarMapping(mapping: CalendarReminderMapping): Promise<void> {
+    await this.beginTransaction();
+    try {
+      await this.store.executeSql(`INSERT OR REPLACE INTO calendar_reminder_mappings
+        (task_id,calendar_account_id,calendar_event_id,scheduled_due_at,scheduled_title,calendar_sync_state,last_error)
+        VALUES(?,?,?,?,?,?,?)`, [mapping.taskId, mapping.calendarAccountId, mapping.calendarEventId,
+        mapping.scheduledDueAt, mapping.scheduledTitle, mapping.calendarSyncState, mapping.lastError]);
+      await this.commit();
+    } catch (error) { await this.rollback(); throw error as Error; }
   }
 
   static async open(context: common.UIAbilityContext, databaseName: string = DATABASE_NAME): Promise<PhoneProjectionRepository> {
@@ -998,6 +1039,16 @@ async function migrate(store: relationalStore.RdbStore): Promise<void> {
         operation_id TEXT PRIMARY KEY, review_id TEXT NOT NULL, prototype_id TEXT NOT NULL UNIQUE,
         payload_json TEXT NOT NULL, created_at INTEGER NOT NULL)`);
       store.version = 17;
+    }
+    if (store.version < 18) {
+      // Backend metadata survives projection rebuilds. It is never a second task source.
+      await store.executeSql(`CREATE TABLE IF NOT EXISTS calendar_reminder_account (
+        singleton_id INTEGER PRIMARY KEY CHECK(singleton_id=1), calendar_account_id INTEGER NOT NULL)`);
+      await store.executeSql(`CREATE TABLE IF NOT EXISTS calendar_reminder_mappings (
+        task_id TEXT PRIMARY KEY, calendar_account_id INTEGER NOT NULL, calendar_event_id INTEGER NOT NULL,
+        scheduled_due_at TEXT NOT NULL, scheduled_title TEXT NOT NULL,
+        calendar_sync_state TEXT NOT NULL, last_error TEXT NOT NULL DEFAULT '')`);
+      store.version = 18;
     }
     store.commit();
   } catch (error) {
