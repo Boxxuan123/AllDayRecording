@@ -2,6 +2,7 @@ import { phoneV3VoiceTasks } from '../domain/PhoneV3VoiceReviewTask';
 import { reminderContext, localReminderTime } from '../domain/PhoneV3ReminderCommands';
 import { phoneV3PendingReviews, phoneV3ReviewIsHistory } from '../domain/PhoneV3ReviewModels';
 import { PhoneV3AnnotationConflictPanel } from './PhoneV3AnnotationConflictPanel';
+import { PhoneV3SelfReviewCard } from './PhoneV3SelfReviewCard';
 import { PhoneV3Conflict, PhoneV3ReviewItem, PhoneV3SessionCard } from '../domain/PhoneV3Models';
 import {
   phoneV3ReviewReason,
@@ -203,7 +204,9 @@ export struct PhoneV3ReviewInboxPage {
 
   @Builder
   private reviewCard(item: PhoneV3ReviewItem) {
-    if (item.kind === 'blind_identity_review') {
+    if (item.kind === 'self_identity_review') {
+      PhoneV3SelfReviewCard({ item: item, viewModel: this.viewModel, stateRevision: this.stateRevision })
+    } else if (item.kind === 'blind_identity_review') {
       Column({ space: 8 }) {
         Text('Blind 人物验收').fontSize(17).fontWeight(FontWeight.Medium).width('100%')
         Text(`${this.blindPendingCount()} 条待审核 · 听完整音频 → 选人物 → 判断纯度`)
