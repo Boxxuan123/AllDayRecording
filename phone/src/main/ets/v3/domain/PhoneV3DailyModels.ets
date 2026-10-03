@@ -25,6 +25,14 @@ export interface PhoneDailyEvent {
   local_date: string;
   timezone: string;
   title: string;
+  summary?: string;
+  summary_claims?: Array<PhoneDailyClaim>;
+  title_evidence_utterance_ids?: Array<string>;
+  importance_evidence_utterance_ids?: Array<string>;
+  summary_visibility?: string;
+  importance?: string;
+  semantic_status?: string;
+  outcome?: string | PhoneDailyOutcome;
   start_at: string;
   end_at: string;
   category: string;
@@ -32,6 +40,17 @@ export interface PhoneDailyEvent {
   participants: Array<PhoneDailyParticipant>;
   evidence_snapshots: Array<PhoneDailyEvidence>;
   linked_task_ids: Array<string>;
+}
+
+export interface PhoneDailyOutcome {
+  kind: string;
+  quote: string;
+  evidence_utterance_ids: Array<string>;
+}
+
+export interface PhoneDailyClaim {
+  text: string;
+  evidence_utterance_ids: Array<string>;
 }
 
 export interface PhoneDailyItem {
@@ -46,6 +65,10 @@ export interface PhoneDailyItem {
 export interface PhoneDailyObjective {
   date: string;
   headline: string;
+  overview?: string;
+  overview_claims?: Array<PhoneDailyItem>;
+  major_events?: Array<PhoneDailyItem>;
+  semantic_status?: string;
   source_event_ids: Array<string>;
   source_event_revisions: Record<string, number>;
   key_events: Array<PhoneDailyItem>;
