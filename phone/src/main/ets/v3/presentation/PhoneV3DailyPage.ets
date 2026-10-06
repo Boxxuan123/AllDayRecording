@@ -2,7 +2,7 @@ import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 import { PhoneV3SessionCard } from '../domain/PhoneV3Models';
 import {
   PhoneDailyCache, PhoneDailySummary, PhoneDailyEvent, PhoneDailyEvidence,
-  PhoneDailyItem, PhoneDailyParticipant, phoneDailyStatus
+  PhoneDailyItem, PhoneDailyParticipant, phoneDailyStatus, phoneDailyMajorEvents
 } from '../domain/PhoneV3DailyModels';
 
 @Component
@@ -49,9 +49,7 @@ export struct PhoneV3DailyPage {
   }
 
   private majorEvents(): Array<PhoneDailyEvent> {
-    const ids = (this.summary()?.objective.major_events ?? [])
-      .flatMap((item: PhoneDailyItem): Array<string> => item.event_ids);
-    return this.events().filter((event: PhoneDailyEvent): boolean => ids.indexOf(event.event_id) >= 0);
+    return phoneDailyMajorEvents(this.events(), this.summary()?.objective.major_events ?? []);
   }
 
   private secondaryEvents(): Array<PhoneDailyEvent> {

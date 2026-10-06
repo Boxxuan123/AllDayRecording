@@ -98,3 +98,17 @@ export function phoneDailyStatus(status: string): string {
   if (status === 'cancelled') { return '已取消'; }
   return '待办';
 }
+
+export function phoneDailyMajorEvents(events: Array<PhoneDailyEvent>,
+  items: Array<PhoneDailyItem>): Array<PhoneDailyEvent> {
+  const ordered: Array<PhoneDailyEvent> = [];
+  for (const item of items) {
+    for (const id of item.event_ids) {
+      const event = events.find((value: PhoneDailyEvent): boolean => value.event_id === id);
+      if (event !== undefined && !ordered.some((value: PhoneDailyEvent): boolean => value.event_id === id)) {
+        ordered.push(event);
+      }
+    }
+  }
+  return ordered;
+}

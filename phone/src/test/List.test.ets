@@ -13,6 +13,7 @@ import computerSessionManifestTest from './ComputerSessionManifest.test';
 import computerRecordingBackupServiceTest from './ComputerRecordingBackupService.test';
 import phoneV3ComputerBackupTest from './PhoneV3ComputerBackup.test';
 import phoneV3ReviewModelsTest from './PhoneV3ReviewModels.test';
+import phoneV3DailyModelsTest from './PhoneV3DailyModels.test';
 
 export default function testsuite() {
   phoneV3ReminderCommandsTest();
@@ -30,4 +31,5 @@ export default function testsuite() {
   computerRecordingBackupServiceTest();
   phoneV3ComputerBackupTest();
   phoneV3ReviewModelsTest();
+  phoneV3DailyModelsTest();
 }
