@@ -99,6 +99,16 @@ export function phoneDailyStatus(status: string): string {
   return '待办';
 }
 
+export function phoneDailyDisplayText(text: string, sourceEventIds: Array<string>): string {
+  // Hide citation-only groups in display text; keep the stored prose and source links intact.
+  return text.replace(/（[^（）]*）|\([^()]*\)/g, (group: string): string => {
+    const references = group.slice(1, -1).trim().split(/[、,，;；\s]+/)
+      .filter((value: string): boolean => value.length > 0);
+    return references.length > 0 &&
+      references.every((value: string): boolean => sourceEventIds.indexOf(value) >= 0) ? '' : group;
+  }).trim();
+}
+
 export function phoneDailyMajorEvents(events: Array<PhoneDailyEvent>,
   items: Array<PhoneDailyItem>): Array<PhoneDailyEvent> {
   const ordered: Array<PhoneDailyEvent> = [];

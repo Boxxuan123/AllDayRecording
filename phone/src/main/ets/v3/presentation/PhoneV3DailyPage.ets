@@ -2,7 +2,7 @@ import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 import { PhoneV3SessionCard } from '../domain/PhoneV3Models';
 import {
   PhoneDailyCache, PhoneDailySummary, PhoneDailyEvent, PhoneDailyEvidence,
-  PhoneDailyItem, PhoneDailyParticipant, phoneDailyStatus, phoneDailyMajorEvents
+  PhoneDailyItem, PhoneDailyParticipant, phoneDailyStatus, phoneDailyMajorEvents, phoneDailyDisplayText
 } from '../domain/PhoneV3DailyModels';
 
 @Component
@@ -38,6 +38,10 @@ export struct PhoneV3DailyPage {
 
   private summary(): PhoneDailySummary | undefined {
     return this.cache.summaries.find((s: PhoneDailySummary): boolean => s.summary_date === this.date);
+  }
+
+  private displaySummaryText(text: string): string {
+    return phoneDailyDisplayText(text, this.summary()?.objective.source_event_ids ?? []);
   }
 
   private events(): Array<PhoneDailyEvent> {
@@ -177,8 +181,8 @@ export struct PhoneV3DailyPage {
               this.date = value; this.selectedEventId = ''; this.showSecondary = false;
             })
           if (this.summary()?.objective.semantic_status === 'complete') {
-            Text(this.summary()?.objective.headline ?? '').fontSize(20).fontWeight(FontWeight.Bold)
-            Text(this.summary()?.objective.overview ?? '').fontSize(15).width('100%')
+            Text(this.displaySummaryText(this.summary()?.objective.headline ?? '')).fontSize(20).fontWeight(FontWeight.Bold)
+            Text(this.displaySummaryText(this.summary()?.objective.overview ?? '')).fontSize(15).width('100%')
           } else {
             Text('语义总结尚未生成').fontSize(20).fontWeight(FontWeight.Bold)
             Text('原始事件和录音证据已保留，等待电脑完成语义分析。').fontSize(15)
