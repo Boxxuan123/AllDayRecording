@@ -456,7 +456,8 @@ function verifyRemoteUpload(remote: ComputerUploadRecord, expected: ComputerUplo
 
 export function computerTransferTimezone(): string {
   try {
-    return i18n.getCalendar('zh-CN').getTimeZone();
+    const timezone = i18n.getCalendar('zh-CN').getTimeZone();
+    return timezone === 'CST' ? 'Asia/Singapore' : timezone;
   } catch (error) {
     return 'Asia/Singapore';
   }
