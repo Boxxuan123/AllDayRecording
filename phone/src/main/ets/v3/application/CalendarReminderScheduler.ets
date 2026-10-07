@@ -46,7 +46,9 @@ export class CalendarReminderScheduler implements PhoneV3ReminderSchedulerPort {
     const relevant = reminders.filter((task: PhoneV3Reminder): boolean =>
       (task.status === 'scheduled' && Date.parse(task.scheduledAt) > Date.now()) ||
       ((task.status === 'cancelled' || task.status === 'completed') &&
-        this.states.some((value: CalendarReminderMapping): boolean => value.taskId === task.eventId && value.calendarEventId >= 0)));
+        this.states.some((value: CalendarReminderMapping): boolean => value.taskId === task.eventId &&
+          value.calendarSyncState !== 'removed' &&
+          (value.calendarEventId >= 0 || value.calendarAccountId >= 0))));
     if (relevant.length === 0) { return; }
     const shouldRequest = request || relevant.some((task: PhoneV3Reminder): boolean =>
       !this.states.some((value: CalendarReminderMapping): boolean => value.taskId === task.eventId && value.calendarSyncState === 'permission_required'));
@@ -92,13 +94,22 @@ export class CalendarReminderScheduler implements PhoneV3ReminderSchedulerPort {
     accountId: number, events: Array<CalendarReminderEvent>): Promise<void> {
     const identifier = `${IDENTIFIER_PREFIX}${task.eventId}`;
     let current = events.find((value: CalendarReminderEvent): boolean =>
-      mapping.calendarEventId >= 0 ? value.id === mapping.calendarEventId && mapping.calendarAccountId === accountId : value.identifier === identifier);
+      (mapping.calendarEventId >= 0 && value.id === mapping.calendarEventId &&
+        mapping.calendarAccountId === accountId) || value.identifier === identifier);
     if (task.status === 'cancelled' || task.status === 'completed') {
-      if (current !== undefined) {
-        await this.backend.remove(accountId, current.id);
-        if ((await this.backend.events(accountId)).some((value: CalendarReminderEvent): boolean => value.id === current?.id)) {
-          throw new Error('系统日历事件删除后仍存在');
-        }
+      // A create can commit in Calendar before its event ID reaches local storage.
+      // The durable creating intent and stable identifier still identify the event.
+      const owned = events.filter((value: CalendarReminderEvent): boolean =>
+        value.identifier === identifier || (mapping.calendarEventId >= 0 &&
+          mapping.calendarAccountId === accountId && value.id === mapping.calendarEventId));
+      for (let event of owned) {
+        await this.backend.remove(accountId, event.id);
+      }
+      const remaining = await this.backend.events(accountId);
+      if (remaining.some((value: CalendarReminderEvent): boolean =>
+        value.identifier === identifier || (mapping.calendarEventId >= 0 &&
+          mapping.calendarAccountId === accountId && value.id === mapping.calendarEventId))) {
+        throw new Error('系统日历事件删除后仍存在');
       }
       mapping.calendarEventId = -1; mapping.calendarSyncState = 'removed'; mapping.lastError = '';
       await this.storage.saveCalendarMapping(mapping); return;

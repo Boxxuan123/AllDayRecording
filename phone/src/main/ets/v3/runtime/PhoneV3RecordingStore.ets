@@ -13,6 +13,8 @@ import {
 export const SYNC_RECEIVE_DIRECTORY: string = 'synced_from_watch';
 const MANIFEST_FILE_NAME: string = 'received_index_v1.json';
 const MANIFEST_VERSION: number = 1;
+const RECEIPT_VERSION: number = 2;
+const RECEIPT_SUFFIX: string = '.receipt.json';
 
 interface ReceivedRecordingManifestEntry {
   fileName: string;
@@ -31,12 +33,37 @@ interface ReceivedRecordingManifest {
   recordings: Array<ReceivedRecordingManifestEntry>;
 }
 
+interface RecordingReceipt {
+  version: number;
+  recordingId: string;
+  sessionKey: string;
+  fileName: string;
+  size: number;
+  durationMs: number;
+  requestId: string;
+  sourcePath: string;
+  receivedAt: number;
+  syncKey: string;
+  sha256: string;
+  verified: boolean;
+}
+
 export type DirectoryListOperation = (path: string) => Array<string>;
 export type TextReadOperation = JsonTextReadOperation;
 export type TextWriteOperation = JsonTextWriteOperation;
 
 function isReceivedRecordingManifest(manifest: ReceivedRecordingManifest): boolean {
   return Array.isArray(manifest.recordings);
+}
+
+function isRecordingReceipt(receipt: RecordingReceipt): boolean {
+  return receipt.verified === true && receipt.size > 0 &&
+    receipt.requestId.length > 0 && receipt.sourcePath.length > 0 &&
+    receipt.sourcePath.lastIndexOf('/') > 0 &&
+    receipt.sessionKey === receipt.sourcePath.substring(0, receipt.sourcePath.lastIndexOf('/')) &&
+    receipt.recordingId === exactWatchFileKey(receipt.sourcePath, receipt.size) &&
+    receipt.syncKey === exactWatchFileKey(receipt.sourcePath, receipt.size) &&
+    /^[0-9a-f]{64}$/.test(receipt.sha256);
 }
 
 export class PhoneV3RecordingStore {
@@ -78,7 +105,7 @@ export class PhoneV3RecordingStore {
     const keys: Array<string> = [];
     for (let index = 0; index < this.recordings.length; index += 1) {
       const recording = this.recordings[index];
-      if (recording.syncKey !== undefined && keys.indexOf(recording.syncKey) < 0) {
+      if (recording.verified === true && recording.syncKey !== undefined && keys.indexOf(recording.syncKey) < 0) {
         keys.push(recording.syncKey);
       }
     }
@@ -89,8 +116,8 @@ export class PhoneV3RecordingStore {
     const key = exactWatchFileKey(descriptor.relativePath, descriptor.size);
     for (let index = 0; index < this.recordings.length; index += 1) {
       const recording = this.recordings[index];
-      if (recording.syncKey === key ||
-        (recording.sourcePath === descriptor.relativePath && recording.size === descriptor.size)) {
+      if (recording.verified === true && (recording.syncKey === key ||
+        (recording.sourcePath === descriptor.relativePath && recording.size === descriptor.size))) {
         return recording;
       }
     }
@@ -108,34 +135,36 @@ export class PhoneV3RecordingStore {
     const key = exactWatchFileKey(sourcePath, size);
     for (let index = 0; index < this.recordings.length; index += 1) {
       const recording = this.recordings[index];
-      if (recording.syncKey === key || (recording.sourcePath === sourcePath && recording.size === size)) {
+      if (recording.verified === true &&
+        (recording.syncKey === key || (recording.sourcePath === sourcePath && recording.size === size))) {
         return recording;
       }
     }
     return undefined;
   }
 
-  record(recording: ReceivedRecordingFile): ReceivedRecordingFile {
+  record(recording: ReceivedRecordingFile, sha256: string): ReceivedRecordingFile {
+    this.writeReceipt(recording, sha256);
+    const durable = durableRecording(recording, sha256);
     for (let index = 0; index < this.recordings.length; index += 1) {
       const existing = this.recordings[index];
       if ((recording.syncKey !== undefined && existing.syncKey === recording.syncKey) ||
         existing.path === recording.path) {
-        return existing;
+        this.recordings[index] = durable;
+        this.sortNewestFirst();
+        this.tryWriteManifest();
+        return durable;
       }
     }
-    this.recordings.push(recording);
+    this.recordings.push(durable);
     this.sortNewestFirst();
-    try {
-      this.writeManifest();
-    } catch (error) {
-      // The copied audio remains authoritative and will rebuild the index on the next launch.
-    }
-    return recording;
+    this.tryWriteManifest();
+    return durable;
   }
 
-  recordVerified(recording: ReceivedRecordingFile): ReceivedRecordingFile {
+  recordVerified(recording: ReceivedRecordingFile, sha256: string): ReceivedRecordingFile {
     if (recording.syncKey === undefined) {
-      return this.record(recording);
+      return this.record(recording, sha256);
     }
     for (let index = 0; index < this.recordings.length; index += 1) {
       const existing = this.recordings[index];
@@ -144,18 +173,16 @@ export class PhoneV3RecordingStore {
         continue;
       }
       if (existing.path === recording.path) {
-        return existing;
+        return this.record(recording, sha256);
       }
-      this.recordings[index] = recording;
+      this.writeReceipt(recording, sha256);
+      const durable = durableRecording(recording, sha256);
+      this.recordings[index] = durable;
       this.sortNewestFirst();
-      try {
-        this.writeManifest();
-      } catch (error) {
-        // Both copied audio files remain recoverable if the index update fails.
-      }
-      return recording;
+      this.tryWriteManifest();
+      return durable;
     }
-    return this.record(recording);
+    return this.record(recording, sha256);
   }
 
   deleteRecordings(recordings: Array<ReceivedRecordingFile>): number {
@@ -169,6 +196,10 @@ export class PhoneV3RecordingStore {
       try {
         if (fileIo.accessSync(targetPath)) {
           fileIo.unlinkSync(targetPath);
+        }
+        const receiptPath = `${targetPath}${RECEIPT_SUFFIX}`;
+        if (fileIo.accessSync(receiptPath)) {
+          fileIo.unlinkSync(receiptPath);
         }
       } catch (error) {
         this.tryWriteManifest();
@@ -200,6 +231,49 @@ export class PhoneV3RecordingStore {
     return loaded;
   }
 
+  private writeReceipt(recording: ReceivedRecordingFile, sha256: string): void {
+    const stat = fileIo.statSync(recording.path);
+    if (!stat.isFile() || stat.size !== recording.size ||
+      !/^[0-9a-f]{64}$/.test(sha256)) {
+      throw new Error('录音文件大小或 SHA-256 无效，不能确认接收');
+    }
+    const receipt: RecordingReceipt = {
+      version: RECEIPT_VERSION,
+      recordingId: exactWatchFileKey(recording.sourcePath, recording.size),
+      sessionKey: recording.sourcePath.substring(0, recording.sourcePath.lastIndexOf('/')),
+      fileName: recording.fileName,
+      size: recording.size,
+      durationMs: recording.durationMs,
+      requestId: recording.requestId,
+      sourcePath: recording.sourcePath,
+      receivedAt: recording.receivedAt,
+      syncKey: exactWatchFileKey(recording.sourcePath, recording.size),
+      sha256: sha256,
+      verified: true
+    };
+    const path = `${recording.path}${RECEIPT_SUFFIX}`;
+    if (this.writeText === undefined) {
+      writeVersionedJson<RecordingReceipt>(path, RECEIPT_VERSION, receipt, isRecordingReceipt);
+    } else {
+      writeVersionedJson<RecordingReceipt>(path, RECEIPT_VERSION, receipt, isRecordingReceipt, this.writeText);
+    }
+  }
+
+  private loadReceipt(path: string, size: number): ReceivedRecordingFile | undefined {
+    const loaded = loadVersionedJson<RecordingReceipt>(`${path}${RECEIPT_SUFFIX}`, RECEIPT_VERSION,
+      isRecordingReceipt, (candidate: string): boolean => fileIo.accessSync(candidate), this.readText);
+    if (loaded.status !== JSON_LOAD_SUCCESS || loaded.value === undefined || loaded.value.size !== size) {
+      return undefined;
+    }
+    const receipt = loaded.value;
+    return {
+      fileName: receipt.fileName, path: path, size: receipt.size, durationMs: receipt.durationMs,
+      requestId: receipt.requestId, sourcePath: receipt.sourcePath,
+      receivedAt: receipt.receivedAt, syncKey: receipt.syncKey,
+      sha256: receipt.sha256, verified: true
+    };
+  }
+
   private loadManifest(target: Array<ReceivedRecordingFile>): void {
     const loaded = loadVersionedJson<ReceivedRecordingManifest>(this.manifestPath, MANIFEST_VERSION,
       isReceivedRecordingManifest, (path: string): boolean => fileIo.accessSync(path), this.readText);
@@ -222,7 +296,8 @@ export class PhoneV3RecordingStore {
         if (!stat.isFile() || stat.size <= 0 || stat.size !== entry.size) {
           continue;
         }
-        target.push({
+        const receipt = this.loadReceipt(path, stat.size);
+        target.push(receipt ?? {
           fileName: entry.fileName,
           path: path,
           size: entry.size,
@@ -268,18 +343,22 @@ export class PhoneV3RecordingStore {
         if (!this.isAudioFile(name) || stat.size <= 0 || this.containsPath(target, path)) {
           continue;
         }
-        const requestSeparator = relativePath.indexOf('/');
-        const requestId = requestSeparator > 0 ? relativePath.substring(0, requestSeparator) : 'history';
-        const fileName = name.replace(/^\d+_/, '');
-        target.push({
-          fileName: fileName,
-          path: path,
-          size: stat.size,
-          durationMs: 0,
-          requestId: requestId,
-          sourcePath: '历史同步记录（来源目录未保存）',
-          receivedAt: Math.round(stat.mtime * 1000)
-        });
+        const receipt = this.loadReceipt(path, stat.size);
+        if (receipt !== undefined) {
+          const previous = target.findIndex((item: ReceivedRecordingFile): boolean =>
+            item.syncKey === receipt.syncKey && item.verified === true);
+          if (previous >= 0) {
+            if (target[previous].receivedAt < receipt.receivedAt) {
+              target[previous] = receipt;
+            }
+          } else {
+            target.push(receipt);
+          }
+          continue;
+        }
+        // Unverified audio without a durable receipt has no trustworthy
+        // session/source identity. Keep it on disk for repair, not in the
+        // acknowledged recording set or Computer manifest.
       }
     } catch (error) {
       throw receivedStoreError(error);
@@ -367,4 +446,14 @@ export class PhoneV3RecordingStore {
 
 function receivedStoreError(error: Object): Error {
   return error instanceof Error ? error : new Error(JSON.stringify(error));
+}
+
+function durableRecording(recording: ReceivedRecordingFile, sha256: string): ReceivedRecordingFile {
+  return {
+    fileName: recording.fileName, path: recording.path, size: recording.size,
+    durationMs: recording.durationMs, requestId: recording.requestId,
+    sourcePath: recording.sourcePath, receivedAt: recording.receivedAt,
+    syncKey: exactWatchFileKey(recording.sourcePath, recording.size),
+    sha256: sha256, verified: true
+  };
 }

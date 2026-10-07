@@ -1,11 +1,16 @@
 import { annotationTiming } from './PhoneAnnotationTiming';
-import { PhoneDailyCache, PhoneDailyEvent, PhoneDailySummary } from '../domain/PhoneV3DailyModels';
+import { PhoneV3AnnotationCommands } from './PhoneV3AnnotationCommands';
+import { PhoneV3ProjectionQueries } from './PhoneV3ProjectionQueries';
+import { ReviewAudioPrefetchPort } from './PhoneReviewAudioPrefetch';
+import { indexSessionUtterances, mergePhoneV3Sessions, parseRecording,
+  phoneV3Reminders } from './PhoneV3ProjectionMapping';
+import { newOperationId } from './PhoneV3OperationIds';
+import { PhoneDailyCache, PhoneDailySummary } from '../domain/PhoneV3DailyModels';
 import { PhoneV3ReminderCommand, overlayReminderCommands, pendingReminderReview } from '../domain/PhoneV3ReminderCommands';
 import { syncRequestBatch, PhoneSyncBatchPolicy, jsonBytes } from '../data/PhoneSyncBatch';
 import { PhonePendingOperation } from '../data/PhoneSyncProjection';
-import { PHONE_V3_SOUND_KINDS, phoneV3SoundKindLabel } from '../domain/PhoneV3SoundKind';
 import { PhoneV3Evidence } from '../domain/PhoneV3PersonFact';
-import { PhoneV3LocalAnnotation, PhoneV3AnnotationSentence, applyLocalAnnotations, applyAnnotationRows, applyAnnotationConflicts, applyAnnotationConflictsToRows, annotationRows } from '../domain/PhoneV3LocalAnnotation';
+import { PhoneV3LocalAnnotation, PhoneV3AnnotationSentence, applyAnnotationRows, annotationRows } from '../domain/PhoneV3LocalAnnotation';
 import {
   DeviceV3ClientOperation,
   DeviceV3PersonChoice,
@@ -20,7 +25,6 @@ import {
 import {
   V3_CONTRACT_VERSION,
   V3_PROJECTION_VERSION,
-  validateV3ReminderDto,
   validateV3UtteranceDto
 } from '../contracts/V3ContractModels';
 import { applySyncResponse } from '../data/PhoneSyncProjection';
@@ -30,8 +34,6 @@ import { validateReviewSample } from '../domain/PhoneV3ReviewAudioValidation';
 import {
   PhoneSessionCompletionRecord,
   PhoneV3LocalAudioFact,
-  PhoneV3LocalAudioLink,
-  PhoneV3ProjectionRow,
   PhoneV3Reminder,
   PhoneV3ReviewItem,
   PhoneV3SessionCard,
@@ -48,7 +50,8 @@ import {
 } from './PhoneV3Ports';
 import { PhoneV3ReviewAudioCachePort } from './PhoneV3Ports';
 
-interface AnnotationTargetPayload { status: string; }
+export { mergePhoneV3Sessions } from './PhoneV3ProjectionMapping';
+
 interface ReviewRemoteError { statusCode?: number; reviewRequestNotSent?: boolean; }
 
 export class PhoneV3ReviewSubmissionError extends Error {
@@ -57,24 +60,6 @@ export class PhoneV3ReviewSubmissionError extends Error {
     super(committed ? '结果已提交，状态待更新；请仅重试读取' : '请求结果尚未确认，请先核对电脑状态，不要重复提交');
     this.committed = committed;
   }
-}
-
-interface RecordingPayload {
-  session_id?: string;
-  session_key?: string;
-  captured_start?: string;
-  device_name?: string;
-  state?: string;
-  status_code?: string;
-  progress?: number;
-  revision?: number;
-}
-
-interface ProcessingPayload {
-  session_id?: string;
-  status?: string;
-  current_stage?: string;
-  progress?: number;
 }
 
 interface UtteranceCorrectionPayload {
@@ -125,9 +110,10 @@ interface ReminderSchedulingFailure {
   code?: number;
 }
 
-export class PhoneV3UseCases {
+export class PhoneV3UseCases implements ReviewAudioPrefetchPort {
   reminderSchedulingError: string = '';
   private syncBatchPolicy: PhoneSyncBatchPolicy = new PhoneSyncBatchPolicy();
+  private annotationCommands: PhoneV3AnnotationCommands;
   private reviewVersion: string | undefined = undefined;
   private peopleVersion: string | undefined = undefined;
   onCommitted: (result: PhoneV3SyncResult) => void = (): void => {};
@@ -155,7 +141,7 @@ export class PhoneV3UseCases {
   private remote: PhoneV3RemotePort;
   private reminderScheduler: PhoneV3ReminderSchedulerPort | undefined;
   private audioBackup: PhoneV3AudioBackupPort | undefined;
-  private cachedUtteranceRows: Map<string, Array<PhoneV3ProjectionRow>> | null = null;
+  private query: PhoneV3ProjectionQueries;
 
   constructor(repository: PhoneV3ProjectionRepositoryPort,
     localAudio: PhoneV3LocalAudioRepositoryPort, remote: PhoneV3RemotePort,
@@ -165,6 +151,8 @@ export class PhoneV3UseCases {
     this.reviewAudioCache = reviewAudioCache;
     this.purityAudioCache = purityAudioCache;
     this.repository = repository;
+    this.annotationCommands = new PhoneV3AnnotationCommands(repository);
+    this.query = new PhoneV3ProjectionQueries(repository, remote);
     this.localAudio = localAudio;
     this.remote = remote;
     this.reminderScheduler = reminderScheduler;
@@ -176,79 +164,28 @@ export class PhoneV3UseCases {
   }
 
   async searchTranscriptSessionIds(search: string): Promise<Array<string>> {
-    if (this.repository.searchTranscriptSessionIds !== undefined) {
-      return this.repository.searchTranscriptSessionIds(search);
-    }
-    const rows = await this.repository.projectionRows('utterance');
-    const matches = new Set<string>();
-    for (let row of rows) {
-      const payload = validateV3UtteranceDto(parseProjectionObject(row));
-      if (payload.text.toLocaleLowerCase().includes(search.toLocaleLowerCase()) ||
-        (payload.speaker_label ?? '').toLocaleLowerCase().includes(search.toLocaleLowerCase())) {
-        matches.add(payload.session_id);
-      }
-    }
-    return Array.from(matches);
+    return this.query.searchTranscriptSessionIds(search);
   }
 
-  async loadDailyCache(): Promise<PhoneDailyCache> {
-    const value = new PhoneDailyCache();
-    value.events = (await this.repository.projectionRows('daily_event')).map(
-      (row: PhoneV3ProjectionRow): PhoneDailyEvent => JSON.parse(row.payloadJson) as PhoneDailyEvent)
-      .sort((a: PhoneDailyEvent, b: PhoneDailyEvent): number => Date.parse(a.start_at) - Date.parse(b.start_at));
-    value.summaries = (await this.repository.projectionRows('daily_summary')).map(
-      (row: PhoneV3ProjectionRow): PhoneDailySummary => JSON.parse(row.payloadJson) as PhoneDailySummary)
-      .sort((a: PhoneDailySummary, b: PhoneDailySummary): number => b.summary_date.localeCompare(a.summary_date));
-    return value;
+  async loadUtteranceById(utteranceId: string): Promise<PhoneV3Utterance | undefined> {
+    return this.query.loadUtteranceById(utteranceId);
   }
+
+  async loadDailyCache(): Promise<PhoneDailyCache> { return this.query.loadDailyCache(); }
 
   async loadCached(localFacts: Array<PhoneV3LocalAudioFact>): Promise<PhoneV3Snapshot> {
-    const recordings = await this.repository.projectionRows('recording_session');
-    const processing = await this.repository.projectionRows('processing_run');
-    const grouped = this.repository.projectionUtterancesBySession === undefined ? null :
-      this.cachedUtteranceRows ?? await this.repository.projectionUtterancesBySession();
-    if (grouped !== null) { this.cachedUtteranceRows = grouped; }
-    const utterances = grouped === null ? await this.repository.projectionRows('utterance') : [];
-    const reviews = await this.repository.projectionRows('review_item');
-    const reminders = await this.repository.projectionRows('reminder');
-    const links = await this.repository.localAudioLinks();
-    const conflicts = await this.repository.conflictRows();
-    const status = await this.repository.v3Status();
-    const paired = await this.remote.isPaired();
+    return this.query.loadCached(localFacts);
+  }
+
+  async loadSessionUtterancePage(card: PhoneV3SessionCard, targetCount: number): Promise<void> {
+    return this.query.loadSessionUtterancePage(card, targetCount);
+  }
+
+  /** Explicit lifecycle command; cached projection queries do not touch Calendar. */
+  async reconcileCalendar(): Promise<void> {
+    const rows = await this.repository.projectionRows('reminder');
     const commands = this.repository.reminderOperations === undefined ? [] : await this.repository.reminderOperations();
-    const reminderValues = overlayReminderCommands(phoneV3Reminders(reminders), commands);
-    await this.reconcileReminders(reminderValues);
-    const completions = await this.repository.localSessionCompletions();
-    const sessions = mergePhoneV3Sessions(localFacts, links, recordings, processing, utterances,
-      completions);
-    const annotations = await this.repository.annotationOperations();
-    if (grouped === null) {
-      applyLocalAnnotations(sessions, annotations);
-      applyAnnotationConflicts(sessions, conflicts);
-    } else {
-      for (let card of sessions) {
-        const rows = grouped.get(card.sessionId) ?? [];
-        if (rows.length === 0) { continue; }
-        card.setLazyUtterances(rows.map((row: PhoneV3ProjectionRow): string => row.resourceId),
-          (): Array<PhoneV3Utterance> => indexSessionUtterances(rows).get(card.sessionId) ?? [],
-          (): void => {
-            applyLocalAnnotations([card], annotations);
-            applyAnnotationConflicts([card], conflicts);
-          },
-          (offset: number, limit: number): Array<PhoneV3Utterance> => {
-            const page = indexSessionUtterances(rows.slice(offset, offset + limit)).get(card.sessionId) ?? [];
-            const indexed = new Map<string, PhoneV3Utterance>();
-            for (let row of page) { indexed.set(row.utteranceId, row); }
-            applyAnnotationRows(indexed, annotations);
-            applyAnnotationConflictsToRows(indexed, conflicts);
-            return page;
-          });
-      }
-    }
-    return new PhoneV3Snapshot(
-      sessions,
-      conflicts, status, paired, reminderValues, await this.withPendingPurity(phoneV3ReviewItems(reviews).filter(
-        (item: PhoneV3ReviewItem): boolean => !pendingReminderReview(item, commands))));
+    await this.reconcileReminders(overlayReminderCommands(phoneV3Reminders(rows), commands));
   }
 
   async localAudioIsProtected(sessionKey: string): Promise<boolean> {
@@ -285,14 +222,24 @@ export class PhoneV3UseCases {
   }
 
   async refreshUtterances(snapshot: PhoneV3Snapshot, ids: Array<string>): Promise<PhoneV3Snapshot> {
-    this.cachedUtteranceRows = null;
+    this.query.invalidateUtteranceCache();
     const rows = await this.repository.projectionRows('utterance', ids);
     const operations = await this.repository.annotationOperations(ids);
     const status = await this.repository.v3Status();
     const changed = new Set<string>(ids);
     const bySession = indexSessionUtterances(rows);
+    const counts = this.repository.sessionUtteranceCounts === undefined ? null :
+      await this.repository.sessionUtteranceCounts();
     const sessions = snapshot.sessions.map((session: PhoneV3SessionCard): PhoneV3SessionCard => {
       const fresh = bySession.get(session.sessionId) ?? [];
+      if (session.isDatabasePaged() && counts !== null) {
+        const total = counts.get(session.sessionId) ?? 0;
+        if (fresh.length > 0 || total !== session.utteranceCount ||
+          ids.some((id: string): boolean => session.hasUtterance(id))) {
+          session.setPagedUtterances(total);
+        }
+        return session;
+      }
       if (fresh.length === 0 && !ids.some((id: string): boolean => session.hasUtterance(id))) { return session; }
       const merged = session.utterances.filter((row): boolean => !changed.has(row.utteranceId)).concat(fresh);
       merged.sort((a,b): number => a.startMs-b.startMs || a.utteranceId.localeCompare(b.utteranceId));
@@ -309,32 +256,7 @@ export class PhoneV3UseCases {
 
   async queueUtteranceCorrection(utterance: PhoneV3Utterance,
     textValue: string, speakerTrackId: string | null, identity: string): Promise<void> {
-    const text = textValue.trim();
-    if (text.length === 0) {
-      throw new Error('utterance 校正文本不能为空');
-    }
-    if (['self', 'not_self', 'unknown'].indexOf(identity) < 0) {
-      throw new Error('utterance 本人身份无效');
-    }
-    if (text === utterance.text && speakerTrackId === utterance.speakerTrackId &&
-      identity === utterance.identity) {
-      throw new Error('utterance 校正没有产生变化');
-    }
-    const payload: UtteranceCorrectionPayload = {
-      utterance_id: utterance.utteranceId,
-      text: text,
-      speaker_track_id: speakerTrackId,
-      identity: identity
-    };
-    const operation: DeviceV3ClientOperation = {
-      operation_id: newOperationId(),
-      kind: 'utterance.correct',
-      base_revision: utterance.revision,
-      payload: payload
-    };
-    await this.repository.beginTransaction();
-    try { await this.repository.enqueue(operation); await this.repository.commit(); }
-    catch (error) { await this.repository.rollback(); throw error as Error; }
+    return this.annotationCommands.queueUtteranceCorrection(utterance, textValue, speakerTrackId, identity);
   }
 
   async localPeople(): Promise<Array<DeviceV3PersonChoice>> {
@@ -343,94 +265,22 @@ export class PhoneV3UseCases {
 
   async queueSpeakerAnnotation(utterances: Array<PhoneV3Utterance>, personId: string,
     name: string): Promise<void> {
-    await this.queueAnnotation(utterances, personId, name, true, '');
+    return this.annotationCommands.queueSpeakerAnnotation(utterances, personId, name);
   }
 
   async queueSoundClassification(utterances: Array<PhoneV3Utterance>, soundKind: string): Promise<void> {
-    await this.queueAnnotation(utterances, '', '', false, soundKind);
+    return this.annotationCommands.queueSoundClassification(utterances, soundKind);
   }
 
-  // One transaction for both dimensions. Helpers below never start nested transactions.
   async queueAnnotation(utterances: Array<PhoneV3Utterance>, personId: string, name: string,
     personChanged: boolean, soundKind: string): Promise<Array<PhonePendingOperation>> {
-    if (utterances.length === 0 || utterances.length > 2000 ||
-      (!personChanged && soundKind.length === 0) ||
-      (soundKind.length > 0 && PHONE_V3_SOUND_KINDS.indexOf(soundKind) < 0)) {
-      throw new Error('请选择 1 至 2000 个片段，并选择人物或声音类型');
-    }
-    const ids = new Set<string>(utterances.map((row: PhoneV3Utterance): string => row.utteranceId));
-    if (ids.size !== utterances.length || utterances.some((row: PhoneV3Utterance): boolean => row.status !== 'active')) {
-      throw new Error('选择包含重复或失效片段，请重新核对');
-    }
-    const selections = utterances.map((value: PhoneV3Utterance): PhoneV3AnnotationSentence => {
-      return { utterance_id: value.utteranceId, revision: value.revision, text: value.text,
-        speaker_label: value.speakerLabel ?? '未知说话人', sound_kind: value.soundKind,
-        session_id: value.sessionId, start_ms: value.startMs, end_ms: value.endMs };
-    });
-    const committed: Array<PhonePendingOperation> = [];
-    await this.repository.beginTransaction();
-    try {
-      const projections = await this.repository.projectionRows('utterance', Array.from(ids));
-      const current = new Map<string, PhoneV3ProjectionRow>();
-      for (let projection of projections) { if (ids.has(projection.resourceId)) { current.set(projection.resourceId, projection); } }
-      for (let reviewed of utterances) {
-        const projection = current.get(reviewed.utteranceId);
-        if (projection === undefined || projection.revision !== reviewed.revision ||
-          (JSON.parse(projection.payloadJson) as AnnotationTargetPayload).status !== 'active') {
-          throw new Error('片段已变化或不存在，请重新打开核对后保存');
-        }
-      }
-      if (personChanged) {
-        const people = personId.length > 0 ? await this.repository.cachedPeople(personId) : [];
-        const person = people.find((value: DeviceV3PersonChoice): boolean => value.person_id === personId);
-        if (personId.length > 0 && person === undefined) { throw new Error('请重新选择人物'); }
-        const label = person === undefined ? name.trim() : person.display_name;
-        if (label.length === 0 || label.length > 100) { throw new Error('人物姓名应为 1 至 100 字'); }
-        const choice: DeviceV3PersonChoice = person ?? { person_id: newOperationId(), display_name: label, local: true };
-        const payload: PhoneV3LocalAnnotation = { selections: selections, person_name: label };
-        if (choice.local) { payload.new_person_id = choice.person_id; payload.display_name = label; }
-        else { payload.person_id = choice.person_id; }
-        await this.repository.cachePeople([choice]);
-        committed.push(...await this.enqueueAnnotationItems('speaker.assign', payload));
-      }
-      if (soundKind.length > 0) {
-        committed.push(...await this.enqueueAnnotationItems('segment.classify', { selections: selections,
-          person_name: phoneV3SoundKindLabel(soundKind), sound_kind: soundKind }));
-      }
-      await this.repository.commit();
-      annotationTiming('T0-local-commit', committed.map((op): string => op.operation_id));
-      return committed;
-    } catch (error) {
-      await this.repository.rollback();
-      throw error instanceof Error ? error : new Error(JSON.stringify(error));
-    }
-  }
-
-  private async enqueueAnnotationItems(kind: string, payload: PhoneV3LocalAnnotation): Promise<Array<PhonePendingOperation>> {
-    const predecessors = await this.repository.annotationOperations(payload.selections.map((row): string => row.utterance_id));
-    const committed: Array<PhonePendingOperation> = [];
-    for (let selection of payload.selections) {
-      const dependencies: Array<string> = [];
-      for (let operation of predecessors) {
-        if (operation.kind !== kind) { continue; }
-        const previous = operation.payload as PhoneV3LocalAnnotation;
-        if (previous.selections.some((row: PhoneV3AnnotationSentence): boolean =>
-          row.utterance_id === selection.utterance_id)) { dependencies.push(operation.operation_id); }
-      }
-      const item: PhoneV3LocalAnnotation = { selections: [selection], person_name: payload.person_name,
-        person_id: payload.person_id, new_person_id: payload.new_person_id,
-        display_name: payload.display_name, sound_kind: payload.sound_kind, depends_on: dependencies };
-      const operation: PhonePendingOperation = { operation_id: newOperationId(), kind: kind,
-        base_revision: null, payload: item, attempt_count: 0 };
-      await this.repository.enqueue(operation);
-      committed.push(operation);
-    }
-    return committed;
+    return this.annotationCommands.queueAnnotation(utterances, personId, name, personChanged, soundKind);
   }
 
   async annotationConflictRows(payload: PhoneV3LocalAnnotation): Promise<Array<PhoneV3Utterance>> {
+    const ids = payload.selections.map((selection: PhoneV3AnnotationSentence): string => selection.utterance_id);
     return annotationRows(mergePhoneV3Sessions([], [], await this.repository.projectionRows('recording_session'),
-      [], await this.repository.projectionRows('utterance')), payload);
+      [], await this.repository.projectionRows('utterance', ids)), payload);
   }
 
   async resolveAnnotationConflict(operationId: string, keepLocal: boolean,
@@ -521,7 +371,7 @@ export class PhoneV3UseCases {
         const commitStarted = Date.now();
         await applySyncResponse(this.repository, response);
         if (response.changes.some((change): boolean => change.resource_type === 'utterance')) {
-          this.cachedUtteranceRows = null;
+          this.query.invalidateUtteranceCache();
         }
         // The transaction is durable. UI/network failures must never mark it failed.
         dispatched = [];
@@ -696,7 +546,7 @@ export class PhoneV3UseCases {
 
   async rebuild(): Promise<PhoneV3SyncResult> {
     this.reviewVersion = undefined; this.peopleVersion = undefined;
-    this.cachedUtteranceRows = null;
+    this.query.invalidateUtteranceCache();
     await this.repository.rebuildFromComputer();
     return this.synchronize();
   }
@@ -732,7 +582,7 @@ export class PhoneV3UseCases {
     const response = await session.annotations(request);
     if (response.people !== undefined) { await this.cacheRemotePeople(response.people); }
     if (response.utterances !== undefined) {
-      this.cachedUtteranceRows = null;
+      this.query.invalidateUtteranceCache();
       await this.repository.beginTransaction();
       try {
         for (let index = 0; index < response.utterances.length; index += 1) {
@@ -880,264 +730,4 @@ export class PhoneV3UseCases {
       console.error(this.reminderSchedulingError);
     }
   }
-}
-
-export function mergePhoneV3Sessions(localFacts: Array<PhoneV3LocalAudioFact>,
-  links: Array<PhoneV3LocalAudioLink>, recordingRows: Array<PhoneV3ProjectionRow>,
-  processingRows: Array<PhoneV3ProjectionRow>,
-  utteranceRows: Array<PhoneV3ProjectionRow>,
-  completions: Array<PhoneSessionCompletionRecord> = []): Array<PhoneV3SessionCard> {
-  const cards: Array<PhoneV3SessionCard> = [];
-  const bySession = indexSessionUtterances(utteranceRows);
-  for (let rowIndex = 0; rowIndex < recordingRows.length; rowIndex += 1) {
-    const row = recordingRows[rowIndex];
-    const payload = parseRecording(row);
-    const sessionId = text(payload.session_id, row.resourceId);
-    const payloadSessionKey = text(payload.session_key, '');
-    const boundSessionKey = linkedSessionKey(links, sessionId);
-    // The persisted phone/computer link is the authoritative identity mapping.
-    // A computer projection can temporarily retain an older session_key after a
-    // rebound; preferring that stale value creates a second, transcript-less card.
-    const projectedSessionKey = boundSessionKey.length > 0 ? boundSessionKey : payloadSessionKey;
-    const local = findLocal(localFacts, links, sessionId, projectedSessionKey);
-    const sessionKey = local === undefined ? projectedSessionKey : local.sessionKey;
-    const processing = latestProcessing(processingRows, sessionId);
-    const capturedStart = text(payload.captured_start, '');
-    const startedAt = capturedStart.length > 0 ? Date.parse(capturedStart) :
-      local === undefined ? row.updatedAt : local.startedAt;
-    if (hasSessionIdentity(cards, sessionId, sessionKey,
-      local === undefined ? '' : local.localGroupKey)) {
-      continue;
-    }
-    cards.push(new PhoneV3SessionCard(
-      sessionId, sessionId, sessionKey, local === undefined ? '' : local.localGroupKey, capturedStart,
-      Number.isFinite(startedAt) ? startedAt : row.updatedAt,
-      text(payload.device_name, 'Watch'), text(payload.state, 'unknown'),
-      text(payload.status_code, 'pending'), numberValue(payload.progress, 0),
-      numberValue(payload.revision, row.revision), row.updatedAt,
-      local === undefined ? [] : local.paths.slice(), local === undefined ? 0 : local.sizeBytes,
-      local === undefined ? 0 : local.durationMs, uploadStatus(links, completions, sessionId,
-        sessionKey, local === undefined ? [] : local.paths),
-      processing === undefined ? 'not_started' : text(processing.payload.status, 'pending'),
-      processing === undefined ? '' : text(processing.payload.current_stage, ''),
-      processing === undefined ? 0 : numberValue(processing.payload.progress, 0),
-      bySession.get(sessionId) ?? []));
-  }
-  for (let localIndex = 0; localIndex < localFacts.length; localIndex += 1) {
-    const local = localFacts[localIndex];
-    const linkedId = linkedSessionId(links, local.sessionKey);
-    if (hasSessionIdentity(cards, linkedId, local.sessionKey, local.localGroupKey)) {
-      continue;
-    }
-    const localUploadStatus = uploadStatus(links, completions, linkedId,
-      local.sessionKey, local.paths);
-    cards.push(new PhoneV3SessionCard(
-      linkedId.length > 0 ? linkedId : local.sessionKey,
-      linkedId, local.sessionKey, local.localGroupKey, '', local.startedAt, 'Watch', 'local',
-      localUploadStatus === 'uploaded' ? 'uploaded' : 'phone_only', 0, 0, local.receivedAt,
-      local.paths.slice(), local.sizeBytes, local.durationMs,
-      localUploadStatus,
-      'not_started', '', 0, []));
-  }
-  cards.sort((left: PhoneV3SessionCard, right: PhoneV3SessionCard): number =>
-    right.startedAt - left.startedAt || right.updatedAt - left.updatedAt);
-  return cards;
-}
-
-class ProcessingMatch {
-  payload: ProcessingPayload;
-  updatedAt: number;
-
-  constructor(payload: ProcessingPayload, updatedAt: number) {
-    this.payload = payload;
-    this.updatedAt = updatedAt;
-  }
-}
-
-function latestProcessing(rows: Array<PhoneV3ProjectionRow>, sessionId: string): ProcessingMatch | undefined {
-  let match: ProcessingMatch | undefined = undefined;
-  for (let index = 0; index < rows.length; index += 1) {
-    let payload: ProcessingPayload;
-    try {
-      payload = parseProjectionObject(rows[index]) as ProcessingPayload;
-    } catch (error) {
-      throw projectionRowError(rows[index], 'processing_run', error as Object);
-    }
-    if (payload.session_id === sessionId && (match === undefined || rows[index].updatedAt > match.updatedAt)) {
-      match = new ProcessingMatch(payload, rows[index].updatedAt);
-    }
-  }
-  return match;
-}
-
-function indexSessionUtterances(rows: Array<PhoneV3ProjectionRow>): Map<string, Array<PhoneV3Utterance>> {
-  const bySession = new Map<string, Array<PhoneV3Utterance>>();
-  for (let index = 0; index < rows.length; index += 1) {
-    try {
-      const payload = validateV3UtteranceDto(parseProjectionObject(rows[index]));
-      const sessionId = payload.session_id;
-      const values = bySession.get(sessionId) ?? [];
-      bySession.set(sessionId, values);
-      values.push(new PhoneV3Utterance(
-        payload.utterance_id, sessionId, payload.speaker_track_id, payload.speaker_label,
-        payload.original_speaker_track_id, payload.original_speaker_label,
-        payload.identity, payload.original_identity, JSON.stringify(payload.identity_evidence),
-        payload.start_ms, payload.end_ms, payload.start_at, payload.end_at,
-        payload.text, payload.original_text, payload.revision, payload.status,
-        JSON.stringify(payload.evidence), payload.evidence as PhoneV3Evidence));
-    } catch (error) {
-      throw projectionRowError(rows[index], 'utterance', error as Object);
-    }
-  }
-  for (let values of bySession.values()) {
-    values.sort((left: PhoneV3Utterance, right: PhoneV3Utterance): number =>
-      left.startMs - right.startMs || left.utteranceId.localeCompare(right.utteranceId));
-  }
-  return bySession;
-}
-
-function phoneV3Reminders(rows: Array<PhoneV3ProjectionRow>): Array<PhoneV3Reminder> {
-  const values: Array<PhoneV3Reminder> = [];
-  for (let index = 0; index < rows.length; index += 1) {
-    try {
-      const payload = validateV3ReminderDto(parseProjectionObject(rows[index]));
-      values.push(new PhoneV3Reminder(
-        payload.event_id, payload.session_id, payload.event_revision,
-        payload.source_candidate_id, payload.title, payload.actor_person_id,
-        payload.commitment_direction, payload.related_person_ids.slice(),
-        payload.scheduled_at, payload.location, payload.status, payload.updated_at));
-    } catch (error) {
-      throw projectionRowError(rows[index], 'reminder', error as Object);
-    }
-  }
-  values.sort((left: PhoneV3Reminder, right: PhoneV3Reminder): number =>
-    Date.parse(left.scheduledAt) - Date.parse(right.scheduledAt) ||
-      left.eventId.localeCompare(right.eventId));
-  return values;
-}
-
-const ULID_ALPHABET: string = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-let lastOperationTime: number = 0;
-let operationSequence: number = 0;
-
-function newOperationId(): string {
-  const current = Date.now();
-  operationSequence = current === lastOperationTime ? (operationSequence + 1) % 1024 : 0;
-  lastOperationTime = current;
-  let time = current;
-  let prefix = '';
-  for (let index = 0; index < 10; index += 1) {
-    prefix = ULID_ALPHABET.charAt(time % 32) + prefix;
-    time = Math.floor(time / 32);
-  }
-  let suffix = '';
-  for (let index = 0; index < 14; index += 1) {
-    suffix += ULID_ALPHABET.charAt(Math.floor(Math.random() * 32));
-  }
-  suffix += ULID_ALPHABET.charAt(Math.floor(operationSequence / 32));
-  suffix += ULID_ALPHABET.charAt(operationSequence % 32);
-  return prefix + suffix;
-}
-
-function parseRecording(row: PhoneV3ProjectionRow): RecordingPayload {
-  try {
-    return parseProjectionObject(row) as RecordingPayload;
-  } catch (error) {
-    throw projectionRowError(row, 'recording_session', error as Object);
-  }
-}
-
-function parseProjectionObject(row: PhoneV3ProjectionRow): Object {
-  const value = JSON.parse(row.payloadJson) as Object;
-  if (value === null || Array.isArray(value) || typeof value !== 'object') {
-    throw new Error('payload 必须是 JSON 对象');
-  }
-  return value;
-}
-
-function projectionRowError(row: PhoneV3ProjectionRow, resourceType: string, error: Object): Error {
-  const detail = error instanceof Error ? error.message : JSON.stringify(error);
-  return new Error(`V3 ${resourceType} 投影 ${row.resourceId} 无法解析：${detail}`);
-}
-
-function findLocal(facts: Array<PhoneV3LocalAudioFact>, links: Array<PhoneV3LocalAudioLink>,
-  sessionId: string, sessionKey: string): PhoneV3LocalAudioFact | undefined {
-  for (let index = 0; index < facts.length; index += 1) {
-    if (sessionKey.length > 0 && facts[index].sessionKey === sessionKey) {
-      return facts[index];
-    }
-  }
-  for (let linkIndex = 0; linkIndex < links.length; linkIndex += 1) {
-    if (sessionId.length === 0 || links[linkIndex].sessionId !== sessionId) {
-      continue;
-    }
-    for (let factIndex = 0; factIndex < facts.length; factIndex += 1) {
-      if (facts[factIndex].sessionKey === links[linkIndex].sessionKey) {
-        return facts[factIndex];
-      }
-    }
-  }
-  return undefined;
-}
-
-function hasSessionIdentity(cards: Array<PhoneV3SessionCard>, sessionId: string,
-  sessionKey: string, localGroupKey: string): boolean {
-  for (let index = 0; index < cards.length; index += 1) {
-    if ((sessionId.length > 0 && cards[index].sessionId === sessionId) ||
-      (sessionKey.length > 0 && cards[index].sessionKey === sessionKey) ||
-      (localGroupKey.length > 0 && cards[index].localGroupKey === localGroupKey)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function linkedSessionId(links: Array<PhoneV3LocalAudioLink>, sessionKey: string): string {
-  for (let index = 0; index < links.length; index += 1) {
-    if (links[index].sessionKey === sessionKey && links[index].sessionId.length > 0) {
-      return links[index].sessionId;
-    }
-  }
-  return '';
-}
-
-function linkedSessionKey(links: Array<PhoneV3LocalAudioLink>, sessionId: string): string {
-  for (let index = 0; index < links.length; index += 1) {
-    if (links[index].sessionId === sessionId) {
-      return links[index].sessionKey;
-    }
-  }
-  return '';
-}
-
-function uploadStatus(links: Array<PhoneV3LocalAudioLink>,
-  completions: Array<PhoneSessionCompletionRecord>, sessionId: string, sessionKey: string,
-  localPaths: Array<string>): string {
-  let value = 'local';
-  for (let index = 0; index < links.length; index += 1) {
-    if ((sessionId.length > 0 && links[index].sessionId === sessionId) ||
-      (sessionKey.length > 0 && links[index].sessionKey === sessionKey)) {
-      value = links[index].uploadStatus === 'uploaded' ? 'file_uploaded' : links[index].uploadStatus;
-    }
-  }
-  const receipt = completions.find((record: PhoneSessionCompletionRecord): boolean =>
-    record.sessionKey === sessionKey && record.manifestSha256.length === 64);
-  if (localPaths.length === 0) {
-    return sessionId.length > 0 ? 'uploaded' : value;
-  }
-  const allFilesAcknowledged = localPaths.every((path: string): boolean =>
-    links.some((link: PhoneV3LocalAudioLink): boolean => link.sessionKey === sessionKey &&
-      link.localPath === path && link.uploadStatus === 'uploaded' && /^[0-9a-fA-F]{64}$/.test(link.sha256)));
-  if (receipt !== undefined && receipt.completedSegments === localPaths.length && allFilesAcknowledged) {
-    return 'uploaded';
-  }
-  return value;
-}
-
-function text(value: string | undefined, fallback: string): string {
-  return typeof value === 'string' && value.length > 0 ? value : fallback;
-}
-
-function numberValue(value: number | undefined, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }

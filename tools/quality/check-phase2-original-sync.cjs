@@ -1,14 +1,8 @@
 // Original audit assertions; repository fixture includes new status port reads.
 // Executes the unmodified ArkTS application/domain classes via TypeScript transpilation.
 // Native storage/network are test doubles. Not a device/ArkUI test.
-const fs=require('fs'),path=require('path'),assert=require('node:assert/strict');
-const ts=require('typescript');
-require.extensions['.ets']=(module,filename)=>{
- const source=fs.readFileSync(filename,'utf8');
- const out=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
- module._compile(out,filename);
-};
-const root=path.join(process.env.AUDIT_HARMONY_ROOT || path.join(__dirname,'annotation-review/source/Harmony'),'phone/src/main/ets/v3');
+const path=require('node:path'),assert=require('node:assert/strict');
+const {root}=require('./phone-sqlite-harness.cjs');
 const {PhoneV3UseCases}=require(path.join(root,'application/PhoneV3UseCases.ets'));
 const contract=require(path.join(root,'contracts/V3ContractModels.ets'));
 (async()=>{

@@ -46,7 +46,7 @@ const task={key:'k',fingerprint:'evidence',item:{reviewId:'r'},candidate:{protot
   const b=setup();b.vm.setReviewAudioWindow([task]);await flush();await advance(60001);assert.equal(b.calls(),2);
   b.online();await advance(120001);assert.equal(b.calls(),3);b.vm.stop();
   const c=setup();c.vm.setReviewAudioWindow([task]);await flush();c.vm.setReviewAudioWindow([],false);c.online();await advance(600000);assert.equal(c.calls(),1);assert.equal(timers.size,0);c.vm.stop();
-  const d=setup();let release;d.vm.useCases.loadReviewAudio=()=>new Promise(r=>release=r);d.vm.setReviewAudioWindow([task]);await flush();d.vm.setReviewAudioWindow([task]);assert.equal(d.vm.prefetchDemands.size,1);d.vm.stop();release({});await flush();assert.equal(timers.size,0);assert.equal(d.vm.reviewAudioState('k'),'点击准备试听');
+  const d=setup();let release;d.vm.useCases.loadReviewAudio=()=>new Promise(r=>release=r);d.vm.setReviewAudioWindow([task]);await flush();d.vm.setReviewAudioWindow([task]);assert.equal(d.vm.prefetchDemandCount(),1);d.vm.stop();release({});await flush();assert.equal(timers.size,0);assert.equal(d.vm.reviewAudioState('k'),'点击准备试听');
   const e=setup();let auth=0;e.vm.useCases.loadReviewAudio=async()=>{auth++;throw new ComputerConnectionError('authorization','auth','synthetic denied')};e.vm.setReviewAudioWindow([task]);await flush();await advance(900000);assert.equal(auth,1);assert.equal(timers.size,0);e.vm.stop();
   const f=setup();f.vm.setReviewAudioWindow([task]);await flush();f.vm.setForeground(false);f.online();await advance(900000);assert.equal(f.calls(),1);assert.equal(timers.size,0);f.vm.stop();
   console.log('PASS early recovery then no events; late recovery; ready/inflight coalescing; exit/background/stop cleanup; authorization blocks retries');

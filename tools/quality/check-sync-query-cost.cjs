@@ -22,9 +22,26 @@ const change = r => ({ sequence:1,resource_type:'utterance',resource_id:r.uttera
   JSON.parse = (...args) => { if (typeof args[0]==='string' && args[0].includes('"original_identity"')) parses++; return parse(...args); };
   let snapshot;
   try { snapshot=await use.loadCached([]); } finally { JSON.parse=parse; }
-  assert.equal(parses,2100,'each utterance is parsed once across 21 sessions');
-  assert.equal(snapshot.sessions.reduce((n,s)=>n+s.utterances.length,0),2100);
-  console.log('PASS 2100 utterances / 21 sessions: exactly 2100 JSON parses');
+  assert.equal(parses,0,'home must not parse transcript history');
+  assert.equal(snapshot.sessions.reduce((n,s)=>n+s.utteranceCount,0),2100);
+  assert.equal(snapshot.sessions.reduce((n,s)=>n+s.utterances.length,0),0);
+  JSON.parse=(...args)=>{if(typeof args[0]==='string'&&args[0].includes('"original_identity"'))parses++;return parse(...args);};
+  try { await use.loadSessionUtterancePage(snapshot.sessions[0],50); } finally { JSON.parse=parse; }
+  assert.equal(parses,50,'session opening reads one SQL page');
+  assert.equal(snapshot.sessions[0].utterances.length,50);
+  const one = await use.loadUtteranceById(snapshot.sessions[0].utterances[0].utteranceId);
+  assert.equal(one.utteranceId,snapshot.sessions[0].utterances[0].utteranceId);
+  assert.equal((await use.loadUtteranceById(id(9999999))),undefined);
+  const changedId=snapshot.sessions[0].utterances[0].utteranceId;
+  const revised={...row(Number(changedId)),revision:2,text:'synthetic edited'};
+  await repo.applyChange(change(revised));
+  const refreshedSnapshot=await use.refreshUtterances(snapshot,[changedId]);
+  assert.equal(refreshedSnapshot.sessions[0].utteranceCount,100);
+  assert.equal(refreshedSnapshot.sessions[0].utterances.length,0,'changed page must clear its cursor');
+  await use.loadSessionUtterancePage(refreshedSnapshot.sessions[0],50);
+  assert.equal(refreshedSnapshot.sessions[0].utterances.length,50);
+  assert.equal(refreshedSnapshot.sessions[0].utterances[0].text,'synthetic edited');
+  console.log('PASS 2100 utterances / 21 sessions: zero home payloads, 50 session rows');
 
   for (let n=1;n<=1200;n++) await repo.enqueue({operation_id:id(10000+n),kind:'segment.classify',
     base_revision:null,payload:{selections:[{utterance_id:id(n),revision:1}],sound_kind:'non_speech',

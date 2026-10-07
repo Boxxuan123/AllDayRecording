@@ -13,6 +13,10 @@ export struct PhoneComputerTransferPage {
     this.transferViewModel.start(context);
   }
 
+  aboutToDisappear(): void {
+    this.transferViewModel.stop();
+  }
+
   private async chooseCa(): Promise<void> {
     try {
       const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
@@ -263,6 +267,11 @@ export struct PhoneComputerTransferPage {
 
           Text(`本地游标 ${this.transferViewModel.syncCursor}，` +
             `待提交 ${this.transferViewModel.pendingOperations} 项`)
+            .width('100%')
+            .fontSize(14)
+            .fontColor($r('app.color.text_secondary'))
+
+          Text(this.transferViewModel.sharedSyncStatus)
             .width('100%')
             .fontSize(14)
             .fontColor($r('app.color.text_secondary'))

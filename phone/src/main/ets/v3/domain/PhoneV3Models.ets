@@ -179,6 +179,9 @@ export class PhoneV3SessionCard {
   private previewUtterances: Array<PhoneV3Utterance> = [];
   private lazyUtteranceIds: Set<string> = new Set<string>();
   utteranceCount: number = 0;
+  private databasePaged: boolean = false;
+
+  isDatabasePaged(): boolean { return this.databasePaged; }
 
   get utterances(): Array<PhoneV3Utterance> {
     if (this.cachedUtterances === null && this.utteranceLoader !== null) {
@@ -197,6 +200,7 @@ export class PhoneV3SessionCard {
   }
 
   set utterances(rows: Array<PhoneV3Utterance>) {
+    this.databasePaged = false;
     this.cachedUtterances = rows;
     this.utteranceLoader = null;
     this.afterUtterancesLoaded = null;
@@ -209,12 +213,30 @@ export class PhoneV3SessionCard {
   setLazyUtterances(ids: Array<string>, loader: () => Array<PhoneV3Utterance>,
     afterLoad: () => void, pageLoader?: (offset: number, limit: number) => Array<PhoneV3Utterance>): void {
     this.cachedUtterances = null;
+    this.databasePaged = false;
     this.utteranceCount = ids.length;
     this.lazyUtteranceIds = new Set<string>(ids);
     this.utteranceLoader = loader;
     this.afterUtterancesLoaded = afterLoad;
     this.utterancePageLoader = pageLoader ?? null;
     this.previewUtterances = [];
+  }
+
+  setPagedUtterances(total: number): void {
+    this.databasePaged = true;
+    this.cachedUtterances = [];
+    this.utteranceLoader = null;
+    this.afterUtterancesLoaded = null;
+    this.utterancePageLoader = null;
+    this.lazyUtteranceIds.clear();
+    this.previewUtterances = [];
+    this.utteranceCount = total;
+  }
+
+  appendUtterancePage(rows: Array<PhoneV3Utterance>): void {
+    const existing = this.cachedUtterances ?? [];
+    const ids = new Set<string>(existing.map((row: PhoneV3Utterance): string => row.utteranceId));
+    this.cachedUtterances = existing.concat(rows.filter((row: PhoneV3Utterance): boolean => !ids.has(row.utteranceId)));
   }
 
   utterancesLoaded(): boolean { return this.cachedUtterances !== null; }

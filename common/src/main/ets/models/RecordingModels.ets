@@ -20,6 +20,8 @@ export interface ReceivedRecordingFile extends RecordingFile {
   sourcePath: string;
   receivedAt: number;
   syncKey?: string;
+  sha256?: string;
+  verified?: boolean;
 }
 
 export interface WatchSyncProgress {

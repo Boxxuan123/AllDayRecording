@@ -27,7 +27,11 @@ const response = (changes = [], receipts = []) => ({ projection_version: contrac
   let connects = 0;
   const remote = { isPaired: async () => false, connect: async () => { connects++; throw Error('offline'); } };
   let use = new UseCases(repo, { list: async () => [] }, remote);
-  const read = async () => (await use.loadCached([])).sessions[0].utterances;
+  const read = async () => {
+    const card = (await use.loadCached([])).sessions[0];
+    await use.loadSessionUtterancePage(card, card.utteranceCount);
+    return card.utterances;
+  };
   await apply(repo, response([{ sequence: ++sequence, resource_type: 'recording_session', resource_id: id(9000),
     revision: 1, operation: 'upsert', resource: { session_id: id(9000), session_key: 'synthetic', captured_start: time } },
     change(dto(1)), change(dto(2))]));
@@ -97,6 +101,7 @@ const response = (changes = [], receipts = []) => ({ projection_version: contrac
   assert.equal(state((await read()).find(row => row.utteranceId === id(3))).review, true);
   console.log('PASS source range change invalidates pending decision without losing its selection');
   const snapshot = await use.loadCached([]);
+  await use.loadSessionUtterancePage(snapshot.sessions[0], snapshot.sessions[0].utteranceCount);
   const editor = new Editor();
   const started = performance.now();
   editor.open(snapshot.sessions[0].utterances, snapshot.sessions);

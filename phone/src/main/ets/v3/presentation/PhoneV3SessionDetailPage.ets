@@ -70,20 +70,43 @@ export struct PhoneV3SessionDetailPage {
   @State private correctionIdentity: string = 'unknown';
   @State private selectedContentTab: number = 0;
   @State private loadedUtteranceCount: number = 50;
+  private loadingUtterances: boolean = false;
+  private requestedRevision: number = -1;
   private correctionTarget: PhoneV3Utterance | undefined = undefined;
   private timelineSource: PhoneV3TimelineSource = new PhoneV3TimelineSource();
 
-  aboutToAppear(): void { this.refreshTimeline(); }
+  aboutToAppear(): void {
+    this.refreshTimeline();
+    this.fetchUtterances();
+  }
   private refreshTimeline(): void {
     const session = this.currentSession();
     this.timelineSource.update(session?.utterancePage(this.loadedUtteranceCount) ?? []);
+    if (session !== undefined && session.isDatabasePaged() && session.utteranceCount > 0 &&
+      session.utterances.length === 0 && this.requestedRevision !== this.stateRevision) {
+      this.requestedRevision = this.stateRevision;
+      this.fetchUtterances();
+    }
   }
 
   private loadMoreUtterances(): void {
     const session = this.currentSession();
-    if (session === undefined || this.loadedUtteranceCount >= session.utteranceCount) { return; }
+    if (session === undefined || this.loadingUtterances || this.loadedUtteranceCount >= session.utteranceCount) { return; }
     this.loadedUtteranceCount = Math.min(session.utteranceCount, this.loadedUtteranceCount + 50);
-    this.refreshTimeline();
+    this.fetchUtterances();
+  }
+
+  private fetchUtterances(): void {
+    const session = this.currentSession();
+    if (session === undefined || this.loadingUtterances) { return; }
+    this.loadingUtterances = true;
+    this.viewModel.loadSessionUtterances(session, this.loadedUtteranceCount).then((): void => {
+      this.loadingUtterances = false;
+      this.refreshTimeline();
+    }, (): void => {
+      this.loadingUtterances = false;
+      this.refreshTimeline();
+    });
   }
 
   private currentSession(): PhoneV3SessionCard | undefined {
@@ -538,7 +561,8 @@ export struct PhoneV3SessionDetailPage {
           }
         }
     }
-      .padding({ left: 18, right: 18, top: 8, bottom: 32 })
+    .cachedCount(5)
+    .padding({ left: 18, right: 18, top: 8, bottom: 32 })
     .align(Alignment.TopStart)
     .onReachEnd((): void => {
       if (this.selectedContentTab === 0) { this.loadMoreUtterances(); }

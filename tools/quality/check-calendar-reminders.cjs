@@ -12,7 +12,12 @@ class Calendar {
   async permission(request) { if (request) this.requests++; return this.granted; }
   async account(id) { if (this.failure === 'account') throw Error('temporary'); if (!this.accounts.length) this.accounts.push(6); return this.accounts[0]; }
   async events() { if (this.failure === 'query') throw Error('temporary'); return clone(this.inventory); }
-  async create(account, event) { if (this.failure === 'create') throw Error('temporary'); const id = ++this.adds; this.inventory.push({ ...clone(event), id }); return id; }
+  async create(account, event) {
+    if (this.failure === 'create') throw Error('temporary');
+    const id = ++this.adds; this.inventory.push({ ...clone(event), id });
+    if (this.failure === 'create_response_lost') throw Error('create response lost');
+    return id;
+  }
   async update(account, event) { if (this.failure === 'update') throw Error('temporary'); this.updates++; this.inventory[this.inventory.findIndex(v => v.id === event.id)] = clone(event); }
   async remove(account, id) { if (this.failure === 'delete') throw Error('temporary'); this.deletes++; this.inventory = this.inventory.filter(v => v.id !== id); }
 }
@@ -64,6 +69,36 @@ const task = id => new PhoneV3Reminder(id, 'session', 1, 'candidate', '给老师
   api.inventory.push({ ...clone(api.inventory[0]), id: 999, identifier: 'allday-calendar-task:d', startTime: Date.parse(due), endTime: Date.parse(due) + 900000 });
   const adds = api.adds; await scheduler.reconcile([d]); assert.equal(api.adds, adds);
   assert.equal((await repo.calendarMappings()).find(v => v.taskId === 'd').calendarEventId, 999);
+  // The create side effect is durable even when its response is lost. Cancellation
+  // and completion must look up the stable identifier after a restart as well.
+  for (const [name, finalStatus, restart] of [
+    ['lost_cancel', 'cancelled', false], ['lost_complete', 'completed', false],
+    ['lost_restart_cancel', 'cancelled', true], ['lost_restart_complete', 'completed', true]
+  ]) {
+    const pending = task(name);
+    api.failure = 'create_response_lost';
+    await scheduler.reconcile([pending]);
+    assert.equal(api.inventory.filter(v => v.identifier === `allday-calendar-task:${name}`).length, 1);
+    assert.equal((await repo.calendarMappings()).find(v => v.taskId === name).calendarEventId, -1);
+    api.failure = '';
+    if (restart) {
+      repo = await Repository.open(context);
+      scheduler = new CalendarReminderScheduler(api, repo);
+    }
+    pending.status = finalStatus;
+    await scheduler.reconcile([pending]);
+    await scheduler.reconcile([pending]);
+    assert.equal(api.inventory.filter(v => v.identifier === `allday-calendar-task:${name}`).length, 0);
+    assert.equal((await repo.calendarMappings()).find(v => v.taskId === name).calendarSyncState, 'removed');
+  }
+  const absent = task('never_created');
+  const absentMapping = new (require(path.join(root, 'application/CalendarReminderPorts.ets')).CalendarReminderMapping)();
+  absentMapping.taskId = absent.eventId; absentMapping.calendarAccountId = 6;
+  absentMapping.calendarSyncState = 'creating';
+  await repo.saveCalendarMapping(absentMapping);
+  absent.status = 'cancelled';
+  await scheduler.reconcile([absent]);
+  assert.equal((await repo.calendarMappings()).find(v => v.taskId === absent.eventId).calendarSyncState, 'removed');
   // Existing review/outbox/receipt/projection flow injects the same Calendar port.
   const liveRepo = await Repository.open({ databasePath: path.join(folder, 'flow.db') });
   const liveApi = new Calendar(), liveScheduler = new CalendarReminderScheduler(liveApi, liveRepo);
@@ -84,16 +119,17 @@ const task = id => new PhoneV3Reminder(id, 'session', 1, 'candidate', '给老师
     changes: [{ sequence: 1, resource_type: 'reminder', resource_id: id(1), revision: 1, operation: 'upsert', resource: dto }],
     receipts: [{ operation_id: operation.operation_id, status: 'applied', resource_revision: 1, error: null,
       resource_results: [{ resource_id: id(1), revision: 1 }] }], next_cursor: 'cursor-1', has_more: false, server_time: due });
-  await use.loadCached([]); await use.loadCached([]); assert.equal(liveApi.adds, 1);
+  await use.loadCached([]); assert.equal(liveApi.adds, 0, 'cached query is side-effect free');
+  await use.reconcileCalendar(); await use.loadCached([]); assert.equal(liveApi.adds, 1);
   const nativeId = liveApi.inventory[0].id;
   const newDue = new Date(Date.parse(due) + 1800000).toISOString();
   await use.queueReminder('reminder.task', { event_id: id(1), action: 'reschedule', scheduled_at: newDue }, 1);
-  await use.loadCached([]); assert.equal(liveApi.inventory[0].id, nativeId);
+  await use.loadCached([]); await use.reconcileCalendar(); assert.equal(liveApi.inventory[0].id, nativeId);
   assert.equal(liveApi.inventory[0].startTime, Date.parse(newDue));
   // Pending task actions survive offline restart and immediately revoke the calendar event.
   const restarted = new UseCases(await Repository.open({ databasePath: path.join(folder, 'flow.db') }), {}, remote,
     new CalendarReminderScheduler(liveApi, liveRepo));
-  await restarted.loadCached([]); assert.equal(liveApi.adds, 1);
+  await restarted.loadCached([]); await restarted.reconcileCalendar(); assert.equal(liveApi.adds, 1);
   console.log('Calendar review integration PASS: durable confirm, receipt, projection, duplicate reload, offline reschedule and restart');
   console.log('Calendar reminders PASS: permission, account, confirm, duplicate, reschedule, cancel, complete, restart, rebuild, external edits/deletion, retry and create recovery');
 })().finally(() => { stores.forEach(store => store.db.close()); fs.rmSync(folder, { recursive: true, force: true }); });

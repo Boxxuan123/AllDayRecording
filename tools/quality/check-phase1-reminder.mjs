@@ -60,6 +60,7 @@ const useCases = new PhoneV3UseCases(storage, {}, { isPaired: async () => true }
 for (const response of input.responses) {
   await applySyncResponse(storage, response);
   const snapshot = await useCases.loadCached([]);
+  await useCases.reconcileCalendar();
   assert(snapshot);
   assert.equal(current.length, 1);
   assert.equal(current[0].reminderReq.groupId, 'allday-v33:' + input.event_id);
@@ -72,5 +73,6 @@ const key = 'reminder:' + input.event_id;
 const row = rows.get(key); const payload = JSON.parse(row.payloadJson);
 payload.status = 'stale'; row.payloadJson = JSON.stringify(payload);
 await useCases.loadCached([]);
+await useCases.reconcileCalendar();
 assert.deepEqual(cancelled, [1]);
 console.log('PASS: server sync -> actual projection/decoder -> actual scheduler; unchanged reminder retained; stale cancelled. OS notifications mocked.');

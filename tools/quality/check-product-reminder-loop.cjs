@@ -24,6 +24,7 @@ const response = (changes = [], receipts = []) => ({ projection_version: contrac
   let repository = await Repository.open({ databasePath });
   const remote = { isPaired: async () => true, connect: async () => { throw Error('offline'); } };
   let use = new UseCases(repository, {}, remote, new Scheduler({}));
+  const view = async () => { const snapshot = await use.loadCached([]); await use.reconcileCalendar(); return snapshot; };
   const review = { review_id: 'reminder:' + id(3), kind: 'reminder', priority: 'high', source_id: id(3),
     source_revision: null, session_id: id(2), person_id: 'self', title: '测试', summary: '测试',
     reason: 'reminder_requires_confirmation', evidence_count: 1, created_at: due, updated_at: due,
@@ -33,7 +34,7 @@ const response = (changes = [], receipts = []) => ({ projection_version: contrac
   const operationId = (await repository.reminderOperations())[0].operation_id;
   await assert.rejects(use.queueReminder('reminder.review', { candidate_id: id(3), action: 'confirm' }), /已有待同步/);
   await assert.rejects(use.synchronize(), /offline/);
-  await use.loadCached([]);
+  await view();
   assert.equal(notifications.current.length, 0, 'unconfirmed candidate must not schedule');
   stores.at(-1).db.close();
   repository = await Repository.open({ databasePath });
@@ -47,7 +48,7 @@ const response = (changes = [], receipts = []) => ({ projection_version: contrac
   assert.equal((await repository.reminderOperations()).length, 1, 'retain until projection even on a later page');
   await apply(repository, response([change(dto())]));
   assert.equal((await repository.reminderOperations()).length, 0);
-  await use.loadCached([]);
+  await view();
   assert.equal(notifications.current.length, 1);
   const calendar = notifications.current[0].reminderReq;
   const wall = calendar.dateTime;
@@ -55,53 +56,53 @@ const response = (changes = [], receipts = []) => ({ projection_version: contrac
     Math.floor(Date.parse(due) / 1000) * 1000, 'native Calendar must receive local fields for the persisted absolute instant');
   assert.equal(calendar.fixedTimeZone, undefined, 'avoid UTC fields validated as an expired local time by native Calendar');
   const published = notifications.published.length;
-  await use.loadCached([]); await use.loadCached([]);
+  await view(); await view();
   assert.equal(notifications.published.length, published, 'duplicate sync/reload must not publish twice');
   stores.at(-1).db.close();
   repository = await Repository.open({ databasePath });
   use = new UseCases(repository, {}, remote, new Scheduler({}));
-  assert.equal((await use.loadCached([])).reminders.length, 1);
+  assert.equal((await view()).reminders.length, 1);
   assert.equal(notifications.published.length, published, 'restart must reuse OS reminder');
   const newDue = new Date(now + 1200000).toISOString();
   await use.queueReminder('reminder.task', { event_id: id(1), action: 'reschedule', scheduled_at: newDue }, 1);
-  await use.loadCached([]);
+  await view();
   assert.equal(notifications.current[0].reminderReq.dateTime.minute, new Date(newDue).getUTCMinutes());
   const reschedule = (await repository.reminderOperations())[0];
   await apply(repository, response([], [{ operation_id: reschedule.operation_id, status: 'applied',
     resource_revision: 2, error: null, resource_results: [{ resource_id: id(1), revision: 2 }] }]));
-  await use.loadCached([]);
+  await view();
   assert.equal((await repository.reminderOperations()).length, 1);
   await apply(repository, response([change(dto(2, 'scheduled', newDue))]));
   await use.queueReminder('reminder.task', { event_id: id(1), action: 'cancel' }, 2);
-  assert.equal((await use.loadCached([])).reminders[0].status, 'cancelled');
+  assert.equal((await view()).reminders[0].status, 'cancelled');
   assert.equal(notifications.current.length, 0, 'offline cancel must revoke OS request');
   stores.at(-1).db.close();
   repository = await Repository.open({ databasePath });
   use = new UseCases(repository, {}, remote, new Scheduler({}));
-  await use.loadCached([]);
+  await view();
   assert.equal(notifications.current.length, 0, 'restart cannot resurrect pending cancellation');
   const cancellation = (await repository.reminderOperations())[0];
   await apply(repository, response([change(dto(3, 'cancelled'))], [{ operation_id: cancellation.operation_id,
     status: 'applied', resource_revision: 3, error: null, resource_results: [{ resource_id: id(1), revision: 3 }] }]));
   assert.equal((await repository.reminderOperations()).length, 0);
   await apply(repository, response([change(dto(4))]));
-  await use.loadCached([]);
+  await view();
   await use.queueReminder('reminder.task', { event_id: id(1), action: 'complete' }, 4);
-  await use.loadCached([]);
+  await view();
   assert.equal(notifications.current.length, 0, 'completion cancels system reminder');
   const completion = (await repository.reminderOperations())[0];
   await apply(repository, response([change(dto(5, 'completed'))], [{ operation_id: completion.operation_id,
     status: 'applied', resource_revision: 5, error: null, resource_results: [{ resource_id: id(1), revision: 5 }] }]));
-  await use.loadCached([]);
+  await view();
   assert.equal(notifications.current.length, 0);
   const scheduler = new Scheduler({});
   await apply(repository, response([change(dto(6))]));
-  await use.loadCached([]);
+  await view();
   notifications.current.push({ reminderId: 99, reminderReq: { ...notifications.current[0].reminderReq } });
-  await scheduler.reconcile((await use.loadCached([])).reminders);
+  await scheduler.reconcile((await view()).reminders);
   assert.equal(notifications.current.length, 1, 'cleanup preexisting duplicate system groups');
   notifications.enabled = false;
-  const next = (await use.loadCached([])).reminders;
+  const next = (await view()).reminders;
   next[0].scheduledAt = new Date(now + 1800000).toISOString();
   await assert.rejects(scheduler.reconcile(next), /通知权限/);
   assert.equal(notifications.current.length, 0, 'denied permission cannot leave the old due time scheduled');
@@ -109,15 +110,15 @@ const response = (changes = [], receipts = []) => ({ projection_version: contrac
   await scheduler.reconcile([]);
   assert.equal(notifications.current.length, 0, 'revocation still works with denied notification permission');
   assert.equal(notifications.permissionRequests, permissionRequests, 'empty lists must not prompt for permission');
-  await assert.rejects(scheduler.reconcile((await use.loadCached([])).reminders), /通知权限/);
+  await assert.rejects(scheduler.reconcile((await view()).reminders), /通知权限/);
   notifications.enabled = true;
   const invalid = new UseCases(repository, {}, remote, { reconcile: async () => { throw Error('permission denied'); } });
-  await invalid.loadCached([]);
+  await invalid.loadCached([]); await invalid.reconcileCalendar();
   assert.match(invalid.reminderSchedulingError, /permission denied/);
   const unavailable = new UseCases(repository, {}, remote, { reconcile: async () => {
     throw { code: 1700002, message: 'The number of reminders exceeds the limit.' };
   } });
-  await unavailable.loadCached([]);
+  await unavailable.loadCached([]); await unavailable.reconcileCalendar();
   assert.match(unavailable.reminderSchedulingError, /1700002.*任务已保存.*提醒未安排/);
   const editReview = { ...review, review_id: 'reminder:' + id(30), source_id: id(30) };
   const ignoreReview = { ...review, review_id: 'reminder:' + id(31), source_id: id(31) };
@@ -131,7 +132,7 @@ const response = (changes = [], receipts = []) => ({ projection_version: contrac
   assert.equal(decisions.length, 2, 'edit/ignore choices survive restart');
   assert.equal(decisions[0].payload.title, '修改后的待办');
   assert.equal(decisions[0].payload.scheduled_at, newDue);
-  assert.equal((await use.loadCached([])).reviewItems.length, 0, 'queued decisions cannot be decided twice');
+  assert.equal((await view()).reviewItems.length, 0, 'queued decisions cannot be decided twice');
   await apply(repository, response([], decisions.map(operation => ({ operation_id: operation.operation_id,
     status: 'applied', resource_revision: 1, error: null,
     resource_results: operation.payload.action === 'edit' ? [{ resource_id: id(40), revision: 1 }] : [] }))));
@@ -141,7 +142,7 @@ const response = (changes = [], receipts = []) => ({ projection_version: contrac
   await apply(repository, response([change({ ...dto(), event_id: id(40), source_candidate_id: id(30),
     title: '修改后的待办', scheduled_at: newDue })]));
   assert.equal((await repository.reminderOperations()).length, 0);
-  assert.equal((await use.loadCached([])).reminders.find(value => value.eventId === id(40)).title, '修改后的待办');
+  assert.equal((await view()).reminders.find(value => value.eventId === id(40)).title, '修改后的待办');
   stores.at(-1).db.close();
   console.log('PASS: reminder loop (durable confirmation/edit/ignore, no preconfirmation notification, duplicate choice, offline retry, paged receipt, stale snapshot, reload, restart, reschedule, cancellation, completion, duplicate OS group, denied permission, visible OS error). OS notifications mocked.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

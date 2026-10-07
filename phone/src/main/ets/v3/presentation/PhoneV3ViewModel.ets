@@ -1,29 +1,25 @@
 import { annotationTiming } from '../application/PhoneAnnotationTiming';
 import { PhoneDailyCache, PhoneDailyEvidence } from '../domain/PhoneV3DailyModels';
 import { PhoneV3ReminderCommand, editedReminderTime } from '../domain/PhoneV3ReminderCommands';
-import { PhoneV3ReviewAudioRetry } from '../domain/PhoneV3ReviewAudioRetry';
-import { ComputerConnectionError } from '../../computer/ComputerConnectionError';
+import { PhoneReviewAudioPrefetch } from '../application/PhoneReviewAudioPrefetch';
+import { purityReviewCommand, voiceReviewCommand } from '../application/PhoneV3ReviewCommands';
 import { phoneV3VoiceCandidates } from '../domain/PhoneV3ReviewModels';
 import { validateReviewSample } from '../domain/PhoneV3ReviewAudioValidation';
-import { PhoneV3ReviewAudioCache } from '../data/PhoneV3ReviewAudioCache';
 import { PhoneV3VoiceTask } from '../domain/PhoneV3VoiceReviewTask';
 import { PhoneV3LocalAnnotation, applyAnnotationRows } from '../domain/PhoneV3LocalAnnotation';
 import { indexedUtterances, retainAnnotationIndex } from '../domain/PhoneV3AnnotationIndex';
 import { ComputerUploadProgress } from '../../computer/ComputerRecordingUploadService';
 import { common } from '@kit.AbilityKit';
 import { PhoneSyncCoordinator, PhoneSyncWorkResult, PhoneSyncCoordinatorPort } from '../application/PhoneSyncCoordinator';
+import { PhoneSyncService } from '../application/PhoneSyncService';
 import { PhoneSyncEnvironment } from '../runtime/PhoneSyncEnvironment';
 import { DeviceV3ReviewActionRequest, DeviceV3PersonChoice, DeviceV3AnnotationStatus } from '../../computer/ComputerTransferProtocol';
-import { PhoneV3UseCases, PhoneV3ReviewSubmissionError, mergePhoneV3Sessions } from '../application/PhoneV3UseCases';
+import { PhoneV3UseCases, PhoneV3ReviewSubmissionError, PhoneV3SyncResult, mergePhoneV3Sessions } from '../application/PhoneV3UseCases';
 import { phoneV3VoiceTasks, PhoneV3VoiceEvidenceIndex, phoneV3EvidencePending } from '../domain/PhoneV3VoiceReviewTask';
 import { PhoneV3DeviceBridgePort } from '../application/PhoneV3Ports';
-import { PhoneProjectionRepository } from '../data/PhoneProjectionRepository';
-import { PhoneV3ComputerBackup } from '../data/PhoneV3ComputerBackup';
-import { PhoneV3DeviceRemote } from '../data/PhoneV3DeviceRemote';
-import { PhoneV3LocalAudioRepository } from '../data/PhoneV3LocalAudioRepository';
 import { CalendarReminderScheduler } from '../application/CalendarReminderScheduler';
-import { CalendarReminderBackend } from '../data/CalendarReminderBackend';
 import { PhoneV3ReviewAudioPlayer } from '../data/PhoneV3ReviewAudioPlayer';
+import { PhoneV3ApplicationSession } from '../runtime/PhoneV3ApplicationSession';
 import {
   PhoneV3DeviceState,
   PhoneV3LocalAudioFact,
@@ -62,12 +58,6 @@ class PhoneV3PendingReview {
   }
 }
 
-class PhoneV3PrefetchDemand {
-  state: string = 'waiting';
-  retryAt: number = 0;
-  failures: number = 0;
-}
-
 @Observed
 export class PhoneV3ViewModel {
   supplementaryError: string = '';
@@ -95,6 +85,7 @@ export class PhoneV3ViewModel {
   lightSuccessAt: number = 0;
   backupSuccessAt: number = 0;
   private coordinator: PhoneSyncCoordinator | undefined = undefined;
+  private syncService: PhoneSyncService | undefined = undefined;
   private syncEnvironment: PhoneSyncEnvironment | undefined = undefined;
   private foreground: boolean = true;
   private retirement: Promise<void> = Promise.resolve();
@@ -109,14 +100,13 @@ export class PhoneV3ViewModel {
   message: string = '正在读取手机录音…';
   error: string = '';
   private useCases: PhoneV3UseCases | undefined = undefined;
+  private peoplePageSnapshot: PhoneV3Snapshot | undefined = undefined;
+  private peoplePageTask: Promise<void> | undefined = undefined;
+  peoplePageLoading: boolean = false;
   private reviewAudioPlayer: PhoneV3ReviewAudioPlayer | undefined = undefined;
   private reviewPageActive: boolean = false;
   private reviewWindow: Array<PhoneV3VoiceTask> = [];
-  private prefetchIdentity: string = '';
-  private prefetchGeneration: number = 0;
-  private prefetchTimer: number = -1;
-  private prefetchDemands: Map<string, PhoneV3PrefetchDemand> = new Map<string, PhoneV3PrefetchDemand>();
-  private reviewAudioStates: Map<string, string> = new Map<string, string>();
+  private reviewPrefetch: PhoneReviewAudioPrefetch;
   private audioLoading: boolean = false;
   private annotationAudioPlaying: boolean = false;
   private annotationAudioSource: PhoneV3Utterance | undefined = undefined;
@@ -141,6 +131,7 @@ export class PhoneV3ViewModel {
   constructor(useCases?: PhoneV3UseCases, reviewAudioPlayer?: PhoneV3ReviewAudioPlayer, bridge?: PhoneV3DeviceBridgePort) {
     this.useCases = useCases; this.reviewAudioPlayer = reviewAudioPlayer;
     this.bridge = bridge;
+    this.reviewPrefetch = new PhoneReviewAudioPrefetch((): void => this.stateChangeListener());
   }
 
   setStateChangeListener(listener: () => void): void {
@@ -159,11 +150,9 @@ export class PhoneV3ViewModel {
   }
 
   stop(): void {
-    this.clearPrefetchTimer(); this.prefetchDemands.clear();
-    this.prefetchGeneration += 1;
-    this.prefetchIdentity = '';
-    this.reviewWindow = []; this.reviewPageActive = false; this.reviewAudioStates.clear();
-    this.useCases?.cancelReviewPrefetch?.();
+    this.syncService?.cancel('home');
+    this.reviewPrefetch.stop();
+    this.reviewWindow = []; this.reviewPageActive = false;
     this.coordinator?.stop();
     this.retirement = this.coordinator?.whenIdle() ?? Promise.resolve();
     this.syncEnvironment?.stop();
@@ -215,6 +204,33 @@ export class PhoneV3ViewModel {
     this.refreshDeviceState();
   }
 
+  async loadSessionUtterances(session: PhoneV3SessionCard, targetCount: number): Promise<void> {
+    if (this.useCases === undefined) { return; }
+    const current = this.resolveCurrentSession(session);
+    await this.useCases.loadSessionUtterancePage(current, targetCount);
+    this.stateChangeListener();
+  }
+
+  /** People grouping needs evidence from every session; fetch it only when that tab opens. */
+  openPeoplePage(): void {
+    if (this.useCases === undefined || this.peoplePageSnapshot === this.snapshot ||
+      this.peoplePageTask !== undefined) { return; }
+    const snapshot = this.snapshot;
+    this.peoplePageLoading = true;
+    this.stateChangeListener();
+    this.peoplePageTask = (async (): Promise<void> => {
+      for (let card of snapshot.sessions) {
+        if (snapshot !== this.snapshot) { return; }
+        await this.useCases!.loadSessionUtterancePage(card, card.utteranceCount);
+      }
+      if (snapshot === this.snapshot) { this.peoplePageSnapshot = snapshot; }
+    })().catch((error: Object): void => { this.fail(error); }).finally((): void => {
+      this.peoplePageLoading = false;
+      this.peoplePageTask = undefined;
+      this.stateChangeListener();
+    });
+  }
+
   async searchTranscriptSessionIds(search: string): Promise<Array<string>> {
     return this.useCases === undefined ? [] : this.useCases.searchTranscriptSessionIds(search);
   }
@@ -240,7 +256,7 @@ export class PhoneV3ViewModel {
   synchronize(): void {
     if (this.coordinator !== undefined) { this.coordinator.trigger(true, true); return; }
     const useCases = this.useCases;
-    if (useCases === undefined || this.busy || this.computerSyncActive || this.annotationRefreshing) {
+    if (useCases === undefined || this.syncService === undefined || this.busy || this.computerSyncActive || this.annotationRefreshing) {
       return;
     }
     const generation = this.lifecycleGeneration;
@@ -250,11 +266,11 @@ export class PhoneV3ViewModel {
     this.completedSessionKeys = [];
     this.computerSyncActive = true;
     this.stateChangeListener();
-    useCases.synchronize((message: string): void => {
+    this.syncService.run('home', (): Promise<PhoneV3SyncResult> => useCases.synchronize((message: string): void => {
       if (generation !== this.lifecycleGeneration) { return; }
       this.computerSyncMessage = message;
       this.stateChangeListener();
-    }).then(async (result): Promise<void> => {
+    }), useCases).then(async (result): Promise<void> => {
       if (generation !== this.lifecycleGeneration) { return; }
       await this.refreshSnapshot();
       if (generation !== this.lifecycleGeneration) { return; }
@@ -267,6 +283,7 @@ export class PhoneV3ViewModel {
   }
 
   cancelSynchronize(): void {
+    this.syncService?.cancel('home');
     this.coordinator?.pause(); this.useCases?.cancelSynchronize(); this.syncPaused = true;
     this.syncEnvironment?.setPaused(true).catch((error: Object): void => { this.computerSyncError = '暂停设置未保存'; });
   }
@@ -279,7 +296,6 @@ export class PhoneV3ViewModel {
   setForeground(value: boolean): void {
     this.foreground = value; this.coordinator?.setForeground(value);
     if (this.reviewPageActive) { this.setReviewAudioWindow(this.reviewWindow); }
-    if (!value) { this.stopPlayback(); }
     if (!value) { this.stopPlayback(); }
     else { this.refreshCommittedSync().catch((error: Object): void => this.fail(error)); }
   }
@@ -315,9 +331,10 @@ export class PhoneV3ViewModel {
     const port: PhoneSyncCoordinatorPort = {
       light: async (): Promise<PhoneSyncWorkResult> => {
         if (!this.snapshot.paired) { return new PhoneSyncWorkResult(false, 120000, false); }
-        const result = await useCases.synchronize((message: string): void => {
+        const result = await this.syncService!.run('home', (): Promise<PhoneV3SyncResult> =>
+          useCases.synchronize((message: string): void => {
           if (generation === this.lifecycleGeneration) { this.computerSyncMessage = message; }
-        }, false, 4);
+        }, false, 4), useCases);
         if (generation !== this.lifecycleGeneration) { return new PhoneSyncWorkResult(false, 0, false); }
         const requiresReload = result.requiresReload;
         this.syncProjectionDirty = this.syncProjectionDirty || result.changed;
@@ -330,7 +347,7 @@ export class PhoneV3ViewModel {
       },
       supplementary: async (): Promise<PhoneSyncWorkResult> => {
         if (!this.snapshot.paired) { return new PhoneSyncWorkResult(false, 120000, false); }
-        await useCases.refreshSupplementary();
+        await this.syncService!.run('home', (): Promise<void> => useCases.refreshSupplementary());
         return new PhoneSyncWorkResult(false, this.reviewPageActive ? 15000 : 120000);
       },
       backup: async (): Promise<PhoneSyncWorkResult> => {
@@ -341,7 +358,7 @@ export class PhoneV3ViewModel {
         this.backupError = '';
         this.backupFailureCategory = '';
         this.backupMessage = '正在备份录音…';
-        const result = await useCases.backupRecordings();
+        const result = await this.syncService!.run('home', () => useCases.backupRecordings());
         if (generation !== this.lifecycleGeneration) { return new PhoneSyncWorkResult(false, 0, false); }
         this.backupFailureCategory = result.failureCategory;
         this.backupError = result.failedSessions > 0 ? result.failureReason : '';
@@ -434,27 +451,12 @@ export class PhoneV3ViewModel {
     if (this.reviewSubmissionState(reviewId, prototypeId)) {
       this.fail(new Error(this.reviewSubmissionMessage(reviewId, prototypeId))); return;
     }
-    if (prototypeId.length > 0 && (action === 'confirm' || action === 'reject') &&
-      !this.reviewSampleWasPlayed(reviewId, prototypeId)) { return; }
-    const request: DeviceV3ReviewActionRequest = { review_id: reviewId, action: action };
-    const task = phoneV3VoiceTasks(this.snapshot.reviewItems, action === 'retract').find(
-      (value): boolean => value.item.reviewId === reviewId && value.candidate.prototypeId === prototypeId);
-    if (prototypeId && task !== undefined) {
-      const index = new PhoneV3VoiceEvidenceIndex(); index.update(this.snapshot.sessions);
-      if (action !== 'retract' && (index.sourceChanged(task.candidate) || phoneV3EvidencePending(index.resolve(task.candidate)))) {
-        this.fail(new Error('依据已修改，等待同步/样本更新')); return;
-      }
-      if (task.candidate.reviewKey) { request.expected_review_key = task.candidate.reviewKey; }
-    }
-    if (prototypeId.length > 0) {
-      request.prototype_id = prototypeId;
-    }
-    if (displayName.trim().length > 0) {
-      request.display_name = displayName.trim();
-    }
-    if (action === 'ignore' || action === 'reject') {
-      request.reason = '手机审核未采纳';
-    }
+    let request: DeviceV3ReviewActionRequest | undefined;
+    try {
+      request = voiceReviewCommand(reviewId, action, prototypeId, displayName,
+        this.snapshot, this.reviewSampleWasPlayed(reviewId, prototypeId));
+    } catch (error) { this.fail(error as Object); return; }
+    if (request === undefined) { return; }
     this.lastRetryAction = PhoneV3RetryAction.NONE;
     const objectKey = this.reviewObjectKey(reviewId, prototypeId);
     if (prototypeId.length > 0 && ['confirm', 'reject', 'uncertain', 'retract'].indexOf(action) >= 0) {
@@ -502,19 +504,8 @@ export class PhoneV3ViewModel {
     reviewSchemaVersion: number = 1, composition: string = '', boundary: string = 'clean'): boolean {
     const useCases = this.useCases;
     if (useCases === undefined || this.reviewSubmissionState(reviewId)) { return false; }
-    const request: DeviceV3ReviewActionRequest = { review_id: reviewId, action: undo ? 'undo' : 'submit' };
-    if (!undo) {
-      request.primary_speaker_person_id = unknown ? null : personId;
-      request.primary_speaker_unknown = unknown;
-      if (reviewId.startsWith('blind:')) { request.unknown_kind = unknown ? unknownKind : 'none'; }
-      if (reviewId.startsWith('blind:') && reviewSchemaVersion === 2) {
-        request.review_schema_version = 2;
-        request.speaker_composition = composition;
-        request.boundary_quality = boundary;
-      } else { request.purity = purity; }
-      request.other_speaker_ids = others;
-      request.quality_flags = flags;
-    }
+    const request = purityReviewCommand(reviewId, personId, unknown, purity, others, flags,
+      undo, unknownKind, reviewSchemaVersion, composition, boundary);
     const lifecycle = this.lifecycleGeneration;
     useCases.queuePurityReview(request).then((items): void => {
       if (lifecycle !== this.lifecycleGeneration) { return; }
@@ -591,11 +582,13 @@ export class PhoneV3ViewModel {
   refreshAnnotationData(): void {
     if (this.coordinator !== undefined) { this.coordinator.trigger(false, true); return; }
     const useCases = this.useCases;
-    if (useCases === undefined || this.busy || this.computerSyncActive || this.annotationRefreshTask !== undefined) {
+    if (useCases === undefined || this.syncService === undefined || this.busy ||
+      this.computerSyncActive || this.annotationRefreshTask !== undefined) {
       return;
     }
     this.annotationRefreshing = true;
-    const task = useCases.refreshRemoteProjection().then(async (): Promise<void> => {
+    const task = this.syncService.run('home', (): Promise<void> =>
+      useCases.refreshRemoteProjection(), useCases).then(async (): Promise<void> => {
       await this.refreshSnapshot();
     });
     this.annotationRefreshTask = task;
@@ -708,11 +701,20 @@ export class PhoneV3ViewModel {
       value.sessionId === evidence.session_id);
     const utterance = session?.utterances.find((value: PhoneV3Utterance): boolean =>
       value.utteranceId === evidence.utterance_id && value.revision === evidence.revision);
-    if (utterance === undefined) {
-      this.fail(new Error('来源转写已更新或尚未缓存，请同步后再播放'));
+    if (utterance !== undefined) { this.playUtterance(utterance); return; }
+    const useCases = this.useCases;
+    if (useCases === undefined || session === undefined) {
+      this.fail(new Error('来源会话尚未缓存，请同步后再播放'));
       return;
     }
-    this.playUtterance(utterance);
+    useCases.loadUtteranceById(evidence.utterance_id).then((found: PhoneV3Utterance | undefined): void => {
+      if (found === undefined || found.status !== 'active' || found.revision !== evidence.revision ||
+        found.sessionId !== evidence.session_id) {
+        this.fail(new Error('来源转写已更新，请同步后再播放'));
+        return;
+      }
+      this.playUtterance(found);
+    }).catch((error: Object): void => this.fail(error));
   }
 
   playUtterance(utterance: PhoneV3Utterance, withContext: boolean = false): void {
@@ -777,73 +779,11 @@ export class PhoneV3ViewModel {
     const becameActive = active && !this.reviewPageActive;
     this.reviewPageActive = active;
     if (becameActive) { this.coordinator?.trigger(false); }
-    const selected = active && this.foreground ? tasks.slice(0, 3) : [];
-    const identity = selected.map((task: PhoneV3VoiceTask): string => `${task.key}:${task.fingerprint}`).join('|');
-    if (identity !== this.prefetchIdentity) {
-      this.clearPrefetchTimer();
-      this.prefetchIdentity = identity;
-      this.prefetchGeneration += 1;
-      this.useCases?.cancelReviewPrefetch();
-      this.prefetchDemands.clear(); this.reviewAudioStates.clear();
-    }
-    const generation = this.prefetchGeneration;
-    const useCases = this.useCases;
-    let next: Promise<void> = Promise.resolve();
-    for (const task of selected) {
-      if (!task.candidate.hasAudio || !task.candidate.audioContentKey) { continue; }
-      let demand = this.prefetchDemands.get(task.key);
-      if (demand === undefined) { demand = new PhoneV3PrefetchDemand(); this.prefetchDemands.set(task.key, demand); }
-      if (demand.state !== 'waiting' || demand.retryAt > Date.now()) { continue; }
-      const current = demand;
-      current.state = 'running'; // Includes queued demand; repeated events coalesce.
-      next = next.then(async (): Promise<void> => {
-        if (generation !== this.prefetchGeneration || useCases === undefined) { return; }
-        this.reviewAudioStates.set(task.key, '正在准备试听');
-        this.stateChangeListener();
-        try {
-          await useCases.loadReviewAudio(task.item.reviewId, task.candidate.prototypeId, true);
-          if (generation !== this.prefetchGeneration) { return; }
-          current.state = 'ready';
-          this.reviewAudioStates.set(task.key, '已缓存，可离线试听');
-        } catch (error) {
-          if (generation !== this.prefetchGeneration) { return; }
-          current.failures += 1;
-          const connection = error instanceof ComputerConnectionError;
-          const failure = error as ComputerConnectionError;
-          const recoverable = connection &&
-            ['unpaired', 'authorization', 'identity', 'tls'].indexOf(failure.category) < 0 &&
-            !(failure.statusCode >= 400 && failure.statusCode < 500 && failure.statusCode !== 408 && failure.statusCode !== 429);
-          current.state = recoverable || error instanceof PhoneV3ReviewAudioRetry ? 'waiting' : 'blocked';
-          current.retryAt = error instanceof PhoneV3ReviewAudioRetry ? error.retryAt :
-            Date.now() + Math.min(300000, 60000 * Math.pow(2, Math.min(current.failures - 1, 3)));
-          this.reviewAudioStates.set(task.key, current.state === 'blocked' ? '试听准备失败，点击查看原因' : '等待连接恢复后准备试听');
-        }
-        this.schedulePrefetchRetry();
-        this.stateChangeListener();
-      });
-    }
-    this.schedulePrefetchRetry();
+    this.reviewPrefetch.setWindow(tasks, active, this.foreground, this.useCases);
   }
 
-  private clearPrefetchTimer(): void {
-    if (this.prefetchTimer >= 0) { clearTimeout(this.prefetchTimer); this.prefetchTimer = -1; }
-  }
-
-  private schedulePrefetchRetry(): void {
-    this.clearPrefetchTimer();
-    if (!this.foreground || !this.reviewPageActive) { return; }
-    const pending = Array.from(this.prefetchDemands.values()).filter((d: PhoneV3PrefetchDemand): boolean => d.state === 'waiting');
-    if (pending.length === 0) { return; }
-    const due = Math.min(...pending.map((d: PhoneV3PrefetchDemand): number => d.retryAt));
-    const generation = this.prefetchGeneration;
-    // One deadline for <=3 failed demands, not another sync polling loop.
-    this.prefetchTimer = setTimeout((): void => {
-      this.prefetchTimer = -1;
-      if (generation === this.prefetchGeneration) { this.setReviewAudioWindow(this.reviewWindow); }
-    }, Math.max(1, due - Date.now()));
-  }
-
-  reviewAudioState(key: string): string { return this.reviewAudioStates.get(key) ?? '点击准备试听'; }
+  prefetchDemandCount(): number { return this.reviewPrefetch.demandCount(); }
+  reviewAudioState(key: string): string { return this.reviewPrefetch.state(key); }
 
   playReviewSample(reviewId: string, prototypeId: string,
     onCompleted: () => void = (): void => {}): void {
@@ -911,7 +851,8 @@ export class PhoneV3ViewModel {
 
   rebuild(): void {
     const useCases = this.useCases;
-    if (useCases === undefined || this.busy || this.computerSyncActive || this.annotationSaving) {
+    if (useCases === undefined || this.syncService === undefined || this.busy ||
+      this.computerSyncActive || this.annotationSaving) {
       return;
     }
     if (this.coordinator !== undefined && !this.syncPaused) {
@@ -923,7 +864,9 @@ export class PhoneV3ViewModel {
     this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.BUSY,
       undefined, undefined, '正在保留离线状态并重建电脑投影…'));
     const idle = this.coordinator?.whenIdle() ?? Promise.resolve();
-    idle.then(() => useCases.rebuild()).then((result): Promise<void> => {
+    idle.then((): Promise<PhoneV3SyncResult> =>
+      this.syncService!.run('home', (): Promise<PhoneV3SyncResult> => useCases.rebuild(), useCases))
+      .then((result): Promise<void> => {
       this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SUCCESS, undefined, undefined,
         `投影重建完成：${result.batches} 批，游标 ${result.finalCursor}`));
       return this.refreshSnapshot();
@@ -1128,18 +1071,13 @@ export class PhoneV3ViewModel {
     try {
       await this.retirement;
       if (lifecycle !== this.lifecycleGeneration) { return; }
-      const audioCache = new PhoneV3ReviewAudioCache(context);
-      const purityAudioCache = new PhoneV3ReviewAudioCache(context, 'purity-audio-v1');
-      this.reviewAudioPlayer = new PhoneV3ReviewAudioPlayer(context, audioCache, purityAudioCache);
-      const local = new PhoneV3LocalAudioRepository(context.filesDir);
-      this.localFacts = await local.list();
+      const runtime = new PhoneV3ApplicationSession(context);
+      this.reviewAudioPlayer = runtime.reviewAudioPlayer;
+      this.localFacts = await runtime.listLocal();
       this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.LOCAL_READY,
         new PhoneV3Snapshot(mergePhoneV3Sessions(this.localFacts, [], [], [], [])),
         undefined, `手机本地已有 ${this.localFacts.length} 条录音`));
-      const repository = await PhoneProjectionRepository.open(context);
-      this.calendarScheduler = new CalendarReminderScheduler(new CalendarReminderBackend(context), repository);
-      this.useCases = new PhoneV3UseCases(repository, local, new PhoneV3DeviceRemote(context),
-        this.calendarScheduler, new PhoneV3ComputerBackup(context, repository, (progress: ComputerUploadProgress): void => {
+      const bindings = await runtime.connect((progress: ComputerUploadProgress): void => {
           if (lifecycle !== this.lifecycleGeneration) { return; }
           const now = Date.now();
           if (progress.stage === 'uploading' && now - this.lastProgressAt < 150) { return; }
@@ -1151,7 +1089,10 @@ export class PhoneV3ViewModel {
           this.backupMessage = progress.stage === 'uploading' ?
             `${progress.message} · 本次上传 ${progress.percent()}%` : progress.message;
           this.stateChangeListener();
-        }), audioCache, purityAudioCache);
+        });
+      this.syncService = bindings.syncService;
+      this.calendarScheduler = bindings.calendarScheduler;
+      this.useCases = bindings.useCases;
       await this.refreshSnapshot();
       this.useCases.preparePurityAudioPack().catch((): void => {});
       this.useCases.flushPurityReviews().catch((): void => {});
@@ -1219,6 +1160,8 @@ export class PhoneV3ViewModel {
     }
     if (scanLocal) { this.localFacts = await useCases.loadLocal(); }
     const snapshot = await useCases.loadCached(this.localFacts);
+    if (generation !== this.snapshotGeneration) { return; }
+    await useCases.reconcileCalendar();
     const pendingVoice = await useCases.pendingVoiceReviews();
     if (generation !== this.snapshotGeneration || this.annotationSaving) { return; }
     const pendingKeys = new Set<string>();

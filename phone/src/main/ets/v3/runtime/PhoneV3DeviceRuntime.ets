@@ -575,11 +575,11 @@ export class PhoneV3DeviceRuntime {
         }
         this.wifiStatus = status;
         this.wifiProgress = progress;
-      }, (recording: ReceivedRecordingFile): void => {
+      }, (recording: ReceivedRecordingFile, sha256: string): void => {
+        const stored = recordingStore.recordVerified(recording, sha256);
         if (!this.lifecycle.isActive(token)) {
           return;
         }
-        const stored = recordingStore.recordVerified(recording);
         this.applyReceivedRecording(stored, recordingStore.list());
       }, (sourcePath: string, size: number): ReceivedRecordingFile | undefined => {
         return recordingStore.findWifiExisting(sourcePath, size);

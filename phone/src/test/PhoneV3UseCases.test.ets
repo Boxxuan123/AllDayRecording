@@ -587,6 +587,8 @@ export default function phoneV3UseCasesTest() {
       expect(snapshot.paired).assertTrue();
       expect(snapshot.reminders.length).assertEqual(1);
       expect(snapshot.reminders[0].title).assertEqual('发送修订后的文档');
+      expect(scheduler.reconciled.length).assertEqual(0);
+      await useCases.reconcileCalendar();
       expect(scheduler.reconciled.length).assertEqual(1);
       expect(scheduler.reconciled[0].eventId).assertEqual('01ARZ3NDEKTSV4RRFFQ69G5FB0');
       expect(remote.connectCount).assertEqual(0);

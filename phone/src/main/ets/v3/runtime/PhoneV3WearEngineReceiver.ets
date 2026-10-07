@@ -1,5 +1,5 @@
 import { common } from '@kit.AbilityKit';
-import { fileIo } from '@kit.CoreFileKit';
+import { fileIo, hash } from '@kit.CoreFileKit';
 import { wearEngine } from '@kit.WearEngine';
 import {
   P2P_COMMUNICATION_FAILURE,
@@ -161,7 +161,7 @@ export class PhoneV3WearEngineReceiver {
   private receiverLifecycle: PhoneReceiverLifecycleCoordinator = new PhoneReceiverLifecycleCoordinator();
   private recordingStore: PhoneV3RecordingStore;
   private fileReceiver = (incoming: wearEngine.P2pFile): void => {
-    this.receiveFile(incoming);
+    this.receiveFile(incoming).catch((): void => {});
   };
   private messageReceiver = (incoming: wearEngine.P2pMessage): void => {
     this.receiveMessage(incoming);
@@ -904,7 +904,7 @@ export class PhoneV3WearEngineReceiver {
     this.controlStatusHandler(status);
   }
 
-  private receiveFile(incoming: wearEngine.P2pFile): void {
+  private async receiveFile(incoming: wearEngine.P2pFile): Promise<void> {
     try {
       const sourceStat = fileIo.statSync(incoming.file.fd);
       if (sourceStat.size <= 0 || sourceStat.size > MAX_RECORDING_BYTES) {
@@ -920,6 +920,10 @@ export class PhoneV3WearEngineReceiver {
         this.emitProgress(this.phoneSync.inProgress(), `传输完成，正在安全保存：${descriptor.fileName}`);
         const existing = this.recordingStore.findExisting(descriptor);
         if (existing !== undefined) {
+          const actualHash = (await hash.hash(existing.path, 'sha256')).toLowerCase();
+          if (actualHash !== existing.sha256 || fileIo.statSync(existing.path).size !== descriptor.size) {
+            throw new Error('已接收文件校验失败，不能补发确认');
+          }
           this.receivedHandler(existing);
           const firstReceipt = this.markDescriptorReceived(descriptor);
           this.sendFileReceivedAck(descriptor);
@@ -945,6 +949,10 @@ export class PhoneV3WearEngineReceiver {
         const localName = `${indexText}_${safeFileName(descriptor.fileName)}`;
         const path = `${requestDirectory}/${localName}`;
         this.copyIncomingFileDurably(incoming.file.fd, path);
+        if (fileIo.statSync(path).size !== descriptor.size) {
+          throw new Error('复制后的录音大小不符');
+        }
+        const sha256 = (await hash.hash(path, 'sha256')).toLowerCase();
         const recording: ReceivedRecordingFile = {
           fileName: descriptor.fileName,
           path: path,
@@ -955,7 +963,7 @@ export class PhoneV3WearEngineReceiver {
           receivedAt: Date.now(),
           syncKey: exactWatchFileKey(descriptor.relativePath, descriptor.size)
         };
-        const stored = this.recordingStore.record(recording);
+        const stored = this.recordingStore.record(recording, sha256);
         this.receivedHandler(stored);
         const firstReceipt = this.markDescriptorReceived(descriptor);
         this.sendFileReceivedAck(descriptor);

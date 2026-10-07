@@ -32,7 +32,8 @@ import {
   PhoneProjectionRepository,
   PhoneProjectionStatus
 } from '../../v3/data/PhoneProjectionRepository';
-import { PhoneSyncCoordinator, retryDelayMs } from '../../v3/data/PhoneSyncCoordinator';
+import { retryDelayMs } from '../../v3/data/PhoneSyncCoordinator';
+import { PhoneSyncService, PhoneSyncServiceState } from '../../v3/application/PhoneSyncService';
 
 interface PhoneProcessingProjection {
   status?: string;
@@ -70,6 +71,7 @@ export class PhoneComputerTransferViewModel {
   pendingOperations: number = 0;
   syncCursor: string = 'cursor-0';
   cachedProcessingStatus: string = '暂无已同步处理状态';
+  sharedSyncStatus: string = '同步空闲';
 
   private context: common.UIAbilityContext | undefined = undefined;
   private store: ComputerTransferConfigStore | undefined = undefined;
@@ -78,6 +80,9 @@ export class PhoneComputerTransferViewModel {
   private knownCompletions: Array<PhoneSessionCompletionRecord> = [];
   private importedCaPath: string = '';
   private projectionPromise: Promise<PhoneProjectionRepository> | undefined = undefined;
+  private syncServicePromise: Promise<PhoneSyncService> | undefined = undefined;
+  private unsubscribeSync: (() => void) | undefined = undefined;
+  private lifecycleGeneration: number = 0;
   private retryTimer: number = -1;
   private uploadGeneration: number = 0;
   private stopUploadRequested: boolean = false;
@@ -116,9 +121,21 @@ export class PhoneComputerTransferViewModel {
   }
 
   start(context: common.UIAbilityContext): void {
+    const generation = ++this.lifecycleGeneration;
     this.context = context;
     this.store = new ComputerTransferConfigStore(context);
-    this.projectionPromise = PhoneProjectionRepository.open(context);
+    this.syncServicePromise = PhoneSyncService.shared(context);
+    this.syncServicePromise.then((service: PhoneSyncService): void => {
+      if (generation !== this.lifecycleGeneration) { return; }
+      this.unsubscribeSync?.();
+      this.unsubscribeSync = service.subscribe((state: PhoneSyncServiceState): void => {
+        this.sharedSyncStatus = state.runningOwner === 'home' ? '首页同步中' :
+          state.runningOwner === 'computer-page' ? '当前页面同步中' :
+          state.queued > 0 ? `等待同步 · ${state.queued} 项` : '同步空闲';
+      });
+    }, (): void => {});
+    this.projectionPromise = this.syncServicePromise.then(
+      (service: PhoneSyncService): PhoneProjectionRepository => service.projection());
     this.refreshRecordings();
     this.requireProjection().then(async (repository: PhoneProjectionRepository): Promise<void> => {
       this.knownCompletions = await repository.localSessionCompletions();
@@ -126,6 +143,15 @@ export class PhoneComputerTransferViewModel {
       this.updateRecordings(this.recordings);
     }, (): void => {});
     this.loadState(context);
+  }
+
+  stop(): void {
+    this.lifecycleGeneration += 1;
+    this.cancelRetry();
+    this.unsubscribeSync?.();
+    this.unsubscribeSync = undefined;
+    this.syncServicePromise?.then((service: PhoneSyncService): void => service.cancel('computer-page'),
+      (): void => {});
   }
 
   refreshRecordings(): void {
@@ -295,8 +321,9 @@ export class PhoneComputerTransferViewModel {
           '音频分片已备份；清单入库状态见录音列表';
         const connected = await new ComputerRecordingBackupRuntime(context).connect();
         this.applyConfig(connected);
-        await new PhoneSyncCoordinator(new ComputerTransferHttpClient(context, connected.baseUrl,
-          connected.caPath, connected.deviceId), projection).synchronize();
+        await (await this.requireSyncService()).synchronize('computer-page',
+          new ComputerTransferHttpClient(context, connected.baseUrl,
+            connected.caPath, connected.deviceId));
         this.cancelRetry();
         await this.refreshProjectionStatus(projection);
         this.transferFailures = failures;
@@ -314,7 +341,8 @@ export class PhoneComputerTransferViewModel {
         const files = pending.filter((recording: ReceivedRecordingFile): boolean =>
           recording.sourcePath.startsWith(`${session.directory}/`));
         try {
-          const outcome = await createComputerRecordingBackupService(context, projection)
+          const outcome = await (await this.requireSyncService()).run('computer-page',
+            async (owned: PhoneProjectionRepository) => createComputerRecordingBackupService(context, owned)
             .backup(files, (progress: ComputerUploadProgress): void => {
               if (uploadGeneration !== this.uploadGeneration) { return; }
               this.progressPercent = progress.stage === 'uploading' ? progress.percent() : 0;
@@ -323,7 +351,7 @@ export class PhoneComputerTransferViewModel {
               this.totalFiles = progress.totalFiles;
               this.status = this.stopUploadRequested ? '当前录音确认完成后停止后续检查' :
                 `第 ${index + 1}/${sessions.length} 场 · ${progress.message}`;
-            }, completions, await projection.localAudioLinks(), await projection.localSessionFailures());
+            }, completions, await owned.localAudioLinks(), await owned.localSessionFailures()));
           connected = outcome.config;
           const uploaded = outcome.upload;
           newFiles += uploaded.recordings + uploaded.manifests - uploaded.skippedFiles;
@@ -342,10 +370,9 @@ export class PhoneComputerTransferViewModel {
       if (connected === undefined) { return; }
       this.applyConfig(connected);
       try {
-        const sync = await new PhoneSyncCoordinator(
+        const sync = await (await this.requireSyncService()).synchronize('computer-page',
           new ComputerTransferHttpClient(context, connected.baseUrl,
-            connected.caPath, connected.deviceId),
-          projection).synchronize();
+            connected.caPath, connected.deviceId));
         await this.refreshProjectionStatus(projection);
         this.cancelRetry();
         this.status += `；V3 已同步 ${sync.batches} 批，游标 ${sync.final_cursor}`;
@@ -385,9 +412,8 @@ export class PhoneComputerTransferViewModel {
       const updated = await store.saveLastAddress(discoveredUrl);
       this.applyConfig(updated);
       const projection = await this.requireProjection();
-      const result = await new PhoneSyncCoordinator(
-        new ComputerTransferHttpClient(context, updated.baseUrl, updated.caPath, updated.deviceId),
-        projection).synchronize();
+      const result = await (await this.requireSyncService()).synchronize('computer-page',
+        new ComputerTransferHttpClient(context, updated.baseUrl, updated.caPath, updated.deviceId));
       await this.refreshProjectionStatus(projection);
       this.cancelRetry();
       this.status = `V3 同步完成：${result.batches} 批，游标 ${result.final_cursor}，` +
@@ -417,16 +443,15 @@ export class PhoneComputerTransferViewModel {
         throw new Error('请先完成电脑 Passkey 配对');
       }
       const projection = await this.requireProjection();
-      await projection.rebuildFromComputer();
+      await (await this.requireSyncService()).rebuild('computer-page');
       await this.refreshProjectionStatus(projection);
       this.cancelRetry();
       this.status = '本地可重建投影已清空；outbox 与手机录音保留，正在从电脑恢复…';
       const discoveredUrl = await new ComputerReceiverDiscovery(context).discover(this.config.receiverId);
       const updated = await store.saveLastAddress(discoveredUrl);
       this.applyConfig(updated);
-      const result = await new PhoneSyncCoordinator(
-        new ComputerTransferHttpClient(context, updated.baseUrl, updated.caPath, updated.deviceId),
-        projection).synchronize();
+      const result = await (await this.requireSyncService()).synchronize('computer-page',
+        new ComputerTransferHttpClient(context, updated.baseUrl, updated.caPath, updated.deviceId));
       await this.refreshProjectionStatus(projection);
       this.cancelRetry();
       this.status = `本地投影已从电脑重建：${result.batches} 批，游标 ${result.final_cursor}`;
@@ -516,6 +541,13 @@ export class PhoneComputerTransferViewModel {
       throw new Error('Phone V3 投影尚未初始化');
     }
     return this.projectionPromise;
+  }
+
+  private async requireSyncService(): Promise<PhoneSyncService> {
+    if (this.syncServicePromise === undefined) {
+      throw new Error('Phone 同步服务尚未初始化');
+    }
+    return this.syncServicePromise;
   }
 
   private async refreshProjectionStatus(repository: PhoneProjectionRepository): Promise<PhoneProjectionStatus> {

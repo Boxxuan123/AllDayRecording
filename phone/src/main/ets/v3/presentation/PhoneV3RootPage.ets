@@ -212,6 +212,7 @@ export struct PhoneV3RootPage {
     })
     .onChange((index: number): void => {
       this.selectedTab = index;
+      if (index === 3) { this.viewModel.openPeoplePage(); }
     })
     .width('100%')
     .height('100%')

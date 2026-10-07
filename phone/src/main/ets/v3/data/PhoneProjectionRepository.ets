@@ -22,6 +22,9 @@ import {
 } from '../domain/PhoneV3Models';
 import { PhoneV3ProjectionRepositoryPort } from '../application/PhoneV3Ports';
 import { CalendarReminderMapping, CalendarReminderStoragePort } from '../application/CalendarReminderPorts';
+import { PhoneProjectionQueriesStore, projectionTable } from './PhoneProjectionQueriesStore';
+import { PhoneCalendarMappingStore } from './PhoneCalendarMappingStore';
+import { PhoneReviewQueueStore } from './PhoneReviewQueueStore';
 
 const DATABASE_NAME: string = 'phone_v3_projection.db';
 const SCHEMA_VERSION: number = 19;
@@ -103,51 +106,27 @@ export interface PhoneProjectionStatus {
 
 export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPort, CalendarReminderStoragePort {
   private store: relationalStore.RdbStore;
+  private queries: PhoneProjectionQueriesStore;
+  private calendar: PhoneCalendarMappingStore;
+  private reviews: PhoneReviewQueueStore;
   private transactionTail: Promise<void> = Promise.resolve();
   private releaseTransaction: () => void = (): void => {};
 
   private constructor(store: relationalStore.RdbStore) {
     this.store = store;
+    this.queries = new PhoneProjectionQueriesStore(store);
+    this.calendar = new PhoneCalendarMappingStore(store, this);
+    this.reviews = new PhoneReviewQueueStore(store, this);
   }
 
-  async calendarAccountId(): Promise<number> {
-    const result = await this.store.querySql('SELECT calendar_account_id FROM calendar_reminder_account WHERE singleton_id=1');
-    try { return result.goToNextRow() ? result.getLong(0) : -1; } finally { result.close(); }
-  }
+  async calendarAccountId(): Promise<number> { return this.calendar.calendarAccountId(); }
 
-  async saveCalendarAccountId(id: number): Promise<void> {
-    await this.beginTransaction();
-    try {
-      await this.store.executeSql('INSERT OR REPLACE INTO calendar_reminder_account(singleton_id,calendar_account_id) VALUES(1,?)', [id]);
-      await this.commit();
-    } catch (error) { await this.rollback(); throw error as Error; }
-  }
+  async saveCalendarAccountId(id: number): Promise<void> { return this.calendar.saveCalendarAccountId(id); }
 
-  async calendarMappings(): Promise<Array<CalendarReminderMapping>> {
-    const result = await this.store.querySql(`SELECT task_id,calendar_account_id,calendar_event_id,
-      scheduled_due_at,scheduled_title,calendar_sync_state,last_error FROM calendar_reminder_mappings`);
-    const values: Array<CalendarReminderMapping> = [];
-    try {
-      while (result.goToNextRow()) {
-        const mapping = new CalendarReminderMapping();
-        mapping.taskId = result.getString(0); mapping.calendarAccountId = result.getLong(1);
-        mapping.calendarEventId = result.getLong(2); mapping.scheduledDueAt = result.getString(3);
-        mapping.scheduledTitle = result.getString(4); mapping.calendarSyncState = result.getString(5);
-        mapping.lastError = result.getString(6); values.push(mapping);
-      }
-    } finally { result.close(); }
-    return values;
-  }
+  async calendarMappings(): Promise<Array<CalendarReminderMapping>> { return this.calendar.calendarMappings(); }
 
   async saveCalendarMapping(mapping: CalendarReminderMapping): Promise<void> {
-    await this.beginTransaction();
-    try {
-      await this.store.executeSql(`INSERT OR REPLACE INTO calendar_reminder_mappings
-        (task_id,calendar_account_id,calendar_event_id,scheduled_due_at,scheduled_title,calendar_sync_state,last_error)
-        VALUES(?,?,?,?,?,?,?)`, [mapping.taskId, mapping.calendarAccountId, mapping.calendarEventId,
-        mapping.scheduledDueAt, mapping.scheduledTitle, mapping.calendarSyncState, mapping.lastError]);
-      await this.commit();
-    } catch (error) { await this.rollback(); throw error as Error; }
+    return this.calendar.saveCalendarMapping(mapping);
   }
 
   static async open(context: common.UIAbilityContext, databaseName: string = DATABASE_NAME): Promise<PhoneProjectionRepository> {
@@ -188,65 +167,24 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
   }
 
   async enqueuePurityReview(request: DeviceV3ReviewActionRequest): Promise<void> {
-    if (!request.operation_id) { throw new Error('缺少本机审核编号'); }
-    await this.beginTransaction();
-    try {
-      await this.store.executeSql(
-        'INSERT INTO pending_purity_reviews(operation_id, review_id, payload_json, created_at) VALUES(?,?,?,?)',
-        [request.operation_id, request.review_id, JSON.stringify(request), Date.now()]);
-      await this.commit();
-    } catch (error) { await this.rollback(); throw error as Error; }
+    return this.reviews.enqueuePurityReview(request);
   }
 
   async pendingPurityReviews(): Promise<Array<DeviceV3ReviewActionRequest>> {
-    const result = await this.store.querySql(
-      'SELECT payload_json FROM pending_purity_reviews ORDER BY created_at, rowid');
-    const values: Array<DeviceV3ReviewActionRequest> = [];
-    try {
-      while (result.goToNextRow()) {
-        values.push(JSON.parse(result.getString(result.getColumnIndex('payload_json'))) as DeviceV3ReviewActionRequest);
-      }
-    } finally { result.close(); }
-    return values;
+    return this.reviews.pendingPurityReviews();
   }
 
-  async removePurityReview(operationId: string): Promise<void> {
-    await this.beginTransaction();
-    try {
-      await this.store.executeSql('DELETE FROM pending_purity_reviews WHERE operation_id=?', [operationId]);
-      await this.commit();
-    } catch (error) { await this.rollback(); throw error as Error; }
-  }
+  async removePurityReview(operationId: string): Promise<void> { return this.reviews.removePurityReview(operationId); }
 
   async enqueueVoiceReview(request: DeviceV3ReviewActionRequest): Promise<void> {
-    if (!request.operation_id || !request.prototype_id) { throw new Error('缺少本机声音审核编号'); }
-    await this.beginTransaction();
-    try {
-      await this.store.executeSql(
-        'INSERT INTO pending_voice_reviews(operation_id, review_id, prototype_id, payload_json, created_at) VALUES(?,?,?,?,?)',
-        [request.operation_id, request.review_id, request.prototype_id, JSON.stringify(request), Date.now()]);
-      await this.commit();
-    } catch (error) { await this.rollback(); throw error as Error; }
+    return this.reviews.enqueueVoiceReview(request);
   }
 
   async pendingVoiceReviews(): Promise<Array<DeviceV3ReviewActionRequest>> {
-    const result = await this.store.querySql('SELECT payload_json FROM pending_voice_reviews ORDER BY created_at, rowid');
-    const values: Array<DeviceV3ReviewActionRequest> = [];
-    try {
-      while (result.goToNextRow()) {
-        values.push(JSON.parse(result.getString(result.getColumnIndex('payload_json'))) as DeviceV3ReviewActionRequest);
-      }
-    } finally { result.close(); }
-    return values;
+    return this.reviews.pendingVoiceReviews();
   }
 
-  async removeVoiceReview(operationId: string): Promise<void> {
-    await this.beginTransaction();
-    try {
-      await this.store.executeSql('DELETE FROM pending_voice_reviews WHERE operation_id=?', [operationId]);
-      await this.commit();
-    } catch (error) { await this.rollback(); throw error as Error; }
-  }
+  async removeVoiceReview(operationId: string): Promise<void> { return this.reviews.removeVoiceReview(operationId); }
 
   async pendingOperations(limit: number = 500, excludedIds: Array<string> = []): Promise<Array<PhonePendingOperation>> {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
@@ -395,98 +333,28 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
   }
 
   async projectionRows(resourceType: string, resourceIds?: Array<string>): Promise<Array<PhoneV3ProjectionRow>> {
-    if (resourceIds !== undefined && resourceIds.length === 0) { return []; }
-    if (resourceIds !== undefined && resourceIds.length > 400) {
-      let rows: Array<PhoneV3ProjectionRow> = [];
-      for (let offset = 0; offset < resourceIds.length; offset += 400) {
-        rows = rows.concat(await this.projectionRows(resourceType, resourceIds.slice(offset, offset + 400)));
-      }
-      return rows;
-    }
-    const table = projectionTable(resourceType);
-    const filter = resourceIds === undefined ? '' : ` WHERE resource_id IN (${resourceIds.map((): string => '?').join(',')})`;
-    const result = await this.store.querySql(
-      `SELECT resource_id, revision, payload_json, updated_at FROM ${table}${filter}
-       ORDER BY updated_at DESC, resource_id`, resourceIds ?? []);
-    const values: Array<PhoneV3ProjectionRow> = [];
-    try {
-      while (result.goToNextRow()) {
-        values.push(new PhoneV3ProjectionRow(
-          result.getString(result.getColumnIndex('resource_id')),
-          result.getLong(result.getColumnIndex('revision')),
-          result.getString(result.getColumnIndex('payload_json')),
-          result.getLong(result.getColumnIndex('updated_at'))));
-      }
-    } finally {
-      result.close();
-    }
-    return values;
+    return this.queries.projectionRows(resourceType, resourceIds);
   }
 
   async sessionUtteranceRows(sessionId: string, limit: number = 50,
     afterStartMs: number = -1, afterId: string = ''): Promise<Array<PhoneV3ProjectionRow>> {
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
-      throw new Error('Phone 会话转写查询上限无效');
-    }
-    const result = await this.store.querySql(
-      `SELECT resource_id, revision, payload_json, updated_at FROM projection_utterances
-       WHERE session_id = ? AND status = 'active'
-         AND (start_ms > ? OR (start_ms = ? AND resource_id > ?))
-       ORDER BY start_ms, resource_id LIMIT ?`,
-      [sessionId, afterStartMs, afterStartMs, afterId, limit]);
-    const rows: Array<PhoneV3ProjectionRow> = [];
-    try {
-      while (result.goToNextRow()) {
-        rows.push(new PhoneV3ProjectionRow(
-          result.getString(result.getColumnIndex('resource_id')),
-          result.getLong(result.getColumnIndex('revision')),
-          result.getString(result.getColumnIndex('payload_json')),
-          result.getLong(result.getColumnIndex('updated_at'))));
-      }
-    } finally { result.close(); }
-    return rows;
+    return this.queries.sessionUtteranceRows(sessionId, limit, afterStartMs, afterId);
   }
 
   async sessionUtteranceCount(sessionId: string): Promise<number> {
-    const result = await this.store.querySql(
-      `SELECT COUNT(*) FROM projection_utterances WHERE session_id = ? AND status = 'active'`, [sessionId]);
-    try { return result.goToNextRow() ? result.getLong(0) : 0; }
-    finally { result.close(); }
+    return this.queries.sessionUtteranceCount(sessionId);
+  }
+
+  async sessionUtteranceCounts(): Promise<Map<string, number>> {
+    return this.queries.sessionUtteranceCounts();
   }
 
   async projectionUtterancesBySession(): Promise<Map<string, Array<PhoneV3ProjectionRow>>> {
-    const result = await this.store.querySql(
-      `SELECT session_id, resource_id, revision, payload_json, updated_at
-       FROM projection_utterances ORDER BY session_id, start_ms, resource_id`);
-    const grouped = new Map<string, Array<PhoneV3ProjectionRow>>();
-    try {
-      while (result.goToNextRow()) {
-        const sessionId = result.getString(result.getColumnIndex('session_id'));
-        const values = grouped.get(sessionId) ?? [];
-        values.push(new PhoneV3ProjectionRow(
-          result.getString(result.getColumnIndex('resource_id')),
-          result.getLong(result.getColumnIndex('revision')),
-          result.getString(result.getColumnIndex('payload_json')),
-          result.getLong(result.getColumnIndex('updated_at'))));
-        grouped.set(sessionId, values);
-      }
-    } finally { result.close(); }
-    return grouped;
+    return this.queries.projectionUtterancesBySession();
   }
 
   async searchTranscriptSessionIds(search: string): Promise<Array<string>> {
-    const escaped = search.trim().replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
-    if (escaped.length === 0) { return []; }
-    const pattern = `%${escaped}%`;
-    const result = await this.store.querySql(
-      `SELECT DISTINCT session_id FROM projection_utterances
-       WHERE json_extract(payload_json, '$.text') LIKE ? ESCAPE '\\'
-          OR json_extract(payload_json, '$.speaker_label') LIKE ? ESCAPE '\\'`,
-      [pattern, pattern]);
-    const ids: Array<string> = [];
-    try { while (result.goToNextRow()) { ids.push(result.getString(0)); } }
-    finally { result.close(); }
-    return ids;
+    return this.queries.searchTranscriptSessionIds(search);
   }
 
   async localAudioLinks(): Promise<Array<PhoneV3LocalAudioLink>> {
@@ -532,31 +400,11 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
   }
 
   async recordingPayloads(): Promise<Array<string>> {
-    const result = await this.store.querySql(
-      'SELECT payload_json FROM projection_recordings ORDER BY updated_at DESC, resource_id');
-    const values: Array<string> = [];
-    try {
-      while (result.goToNextRow()) {
-        values.push(result.getString(result.getColumnIndex('payload_json')));
-      }
-    } finally {
-      result.close();
-    }
-    return values;
+    return this.queries.recordingPayloads();
   }
 
   async latestProcessingPayload(): Promise<string | null> {
-    const result = await this.store.querySql(
-      `SELECT payload_json FROM projection_processing_runs
-       ORDER BY updated_at DESC, resource_id LIMIT 1`);
-    try {
-      if (!result.goToNextRow()) {
-        return null;
-      }
-      return result.getString(result.getColumnIndex('payload_json'));
-    } finally {
-      result.close();
-    }
+    return this.queries.latestProcessingPayload();
   }
 
   async linkLocalAudio(sessionKey: string, localPath: string, sha256: string,
@@ -1092,20 +940,6 @@ function repositoryError(error: Object): Error {
     return error;
   }
   return new Error(JSON.stringify(error));
-}
-
-function projectionTable(resourceType: string): string {
-  switch (resourceType) {
-    case 'recording_session': return 'projection_recordings';
-    case 'audio_asset': return 'projection_audio_assets';
-    case 'processing_run': return 'projection_processing_runs';
-    case 'utterance': return 'projection_utterances';
-    case 'review_item': return 'projection_review_items';
-    case 'reminder': return 'projection_reminders';
-    case 'daily_event': return 'projection_daily_events';
-    case 'daily_summary': return 'projection_daily_summaries';
-    default: throw new Error(`不支持的 V3 投影资源：${resourceType}`);
-  }
 }
 
 export const PHONE_PROJECTION_SCHEMA_VERSION: number = SCHEMA_VERSION;

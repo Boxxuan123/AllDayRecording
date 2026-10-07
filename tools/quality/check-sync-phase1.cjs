@@ -1,6 +1,7 @@
 // Real SQL/use cases/ViewModel; native adapters only. Synthetic disk data.
 const assert = require('node:assert/strict'), fs = require('node:fs'), os = require('node:os'), path = require('node:path'), Module = require('node:module');
 const {Repository,UseCases,stores,apply,root,contract} = require('./phone-sqlite-harness.cjs');
+const {loadFixtureTranscript} = require('./phone-paged-fixture.cjs');
 global.Observed = c=>c; global.AppStorage = {setOrCreate(){}};
 const oldLoad = Module._load;
 Module._load = function(name,...args) { return name.startsWith('@kit.') || name.startsWith('@hms.') || name==='common' ? {} : oldLoad.call(this,name,...args); };
@@ -28,7 +29,7 @@ const wait=async predicate=>{const end=Date.now()+3000;while(!predicate()){asser
   await repo.commit();
   let network=0,scans=0;
   const use=new UseCases(repo,{list:async()=>{scans++;return [];}},{isPaired:async()=>false,connect:async()=>{network++;throw Error('offline');}});
-  const snapshot=await use.loadCached([]), vm=new VM(use);vm.snapshot=snapshot;
+  const snapshot=await loadFixtureTranscript(use,await use.loadCached([]),1), vm=new VM(use);vm.snapshot=snapshot;
   const row=snapshot.sessions[0].utterances.find(r=>r.utteranceId===id(1));
   const query=store.querySql.bind(store);let queries=0,returned=0;
   store.querySql=async(sql,params)=>{queries++;const result=await query(sql,params);const next=result.goToNextRow;
@@ -59,9 +60,8 @@ const wait=async predicate=>{const end=Date.now()+3000;while(!predicate()){asser
   const before=(await repo.annotationOperations([id(1)])).length;
   await assert.rejects(use.queueAnnotation([row],'','Never saved',true,''),/commit failure/);store.commit=committed;
   assert.equal((await repo.annotationOperations([id(1)])).length,before);assert.equal((await repo.cachedPeople()).length,0);
-  if(history===0) store.db.exec('DROP TRIGGER outbox_selection_insert; DROP TRIGGER outbox_selection_delete; DROP TABLE outbox_selections; PRAGMA user_version=10');
   store.db.close();const reopened=await Repository.open({databasePath:file});assert.equal((await reopened.annotationOperations([id(1)])).length,before);
-  assert.equal(stores.at(-1).version,12);
+  assert.equal(stores.at(-1).version,19);
   stores.at(-1).db.close();
  }
  console.log('PASS scale-independent target/dependency queries, zero scans/network, duplicate guard, rollback, restart, interleaved writes and older revisions');
@@ -69,7 +69,8 @@ const wait=async predicate=>{const end=Date.now()+3000;while(!predicate()){asser
  // Keep sync in flight while a real ViewModel save and local playback complete.
  let finishSync,finishRead,saveCount=0,played=0;
  const vm=new VM({cancelSynchronize(){},synchronize:()=>new Promise(r=>finishSync=r),loadLocal:async()=>[],loadCached:()=>new Promise(r=>finishRead=r),
-  queueAnnotation:async()=>{saveCount++;return [];}});
+  reconcileCalendar:async()=>{},pendingVoiceReviews:async()=>[],queueAnnotation:async()=>{saveCount++;return [];}});
+ vm.syncService={run:(_owner,action)=>action(),cancel(){}};
  vm.snapshot=new Snapshot();vm.snapshot.sessions=[{sessionId:'s',localPaths:['synthetic'],localGroupKey:'s',durationMs:1000,utterances:[]}];
  vm.bridge={stopPlayback(){},removeLocalAudioChangeListener(){},playRange:()=>played++,state:()=>vm.device};
  vm.synchronize();vm.synchronize();assert.equal(vm.busy,false);assert.equal(vm.computerSyncActive,true);

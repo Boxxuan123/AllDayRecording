@@ -42,7 +42,7 @@ console.log('PASS history-only queue/counts, exact candidate tasks, A skip/B suc
   identity:'unknown',original_identity:'unknown',identity_evidence:{},start_ms:n*1000,end_ms:n*1000+900,start_at:time,end_at:'2026-09-25T00:00:01Z',
   text:`合成原句 ${n}`,original_text:`合成原句 ${n}`,revision:1,status:'active',evidence:{}}});
  await apply(repo,{projection_version:contract.V3_PROJECTION_VERSION,changes,receipts:[],next_cursor:'cursor-82',has_more:false,server_time:time});
- let snapshot=await use.loadCached([]);const index=new PhoneV3VoiceEvidenceIndex();index.update(snapshot.sessions);
+ let snapshot=await require('./phone-paged-fixture.cjs').loadFixtureTranscript(use,await use.loadCached([]));const index=new PhoneV3VoiceEvidenceIndex();index.update(snapshot.sessions);
  const first=tasks[0].candidate;assert.equal(index.resolve(first).length,5);assert.equal(snapshot.sessions[0].utterances.length,81);
  const other=phoneV3VoiceTasks(parse([dtoReview('other','known_person',[candidate('other',[7])])]))[0].candidate;
  assert.deepEqual(index.resolve(other).map(r=>r.utteranceId),[id(7)]);
@@ -51,11 +51,11 @@ console.log('PASS history-only queue/counts, exact candidate tasks, A skip/B suc
  assert.equal(index.resolve(missing).length,0);
  const unknown=phoneV3VoiceTasks(parse([dtoReview('unknown','speaker_discovery',[candidate('c',[6,7,8])])]))[0].candidate;
  const selected=index.resolve(unknown).slice(0,2);await use.queueAnnotation(selected,'','合成人物乙',true,'');
- snapshot=await use.loadCached([]);index.update(snapshot.sessions);
+ snapshot=await require('./phone-paged-fixture.cjs').loadFixtureTranscript(use,await use.loadCached([]));index.update(snapshot.sessions);
  assert.equal(snapshot.sessions[0].utterances.filter(r=>r.annotationFacts.person==='pending').length,2);
  assert.equal((await repo.annotationOperations()).length,2);assert.equal(writes,0);assert(phoneV3EvidencePending(index.resolve(unknown)));
  stores.at(-1).db.close();repo=await Repository.open({databasePath});use=new UseCases(repo,{list:async()=>[]},remote);
- assert.equal((await use.loadCached([])).sessions[0].utterances.filter(r=>r.annotationFacts.person==='pending').length,2);
+ assert.equal((await require('./phone-paged-fixture.cjs').loadFixtureTranscript(use,await use.loadCached([]))).sessions[0].utterances.filter(r=>r.annotationFacts.person==='pending').length,2);
  console.log('PASS 5 windows vs 81 sentences; disjoint candidates; missing/version mismatch fail closed; only 2 of 3 mapped sentences persist offline');
  const {PhoneV3PeopleLoader}=require(path.join(root,'presentation/PhoneV3PeopleLoader.ets'));
  const loader=new PhoneV3PeopleLoader();let choices=[],oldAccept;
@@ -65,7 +65,7 @@ console.log('PASS history-only queue/counts, exact candidate tasks, A skip/B suc
  oldAccept([]);assert.equal(choices[0].person_id,created.person_id);
  const third=index.resolve(unknown)[2];await use.queueAnnotation([third],created.person_id,'',true,'');
  assert.equal((await use.localPeople()).filter(p=>p.display_name==='合成人物乙').length,1);
- const thirdRow=(await use.loadCached([])).sessions[0].utterances.find(r=>r.utteranceId===third.utteranceId);
+ const thirdRow=(await require('./phone-paged-fixture.cjs').loadFixtureTranscript(use,await use.loadCached([]))).sessions[0].utterances.find(r=>r.utteranceId===third.utteranceId);
  const operations=await repo.annotationOperations();assert(operations.some(o=>JSON.stringify(o.payload).includes(created.person_id)&&JSON.stringify(o.payload).includes(third.utteranceId)));
  assert.equal(writes,0);
  console.log('PASS production page people loader ignores stale callbacks; offline A-created person ID selected for B with no duplicate');

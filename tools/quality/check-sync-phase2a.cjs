@@ -29,13 +29,14 @@ const backup=use.backupRecordings();const result=await use.synchronize(()=>{},fa
 assert.equal(backupDone,false);assert(sent.includes(id(102)));assert.equal(result.completion,'budget_exhausted');
 await use.synchronize();assert(sent.includes(id(103)));release();await backup;
 console.log('PASS metadata receipts before backup completion; one-batch budget resumes dependent operation without new IDs');
-const snapshot=await use.loadCached([]);
+const snapshot=await require('./phone-paged-fixture.cjs').loadFixtureTranscript(use,await use.loadCached([]));
 const unchanged=snapshot.sessions.find(s=>s.sessionId===id(901));
 await repo.applyChange(change({...dto(1),revision:2,text:'SYNTHETIC UPDATED'}));
 const queries=[],original=repo.projectionRows.bind(repo);
 repo.projectionRows=async(type,ids)=>{queries.push({type,ids});return original(type,ids);};
 const updated=await use.refreshUtterances(snapshot,[id(1)]);
 assert.equal(updated.sessions.find(s=>s.sessionId===id(901)),unchanged);
+await use.loadSessionUtterancePage(updated.sessions.find(s=>s.sessionId===id(900)),50);
 assert.equal(updated.sessions.find(s=>s.sessionId===id(900)).utterances.find(r=>r.utteranceId===id(1)).text,'SYNTHETIC UPDATED');
 assert.deepEqual(queries,[{type:'utterance',ids:[id(1)]}]);
 console.log('PASS incremental utterance refresh queries only changed IDs, retains unrelated session, zero recording scans');

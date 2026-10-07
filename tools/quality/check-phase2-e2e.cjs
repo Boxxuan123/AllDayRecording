@@ -18,9 +18,8 @@ const rpc = (action, request) => new Promise((resolve,reject) => {
   pending.push({resolve,reject}); python.stdin.write(JSON.stringify({action,request})+'\n');
 });
 const { PhoneV3ReminderScheduler } = require(path.join(root,'data/PhoneV3ReminderScheduler.ets'));
-const page = fs.readFileSync(path.join(root,'presentation/PhoneV3PeoplePage.ets'),'utf8');
-const body = page.slice(page.indexOf('  private speakerKey('),page.indexOf('  private utterancesFor('));
-const speakerKey = new Function('utterance', body.slice(body.indexOf('{')+1,body.lastIndexOf('}')));
+const { phoneV3SpeakerKey } = require(path.join(root,'domain/PhoneV3PeopleGrouping.ets'));
+const speakerKey = utterance => phoneV3SpeakerKey(utterance, utterance.sessionId);
 const projectedRows = snapshot => snapshot.sessions.flatMap(s => s.utterances);
 (async () => {
   const init = await rpc('init'); Date.now = () => init.now;
@@ -31,18 +30,20 @@ const projectedRows = snapshot => snapshot.sessions.flatMap(s => s.utterances);
   let expectStable = false;
   const session = { status: async () => ({contract_version:contract.V3_CONTRACT_VERSION,projection_version:contract.V3_PROJECTION_VERSION}),
     sync: async request => {
-      if (expectStable) assert.equal(new Set(projectedRows(await use.loadCached([])).map(speakerKey)).size,1,
+      if (expectStable) assert.equal(new Set(projectedRows(await view()).map(speakerKey)).size,1,
         'no transient grouping loss between receipt and authoritative pull pages');
       batchSizes.push(request.client_operations.length); return rpc('sync',request);
     },
     annotations: request => rpc('annotations',request), reviews: () => rpc('reviews'), resolveReview: request => rpc('resolve',request) };
   const remote = { connect: async () => session, isPaired: async () => true };
   let use = new UseCases(repo,{list:async()=>[]},remote,new PhoneV3ReminderScheduler({}));
+  const view = async () => require('./phone-paged-fixture.cjs').loadFixtureTranscript(use,await use.loadCached([]));
   await use.synchronize();
-  const initial = projectedRows(await use.loadCached([])); assert.equal(initial.length,3);
+  const initial = projectedRows(await view()); assert.equal(initial.length,3);
+  await use.annotations({action:'people'});
   await use.queueSpeakerAnnotation(initial,init.person_id,'Same display name');
   assert.equal((await repo.annotationOperations()).length,3);
-  assert.equal(new Set(projectedRows(await use.loadCached([])).map(speakerKey)).size,1);
+  assert.equal(new Set(projectedRows(await view()).map(speakerKey)).size,1);
   stores.at(-1).db.close(); repo = await Repository.open({databasePath});
   // Reduce only the transport batch capacity for this three-row scenario. All
   // outbox dependency/eligibility decisions remain in the real repository SQL.
@@ -61,13 +62,13 @@ const projectedRows = snapshot => snapshot.sessions.flatMap(s => s.utterances);
   expectStable = true;
   await assert.rejects(use.synchronize(), /synthetic local write failure/);
   assert.equal((await repo.annotationOperations()).length,3,'receipt removal rolled back with projection failure');
-  assert.equal(new Set(projectedRows(await use.loadCached([])).map(speakerKey)).size,1);
+  assert.equal(new Set(projectedRows(await view()).map(speakerKey)).size,1);
   await use.synchronize();
   expectStable = false;
   assert.deepEqual(batchSizes.filter(n=>n>0),[2,2,1]);
   stores.at(-1).db.close(); repo = await Repository.open({databasePath});
   use = new UseCases(repo,{list:async()=>[]},remote,new PhoneV3ReminderScheduler({}));
-  let saved = projectedRows(await use.loadCached([]));
+  let saved = projectedRows(await view());
   assert(saved.every(r=>r.annotationPersonId===init.person_id));
   assert.equal(new Set(saved.map(speakerKey)).size,1);
   assert.equal((await repo.annotationOperations()).length,0);
@@ -80,20 +81,22 @@ const projectedRows = snapshot => snapshot.sessions.flatMap(s => s.utterances);
   assert(review,'aggregate candidate reaches existing review inbox');
   await use.resolveReview({review_id:review.review_id,action:'confirm',prototype_id:review.context.prototype_ids[0]});
   assert.deepEqual((await rpc('inspect')).matching_people,[init.person_id]);
-  const reminder = await rpc('confirm_reminder'); await use.synchronize(); await use.loadCached([]);
+  const reminder = await rpc('confirm_reminder'); await use.synchronize(); await view(); await use.reconcileCalendar();
   assert.equal(notifications.current.length,1);
-  saved = projectedRows(await use.loadCached([]));
+  saved = projectedRows(await view());
   await use.queueSpeakerAnnotation([saved[0]],init.second_person_id,'Same display name');
   await use.synchronize();
   const state = await rpc('inspect');
   assert.deepEqual(state.matching_people,[]);
   for (const key of ['title','scheduled_at','status']) assert.equal(state.reminder[key],reminder[key]);
   assert.equal(state.reminder.source_review_required,true);
-  saved = projectedRows(await use.loadCached([]));
-  assert.equal(new Set(saved.map(speakerKey)).size,2,'same display name with different stable ids stays separate');
+  saved = projectedRows(await view());
+  assert.equal(new Set(saved.map(speakerKey)).size,2,
+    `same display name with different stable ids stays separate: ${JSON.stringify(saved.map(row => ({
+      id: row.utteranceId, person: row.annotationPersonId, key: speakerKey(row) })))}`);
   assert.equal(notifications.cancelled.length,0); assert.equal(notifications.current.length,1);
   await rpc('conflict'); await use.synchronize();
-  saved = projectedRows(await use.loadCached([]));
+  saved = projectedRows(await view());
   const conflicted = saved.find(row=>row.utteranceId===init.ids[0]);
   assert.equal(conflicted.annotationPersonId,''); assert.equal(conflicted.identity,'unknown');
   const status = await use.annotations({action:'status',utterance_ids:init.ids});

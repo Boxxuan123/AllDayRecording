@@ -1,5 +1,6 @@
 import { describe, it, expect } from '@ohos/hypium';
 import { fileIo } from '@kit.CoreFileKit';
+import { prepareComputerSessions } from '../main/ets/computer/ComputerSessionManifest';
 import {
   ReceivedRecordingFile,
   exactWatchFileKey
@@ -34,8 +35,14 @@ interface ReceivedManifestFixture {
   recordings: Array<ReceivedManifestEntryFixture>;
 }
 
+interface RecordingReceiptFixture {
+  recordingId: string;
+  sessionKey: string;
+}
+
 function listFixture(entriesByDirectory: Map<string, Array<string>>): (path: string) => Array<string> {
-  return (path: string): Array<string> => entriesByDirectory.get(path) ?? [];
+  return (path: string): Array<string> => (entriesByDirectory.get(path) ?? []).filter(
+    (name: string): boolean => fileIo.accessSync(`${path}/${name}`));
 }
 
 export default function phoneV3RecordingStoreTest() {
@@ -97,14 +104,13 @@ export default function phoneV3RecordingStoreTest() {
 
         expect(store.list().length).assertEqual(1);
         expect(store.list()[0].sourcePath).assertEqual('session_a/segment.wav');
-        expect(store.knownFileKeys().length).assertEqual(1);
-        expect(store.knownFileKeys()[0]).assertEqual(syncKey);
+        expect(store.knownFileKeys().length).assertEqual(0);
       } finally {
         removeTestTree(root, listDirectory);
       }
     });
 
-    it('rebuildsListByScanningWhenIndexIsDamaged', 0, () => {
+    it('doesNotClaimUnverifiedAudioWhenIndexIsDamaged', 0, () => {
       const root = createTestDirectory('received_damaged');
       const syncRoot = `${root}/${SYNC_RECEIVE_DIRECTORY}`;
       const requestRoot = `${syncRoot}/request_scan`;
@@ -121,11 +127,8 @@ export default function phoneV3RecordingStoreTest() {
 
         const store = new PhoneV3RecordingStore(root, listDirectory, readTestText, writeTestText);
 
-        expect(store.list().length).assertEqual(1);
-        expect(store.list()[0].fileName).assertEqual('scanned.wav');
-        expect(store.list()[0].requestId).assertEqual('request_scan');
-        const repaired = JSON.parse(readTestText(`${syncRoot}/received_index_v1.json`)) as Object;
-        expect(repaired !== undefined).assertTrue();
+        expect(store.list().length).assertEqual(0);
+        expect(fileIo.accessSync(`${requestRoot}/001_scanned.wav`)).assertTrue();
       } finally {
         removeTestTree(root, listDirectory);
       }
@@ -153,8 +156,8 @@ export default function phoneV3RecordingStoreTest() {
           receivedAt: 100
         };
 
-        const first = store.record(recording);
-        const second = store.record(recording);
+        const first = store.record(recording, 'a'.repeat(64));
+        const second = store.record(recording, 'a'.repeat(64));
 
         expect(first.path).assertEqual(second.path);
         expect(store.list().length).assertEqual(1);
@@ -198,8 +201,8 @@ export default function phoneV3RecordingStoreTest() {
           syncKey: syncKey
         };
 
-        store.record(oldRecording);
-        const stored = store.recordVerified(newRecording);
+        store.record(oldRecording, 'a'.repeat(64));
+        const stored = store.recordVerified(newRecording, 'b'.repeat(64));
 
         expect(stored.path).assertEqual(newPath);
         expect(store.list().length).assertEqual(1);
@@ -207,6 +210,120 @@ export default function phoneV3RecordingStoreTest() {
       } finally {
         removeTestTree(root, listDirectory);
       }
+    });
+
+    it('doesNotCommitOrAcknowledgeWhenReceiptWriteFails', 0, () => {
+      const root = createTestDirectory('receipt_failure');
+      const syncRoot = `${root}/${SYNC_RECEIVE_DIRECTORY}`;
+      const requestRoot = `${syncRoot}/request_failure`;
+      const path = `${requestRoot}/001_segment.wav`;
+      const listDirectory = listFixture(new Map<string, Array<string>>([
+        [syncRoot, ['request_failure']], [requestRoot, ['001_segment.wav']]
+      ]));
+      try {
+        ensureTestDirectory(syncRoot);
+        ensureTestDirectory(requestRoot);
+        writeTestBytes(path, new Uint8Array([1, 2, 3, 4]));
+        const store = new PhoneV3RecordingStore(root, listDirectory, readTestText,
+          (target: string, content: string): void => {
+            if (target.endsWith('.receipt.json')) { throw new Error('disk full'); }
+            writeTestText(target, content);
+          });
+        const recording: ReceivedRecordingFile = {
+          fileName: 'segment.wav', path: path, size: 4, durationMs: 0,
+          requestId: 'request_failure', sourcePath: 'session_a/segment.wav',
+          receivedAt: 100, syncKey: exactWatchFileKey('session_a/segment.wav', 4)
+        };
+        let failed = false;
+        try { store.record(recording, 'a'.repeat(64)); }
+        catch (error) { failed = true; }
+        expect(failed).assertTrue();
+        expect(store.list().length).assertEqual(0);
+        const restarted = new PhoneV3RecordingStore(root, listDirectory, readTestText, writeTestText);
+        expect(restarted.findWifiExisting(recording.sourcePath, recording.size) === undefined).assertTrue();
+      } finally {
+        removeTestTree(root, listDirectory);
+      }
+    });
+
+    it('recoversDurableReceiptBeforeAckAndDeduplicatesRetry', 0, () => {
+      const root = createTestDirectory('receipt_recovery');
+      const syncRoot = `${root}/${SYNC_RECEIVE_DIRECTORY}`;
+      const requestRoot = `${syncRoot}/request_recovery`;
+      const path = `${requestRoot}/001_segment.wav`;
+      const listDirectory = listFixture(new Map<string, Array<string>>([
+        [syncRoot, ['request_recovery']],
+        [requestRoot, ['001_segment.wav', '001_segment.wav.receipt.json']]
+      ]));
+      try {
+        ensureTestDirectory(syncRoot);
+        ensureTestDirectory(requestRoot);
+        writeTestBytes(path, new Uint8Array([1, 2, 3, 4]));
+        const recording: ReceivedRecordingFile = {
+          fileName: 'segment.wav', path: path, size: 4, durationMs: 0,
+          requestId: 'request_recovery', sourcePath: 'original_session/segment.wav',
+          receivedAt: 100, syncKey: exactWatchFileKey('original_session/segment.wav', 4)
+        };
+        const failIndex = (target: string, content: string): void => {
+          if (target.endsWith('received_index_v1.json')) { throw new Error('index failed'); }
+          writeTestText(target, content);
+        };
+        const first = new PhoneV3RecordingStore(root, listDirectory, readTestText, failIndex);
+        first.record(recording, 'a'.repeat(64)); // Crash before ACK: only the sidecar survives.
+        const restarted = new PhoneV3RecordingStore(root, listDirectory, readTestText, writeTestText);
+        const recovered = restarted.findWifiExisting(recording.sourcePath, recording.size);
+        expect(recovered?.sourcePath).assertEqual('original_session/segment.wav');
+        expect(recovered?.sha256).assertEqual('a'.repeat(64));
+        restarted.record(recording, 'a'.repeat(64));
+        expect(restarted.list().length).assertEqual(1);
+        const afterAckRestart = new PhoneV3RecordingStore(root, listDirectory, readTestText, writeTestText);
+        expect(afterAckRestart.list().length).assertEqual(1);
+        expect(afterAckRestart.list()[0].sourcePath).assertEqual('original_session/segment.wav');
+        expect(afterAckRestart.knownFileKeys().length).assertEqual(1);
+      } finally {
+        removeTestTree(root, listDirectory);
+      }
+    });
+
+    it('buildsComputerManifestFromReceiptAfterAcknowledgedRestart', 0, () => {
+      const root = createTestDirectory('receipt_manifest_restart');
+      const syncRoot = `${root}/${SYNC_RECEIVE_DIRECTORY}`;
+      const requestRoot = `${syncRoot}/request_manifest`;
+      const fileName = 'segment_000001_first_000000.wav';
+      const path = `${requestRoot}/${fileName}`;
+      const source = `pcm_session_1760000000000/${fileName}`;
+      const listDirectory = listFixture(new Map<string, Array<string>>([
+        [syncRoot, ['request_manifest']],
+        [requestRoot, [fileName, `${fileName}.receipt.json`]]
+      ]));
+      try {
+        ensureTestDirectory(syncRoot);
+        ensureTestDirectory(requestRoot);
+        writeTestBytes(path, new Uint8Array(46));
+        const recording: ReceivedRecordingFile = {
+          fileName: fileName, path: path, size: 46, durationMs: 1,
+          requestId: 'request_manifest', sourcePath: source, receivedAt: 100,
+          syncKey: exactWatchFileKey(source, 46)
+        };
+        const store = new PhoneV3RecordingStore(root, listDirectory, readTestText, writeTestText);
+        store.record(recording, 'a'.repeat(64));
+        const receipt = JSON.parse(readTestText(`${path}.receipt.json`)) as RecordingReceiptFixture;
+        expect(receipt.sessionKey).assertEqual('pcm_session_1760000000000');
+        expect(receipt.recordingId).assertEqual(exactWatchFileKey(source, 46));
+        const restarted = new PhoneV3RecordingStore(root, listDirectory, readTestText, writeTestText);
+        const sessions = prepareComputerSessions(restarted.list());
+        expect(sessions.length).assertEqual(1);
+        const recoveredReceipt = JSON.parse(readTestText(`${path}.receipt.json`)) as RecordingReceiptFixture;
+        expect(recoveredReceipt.sessionKey).assertEqual('pcm_session_1760000000000');
+        expect(sessions[0].manifest.sessionKey).assertEqual('watch-session:1760000000000');
+        expect(sessions[0].manifest.chunks.length).assertEqual(1);
+        expect(sessions[0].recordings[0].sourcePath).assertEqual(source);
+        restarted.record(recording, 'a'.repeat(64));
+        expect(restarted.list().length).assertEqual(1);
+        const retried = prepareComputerSessions(restarted.list());
+        expect(retried.length).assertEqual(1);
+        expect(retried[0].manifest.sessionKey).assertEqual(sessions[0].manifest.sessionKey);
+      } finally { removeTestTree(root, listDirectory); }
     });
 
     it('deletesAudioFilesAndRemovesThemFromManifest', 0, () => {

@@ -52,7 +52,7 @@ const tick=()=>new Promise(r=>setImmediate(r));
  snapshot.reviewItems=[{reviewId:'r',title:'Synthetic',contextJson:JSON.stringify({voice_candidates:[{prototype_id:'p',audio_available:true,audition_key:'key',representative_clips:[{media_id:'m',start_ms:0,end_ms:3000},{media_id:'m',start_ms:3500,end_ms:6500},{media_id:'m',start_ms:7000,end_ms:10000}]}]})}];
  const full={...response,complete_sample:true,audition_key:'key',windows:[{media_id:'m',start_ms:0,end_ms:3000,playback_start_ms:0},{media_id:'m',start_ms:3500,end_ms:6500,playback_start_ms:3000},{media_id:'m',start_ms:7000,end_ms:10000,playback_start_ms:6000}]};
  let submissions=[]; vm.snapshot=snapshot;vm.reviewAudioPlayer=wrapper;
- vm.useCases={loadReviewAudio:async()=>full,loadLocal:async()=>[],loadCached:async()=>snapshot,
+ vm.useCases={loadReviewAudio:async()=>full,loadLocal:async()=>[],loadCached:async()=>snapshot,reconcileCalendar:async()=>{},
   pendingVoiceReviews:async()=>[],queueVoiceReview:async r=>{submissions.push(r)},flushVoiceReviews:async()=>{}};
  vm.playReviewSample('r','p');await tick();assert.equal(vm.reviewSampleWasPlayed('r','p'),false);
  vm.resolveReview('r','confirm','p');assert.equal(submissions.length,0);
@@ -80,7 +80,7 @@ const tick=()=>new Promise(r=>setImmediate(r));
  let saved=[];
  remoteVm.useCases={queueVoiceReview:async request=>{queueCalls++;await new Promise(resolve=>{releaseQueue=resolve});saved.push(request)},
   flushVoiceReviews:async()=>{throw Error('offline')},refreshReviews:async()=>[pendingReview],
-  loadLocal:async()=>[],loadCached:async()=>remoteVm.snapshot,pendingVoiceReviews:async()=>saved};
+  loadLocal:async()=>[],loadCached:async()=>remoteVm.snapshot,reconcileCalendar:async()=>{},pendingVoiceReviews:async()=>saved};
  remoteVm.resolveReview('remote','uncertain','sample','',()=>advanced++);
  assert.equal(remoteVm.reviewSubmissionState('remote','sample'),'saving');assert.equal(advanced,0);
  remoteVm.resolveReview('another-entry','uncertain','sample');assert.equal(queueCalls,1);
@@ -127,7 +127,8 @@ const tick=()=>new Promise(r=>setImmediate(r));
    annotationQueueCalls++; assert.equal(rows[0].revision, 7); assert.equal(name, 'Alice');
    await new Promise(resolve => { releaseSave = resolve; });
    return [];
- }, loadLocal: async () => [], loadCached: async () => new PhoneV3Snapshot(), pendingVoiceReviews: async () => [] };
+ }, loadLocal: async () => [], loadCached: async () => new PhoneV3Snapshot(),
+ reconcileCalendar: async () => {}, pendingVoiceReviews: async () => [] };
  const submit = () => saveVm.saveAnnotation([target], '', 'Alice', true, '', fresh => annotationSaved.push(fresh));
  submit(); submit(); assert.equal(annotationQueueCalls, 1); assert.equal(saveVm.annotationSaving, true);
  releaseSave(); await tick(); await tick();

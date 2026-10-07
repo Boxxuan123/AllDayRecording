@@ -1,6 +1,7 @@
 // Real UseCases + coordinator + ViewModel + on-disk repository; network adapter is controlled.
 const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),Module=require('node:module');
 const {Repository,UseCases,stores,root,contract}=require('./phone-sqlite-harness.cjs');
+const {loadFixtureTranscript}=require('./phone-paged-fixture.cjs');
 global.Observed=c=>c;global.AppStorage={setOrCreate(){}};
 const originalLoad=Module._load;
 Module._load=function(name,...args){return name.startsWith('@kit.')||name.startsWith('@hms.')||name==='common'?{}:originalLoad.call(this,name,...args);};
@@ -26,7 +27,16 @@ const wait=async check=>{const end=Date.now()+5000;while(!check()){assert(Date.n
    return {projection_version:contract.V3_PROJECTION_VERSION,receipts,changes,next_cursor:'cursor-8',has_more:false,server_time:time};},
   reviews:async()=>({items:[]}),annotations:async()=>({people:[]})};
  const remote={isPaired:async()=>true,connect:async()=>{connects++;if(!online)throw new Failure('unreachable','connect','synthetic offline');return session;}};
- const make=async r=>{const u=new UseCases(r,{list:async()=>[]},remote);const m=new VM(u);m.snapshot=await u.loadCached([]);m.startCoordinator();return m;};
+ const peopleUse=new UseCases(repo,{list:async()=>[]},remote);
+ const peopleModel=new VM(peopleUse);
+ peopleModel.snapshot=await peopleUse.loadCached([]);
+ assert.equal(peopleModel.snapshot.sessions[0].utterances.length,0,'home snapshot stays summary-only');
+ peopleModel.openPeoplePage();
+ await wait(()=>!peopleModel.peoplePageLoading);
+ assert.equal(peopleModel.snapshot.sessions[0].utterances.length,3,'people tab explicitly loads evidence');
+ const make=async r=>{const u=new UseCases(r,{list:async()=>[]},remote);const m=new VM(u);
+  m.syncService={run:(_owner,action)=>action(),cancel(){}};
+  m.snapshot=await loadFixtureTranscript(u,await u.loadCached([]));m.startCoordinator();return m;};
  let model=await make(repo);
  for(const target of model.snapshot.sessions[0].utterances.slice()){
   let saved=false;model.saveAnnotation([target],'','',false,'non_speech',()=>saved=true);await wait(()=>saved&&!model.annotationSaving);
@@ -45,8 +55,10 @@ const wait=async check=>{const end=Date.now()+5000;while(!check()){assert(Date.n
  const before=syncCalls;model.coordinator.trigger();await wait(()=>syncCalls>before&&!model.coordinator.light.running);
  assert.equal(model.syncProjectionDirty,true);
  model.annotationSaving=false;
- extraChanges.push(change({...row(2),revision:3,text:'UPDATE TWO'},10));model.coordinator.trigger();
- await wait(()=>model.snapshot.sessions[0].utterances.find(r=>r.utteranceId===id(2)).text==='UPDATE TWO');
+ extraChanges.push(change({...row(2),revision:3,text:'UPDATE TWO'},10));const second=syncCalls;model.coordinator.trigger();
+ await wait(()=>syncCalls>second&&!model.coordinator.light.running&&!model.syncRefreshRunning);
+ await loadFixtureTranscript(model.useCases,model.snapshot);
+ assert.equal(model.snapshot.sessions[0].utterances.find(r=>r.utteranceId===id(2)).text,'UPDATE TWO');
  assert.equal(model.snapshot.sessions[0].utterances.find(r=>r.utteranceId===id(1)).text,'UPDATE ONE');
  console.log('PASS a deferred refresh retains previous changed rows when the next batch changes other rows');
  // A real local save is held before its commit; the last remote delta is already durable.
@@ -60,7 +72,9 @@ const wait=async check=>{const end=Date.now()+5000;while(!check()){assert(Date.n
  const last=syncCalls;model.coordinator.trigger();await wait(()=>syncCalls>last&&!model.coordinator.light.running);
  online=false;const callsAtDisconnect=syncCalls;releaseSave();
  await wait(()=>!model.annotationSaving);
- await wait(()=>model.snapshot.sessions[0].utterances.find(r=>r.utteranceId===id(1)).text==='LAST DURABLE DELTA');
+ await wait(()=>!model.syncRefreshRunning);
+ await loadFixtureTranscript(model.useCases,model.snapshot);
+ assert.equal(model.snapshot.sessions[0].utterances.find(r=>r.utteranceId===id(1)).text,'LAST DURABLE DELTA');
  assert.equal(syncCalls,callsAtDisconnect,'visibility must not need another successful network response');
  assert.equal(model.snapshot.sessions[0].utterances[2].soundKind,'media_speech');
  await assert.rejects(queue([staleTarget],'','',false,'non_speech'),/片段已变化/);

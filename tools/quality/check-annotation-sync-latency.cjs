@@ -1,6 +1,7 @@
 // Production UseCases/ViewModel/coordinator and real on-disk SQLite; controlled remote only.
 const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),Module=require('node:module');
 const {Repository,UseCases,stores,root,contract}=require('./phone-sqlite-harness.cjs');
+const {loadFixtureTranscript}=require('./phone-paged-fixture.cjs');
 global.Observed=c=>c;global.AppStorage={setOrCreate(){}};
 const orig=Module._load;Module._load=function(name,...args){return name.startsWith('@kit.')||name.startsWith('@hms.')||name==='common'?{}:orig.call(this,name,...args)};
 const {PhoneV3ViewModel:VM}=require(path.join(root,'presentation/PhoneV3ViewModel.ets'));
@@ -18,9 +19,11 @@ const wait=async f=>{const end=Date.now()+5000;while(!await f()){assert(Date.now
  sync:async req=>{active++;maxActive=Math.max(maxActive,active);seen.push(...req.client_operations);active--;return {projection_version:contract.V3_PROJECTION_VERSION,receipts:req.client_operations.map(op=>({operation_id:op.operation_id,status:'applied',resource_revision:2,error:null})),changes:deltas.splice(0),next_cursor:'cursor-0',has_more:false,server_time:time}},
  reviews:async()=>{readStarted=true;return new Promise((res,rej)=>{release=()=>res({items:[]});rejectRead=()=>rej(new Failure('unreachable','response','synthetic reviews failure'));})},annotations:async()=>({people:[]})};
  const u=new UseCases(repo,{list:async()=>[]},{isPaired:async()=>true,connect:async()=>session});
- const model=new VM(u);model.snapshot=await u.loadCached([]);model.startCoordinator();
- const save=async n=>{let done=false;model.saveAnnotation([model.snapshot.sessions[0].utterances.find(x=>x.utteranceId===id(n))],'',n===1?'Synthetic Person':'',n===1,n===1?'':'non_speech',()=>done=true);await wait(()=>done&&!model.annotationSaving);};
+ const model=new VM(u);model.syncService={run:(_owner,action)=>action(),cancel(){}};
+ model.snapshot=await loadFixtureTranscript(u,await u.loadCached([]));model.startCoordinator();
+ const save=async n=>{await loadFixtureTranscript(u,model.snapshot);let done=false;model.saveAnnotation([model.snapshot.sessions[0].utterances.find(x=>x.utteranceId===id(n))],'',n===1?'Synthetic Person':'',n===1,n===1?'':'non_speech',()=>done=true);await wait(()=>done&&!model.annotationSaving);};
  await save(1);await wait(()=>readStarted&&seen.length===1&&model.snapshot.sync.pendingOperations===0);
+ await loadFixtureTranscript(u,model.snapshot);
  assert.equal(model.snapshot.sync.confirmedOperations,1,'accepted overlay stays durable awaiting projection');
  assert.equal(model.snapshot.sessions[0].utterances.find(x=>x.utteranceId===id(1)).annotationPending,false);
  await save(2);await wait(()=>seen.length===2&&model.snapshot.sync.pendingOperations===0);

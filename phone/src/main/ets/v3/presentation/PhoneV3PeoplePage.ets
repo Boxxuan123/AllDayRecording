@@ -1,5 +1,6 @@
 import { phoneV3PendingReviews } from '../domain/PhoneV3ReviewModels';
 import { PhoneV3SessionCard, PhoneV3Utterance } from '../domain/PhoneV3Models';
+import { phoneV3SpeakerKey } from '../domain/PhoneV3PeopleGrouping';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 import { PHONE_V3_UI_STATE_STORAGE_KEY, PhoneV3UiState } from './PhoneV3UiState';
 import { PHONE_V3_BACKUP_ACTION_CONTENT_END_OFFSET } from './PhoneV3NativeUi';
@@ -38,7 +39,7 @@ export struct PhoneV3PeoplePage {
       for (let session of sessions) {
         for (let row of session.utterances) {
           const person = row.annotationPersonId.length > 0;
-          const key = person ? `person:${row.annotationPersonId}` : `sound:${session.id}:${row.speakerTrackId ?? row.utteranceId}`;
+          const key = phoneV3SpeakerKey(row, session.id);
           const label = person ? row.speakerLabel ?? '已确认人物' : row.speakerTrackId ? `声音 ${row.originalSpeakerLabel || row.speakerTrackId}` : '未分组声音';
           const group = groups.get(key) ?? new PhoneV3SpeakerSummary(key, label, person, row.startAt.slice(0, 10));
           group.rows.push(row); groups.set(key, group);
@@ -83,7 +84,7 @@ export struct PhoneV3PeoplePage {
       }
       ListItem() { Text('已知人物').fontSize(18).fontWeight(FontWeight.Bold).padding({ top: 16, bottom: 8 }) }
       if (this.summaries(true).length === 0) {
-        ListItem() { Text('确认片段中的人物后，会显示在这里').fontSize(14).fontColor($r('app.color.text_secondary')).padding({ bottom: 16 }) }
+        ListItem() { Text(this.viewModel.peoplePageLoading ? '正在读取人物发言…' : '确认片段中的人物后，会显示在这里').fontSize(14).fontColor($r('app.color.text_secondary')).padding({ bottom: 16 }) }
       }
       ForEach(this.summaries(true), (group: PhoneV3SpeakerSummary) => { ListItem() { this.personRow(group) } },
         (group: PhoneV3SpeakerSummary): string => `${group.key}:${group.label}:${group.subtitle}:${group.rows.length}`)
