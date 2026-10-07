@@ -35,7 +35,7 @@ export default function phoneV3ComputerBackupTest() {
       expect(pending[0].path).assertEqual(newFile.path);
       expect(pending[1].path).assertEqual(oldFile.path);
     });
-    it('skipsFullyUploadedSessionsAndKeepsPendingSessionsWhole', 0, async () => {
+    it('keepsManifestPendingWhenOnlyWavReceiptsExist', 0, async () => {
       const uploadedSession = 1788000000000;
       const pendingSession = 1788001000000;
       const oldFirst = recording(uploadedSession, 1);
@@ -48,9 +48,11 @@ export default function phoneV3ComputerBackupTest() {
         [uploaded(oldFirst, uploadedSession), uploaded(oldSecond, uploadedSession),
           uploaded(newFirst, pendingSession)]);
 
-      expect(pending.length).assertEqual(2);
+      expect(pending.length).assertEqual(4);
       expect(pending[0].path).assertEqual(newFirst.path);
       expect(pending[1].path).assertEqual(newSecond.path);
+      expect(pending[2].path).assertEqual(oldFirst.path);
+      expect(pending[3].path).assertEqual(oldSecond.path);
     });
 
     it('doesNotSkipAWholeSessionWhenOneReceiptIsMissing', 0, async () => {

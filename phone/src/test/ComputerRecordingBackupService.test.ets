@@ -152,7 +152,10 @@ export default function computerRecordingBackupServiceTest() {
       expect(receipts.paths.length).assertEqual(2);
       expect(receipts.sessionKeys[0]).assertEqual('watch-session:1788000000000');
       expect(receipts.sessionKeys[1]).assertEqual('watch-session:1788000000000');
-      expect(receipts.completions.length).assertEqual(0);
+      expect(receipts.completions.length).assertEqual(1);
+      expect(receipts.completions[0].source).assertEqual('integrity_unknown');
+      expect(receipts.completions[0].confirmedAt).assertEqual(0);
+      expect(receipts.completions[0].manifestSha256).assertEqual('a'.repeat(64));
     });
     it('storesSeparateSessionReceiptOnlyAfterFinalEvidence', 0, async () => {
       const runtime = new FakeBackupRuntime();
