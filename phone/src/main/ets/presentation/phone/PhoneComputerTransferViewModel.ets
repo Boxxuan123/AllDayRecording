@@ -292,7 +292,7 @@ export class PhoneComputerTransferViewModel {
           return;
         }
         this.status = failures.length > 0 ? `${failures.length} 条录音存在冲突或等待重试，请查看下方说明` :
-          '音频分片已备份；整场确认状态见录音列表';
+          '音频分片已备份；清单入库状态见录音列表';
         const connected = await new ComputerRecordingBackupRuntime(context).connect();
         this.applyConfig(connected);
         await new PhoneSyncCoordinator(new ComputerTransferHttpClient(context, connected.baseUrl,

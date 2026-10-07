@@ -18,21 +18,27 @@ function recording(sourcePath: string, fileName: string, receivedAt: number,
 
 export default function computerSessionManifestTest() {
   describe('ComputerSessionManifest', () => {
-    it('requiresFinalEvidenceEvenWhenFirstChunkIsContinuous', 0, () => {
+    it('commitsContinuousAudioWithoutClaimingFinalIntegrity', 0, () => {
       const startedAt = 1788000000000;
       const first = recording(`pcm_gap_test_${startedAt}/segment_000001_first_000000000000.wav`,
         'segment_000001_first_000000000000.wav', 1, 16000);
       const legacy: PhoneSessionCompletionRecord = { sessionKey: `watch-session:${startedAt}`,
         source: 'legacy_user_confirmed', completedSegments: 2, totalSamples: 32000,
         confirmedAt: 1788000001000, manifestSha256: '' };
-      expect(prepareComputerSessions([first])[0].canCommit()).assertFalse();
-      expect(prepareComputerSessions([first], 'Asia/Singapore', [legacy])[0].canCommit()).assertFalse();
+      expect(prepareComputerSessions([first])[0].canCommit()).assertTrue();
+      expect(prepareComputerSessions([first])[0].manifest.completion).assertUndefined();
+      expect(prepareComputerSessions([first], 'Asia/Singapore', [legacy])[0].canCommit()).assertTrue();
       const second = recording(`pcm_gap_test_${startedAt}/segment_000002_first_000000016000.wav`,
         'segment_000002_first_000000016000.wav', 2, 16000);
       expect(prepareComputerSessions([first, second], 'Asia/Singapore', [legacy])[0].canCommit()).assertTrue();
       const late = recording(`pcm_gap_test_${startedAt}/segment_000003_first_000000032000.wav`,
         'segment_000003_first_000000032000.wav', 3, 16000);
-      expect(prepareComputerSessions([first, second, late], 'Asia/Singapore', [legacy])[0].canCommit()).assertFalse();
+      expect(prepareComputerSessions([first, second, late], 'Asia/Singapore', [legacy])[0].canCommit()).assertTrue();
+      expect(prepareComputerSessions([first, second, late], 'Asia/Singapore', [legacy])[0].manifest.completion)
+        .assertUndefined();
+      const newSession = recording('pcm_session_1791302400000/segment_000001_first_000000000000.wav',
+        'segment_000001_first_000000000000.wav', 4, 16000);
+      expect(prepareComputerSessions([newSession])[0].canCommit()).assertFalse();
     });
     it('blocksRestoredWatchSessionsWhenStoredSequenceHasGaps', 0, () => {
       const startedAt = 1787997129983;

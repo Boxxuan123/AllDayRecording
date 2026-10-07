@@ -1013,7 +1013,7 @@ export class PhoneV3ViewModel {
       return '该录音已经同步到电脑，为避免误删已受保护';
     }
     if (session.uploadStatus === 'file_uploaded') {
-      return '分片虽已到电脑，整场尚未确认；请保留手机原件';
+      return '分片虽已到电脑，清单尚未入库；请保留手机原件';
     }
     return '仅删除手机上的本地音频，删除后无法恢复';
   }

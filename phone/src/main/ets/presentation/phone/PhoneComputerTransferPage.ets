@@ -1,7 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { picker } from '@kit.CoreFileKit';
 import { scanBarcode, scanCore } from '@kit.ScanKit';
-import { LegacyCompletionCandidate, PhoneComputerTransferViewModel } from './PhoneComputerTransferViewModel';
+import { PhoneComputerTransferViewModel } from './PhoneComputerTransferViewModel';
 import { PhoneSessionTransferFailure } from '../../v3/domain/PhoneV3Models';
 
 @Component
@@ -250,23 +250,7 @@ export struct PhoneComputerTransferPage {
               .onClick((): void => { this.transferViewModel.upload(failure.sessionKey); })
           }, (failure: PhoneSessionTransferFailure): string => failure.sessionKey)
 
-          ForEach(this.transferViewModel.legacyCandidates, (candidate: LegacyCompletionCandidate): void => {
-            Button(`缺少结束记录：${candidate.completedSegments} 片 · 手动确认`, { type: ButtonType.Capsule })
-              .width('100%')
-              .enabled(!this.transferViewModel.busy)
-              .onClick((): void => AlertDialog.show({
-                title: '确认这场录音已结束？',
-                message: `会话 ${candidate.sessionKey} 当前有 ${candidate.completedSegments} 片，` +
-                  `${candidate.totalSamples} 样本。仅在手表录音已结束且全部分片已同步到手机时确认；` +
-                  `随后电脑才会把这些文件当作完整录音。`,
-                primaryButton: { value: '取消', action: (): void => {} },
-                secondaryButton: { value: '确认完整', action: (): void => {
-                  this.transferViewModel.confirmLegacySession(candidate.sessionKey);
-                } }
-              }))
-          }, (candidate: LegacyCompletionCandidate): string => candidate.sessionKey)
-
-          this.explanation('分片可以先上传；收到手表结束记录且全部分片齐全后，电脑才返回整场备份确认。手机原文件不会删除。')
+          this.explanation('连续且校验通过的音频可自动入库处理。缺少手表结束记录时，录音完整性保持未核实。手机原文件不会删除。')
         }
         .width('100%')
         .padding(16)

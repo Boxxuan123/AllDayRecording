@@ -114,7 +114,7 @@ export struct PhoneV3RecordingListPage {
 
   private storageLabel(session: PhoneV3SessionCard): string {
     if (session.uploadStatus === 'file_uploaded') {
-      return '分片已到电脑，待整场确认';
+      return '分片已到电脑，等待清单入库';
     }
     if (session.uploadStatus === 'uploaded') {
       return '已备份';
@@ -127,7 +127,7 @@ export struct PhoneV3RecordingListPage {
       return '删除录音';
     }
     return session.localPaths.length > 0 ?
-      (session.uploadStatus === 'file_uploaded' ? '整场未确认，暂不能删除' : '已同步电脑，不能删除') :
+      (session.uploadStatus === 'file_uploaded' ? '清单尚未入库，暂不能删除' : '已同步电脑，不能删除') :
       '手机没有本地音频';
   }
 

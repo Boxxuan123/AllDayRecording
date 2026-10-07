@@ -205,15 +205,14 @@ export class ComputerRecordingUploadService {
         const hasSummary = recordings.some((file: ReceivedRecordingFile): boolean =>
           file.sourcePath === `${session.directory}/session_summary.json`);
         const explanation = !session.manifest.continuityValid ?
-          '分片已到电脑，但样本位置不连续，整场未确认' : hasSummary ?
-            '手表结束记录与已收分片不符，请继续同步缺片' :
-            '分片已备份，等待手表结束记录或明确的旧录音确认';
+          '分片序号或样本位置不连续，请同步缺失分片' : hasSummary ?
+            session.completionError : '等待手表结束记录；当前会话不会按新分片反复处理';
         report(new ComputerUploadProgress(explanation,
           completedFiles, totalFiles, transferredBytes, totalBytes));
         continue;
       }
       const manifest = prepareManifests([session])[0];
-      report(new ComputerUploadProgress('音频已传完，正在确认完整录音', completedFiles, totalFiles,
+      report(new ComputerUploadProgress('音频已传完，正在提交当前音频清单', completedFiles, totalFiles,
         transferredBytes, totalBytes, 'confirming'));
       const submitManifest = (): Promise<ComputerFileUploadResult> =>
         this.uploadBytes(manifest.relativePath, manifest.bytes, 'manifest', chunkBytes,

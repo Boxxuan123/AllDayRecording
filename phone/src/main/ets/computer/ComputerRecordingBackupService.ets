@@ -80,15 +80,15 @@ export class ComputerRecordingBackupService {
     },
       async (session: PreparedComputerSession, upload: ComputerUploadRecord,
         inputRevision: number = 1): Promise<void> => {
-        if (session.manifest.completion !== undefined) {
-          const proof = session.manifest.completion;
-          await this.receipts.recordSessionCompletion({ sessionKey: session.manifest.sessionKey,
-            source: proof.source, completedSegments: proof.completedSegments,
-            totalSamples: proof.totalSamples, confirmedAt: proof.confirmedAt,
-            manifestSha256: upload.sha256, inputRevision: inputRevision });
-          if (this.receipts.clearSessionFailure !== undefined) {
-            await this.receipts.clearSessionFailure(session.manifest.sessionKey);
-          }
+        const proof = session.manifest.completion;
+        await this.receipts.recordSessionCompletion({ sessionKey: session.manifest.sessionKey,
+          source: proof === undefined ? 'integrity_unknown' : proof.source,
+          completedSegments: session.manifest.completedSegments,
+          totalSamples: session.manifest.totalSamples,
+          confirmedAt: proof === undefined ? 0 : proof.confirmedAt,
+          manifestSha256: upload.sha256, inputRevision: inputRevision });
+        if (this.receipts.clearSessionFailure !== undefined) {
+          await this.receipts.clearSessionFailure(session.manifest.sessionKey);
         }
       }, async (session: PreparedComputerSession, recording: ReceivedRecordingFile,
         upload: ComputerUploadRecord): Promise<void> => {

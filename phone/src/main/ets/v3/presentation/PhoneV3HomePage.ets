@@ -143,7 +143,7 @@ export struct PhoneV3HomePage {
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
         Text(this.currentUiState().snapshot.sessions[0].uploadStatus === 'uploaded' ? '已备份' :
-          this.currentUiState().snapshot.sessions[0].uploadStatus === 'file_uploaded' ? '待整场确认' : '仅手机')
+          this.currentUiState().snapshot.sessions[0].uploadStatus === 'file_uploaded' ? '待清单入库' : '仅手机')
           .fontSize(11)
           .fontColor(this.currentUiState().snapshot.sessions[0].uploadStatus === 'uploaded' ?
             $r('app.color.brand_success') : $r('app.color.text_secondary'))

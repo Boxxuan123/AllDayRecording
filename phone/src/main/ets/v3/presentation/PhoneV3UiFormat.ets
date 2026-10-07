@@ -17,7 +17,7 @@ export function phoneV3WatchStage(session: PhoneV3SessionCard): string {
 
 export function phoneV3ComputerStage(session: PhoneV3SessionCard): string {
   if (session.uploadStatus === 'file_uploaded') {
-    return '分片已到电脑，等待整场录音结束证明';
+    return '分片已到电脑，等待音频清单入库';
   }
   if (session.uploadStatus === 'uploaded' && session.sessionId.length > 0) {
     return `电脑已入库 · r${session.revision}`;
@@ -36,7 +36,7 @@ export function phoneV3BackupLabel(session: PhoneV3SessionCard): string {
     return `已备份 ${duration}${session.processingStatus === 'running' ||
       session.processingStatus === 'queued' || session.utteranceCount > 0 ? '' : '，等待转写'}`;
   }
-  if (session.uploadStatus === 'file_uploaded') { return '分片已到电脑，等待整场确认'; }
+  if (session.uploadStatus === 'file_uploaded') { return '分片已到电脑，等待清单入库'; }
   return '等待备份';
 }
 
@@ -57,7 +57,7 @@ export function phoneV3TranscriptSummary(session: PhoneV3SessionCard): string {
   }
   if (session.sessionId.length === 0) {
     return session.uploadStatus === 'uploaded' ? '已上传，等待电脑生成转写' :
-      session.uploadStatus === 'file_uploaded' ? '分片已备份，整场录音尚未确认' :
+      session.uploadStatus === 'file_uploaded' ? '分片已备份，等待清单入库' :
         '仅在手机，尚未同步生成转写';
   }
   return '电脑尚未生成转写';

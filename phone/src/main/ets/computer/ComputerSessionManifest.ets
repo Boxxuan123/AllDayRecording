@@ -11,6 +11,9 @@ import { PhoneSessionCompletionRecord } from '../v3/domain/PhoneV3Models';
 
 export const COMPUTER_SESSION_MANIFEST_FILE: string = 'session_summary.json';
 export const COMPUTER_SESSION_MANIFEST_FORMAT: string = 'AllDayRecording session manifest v2';
+// Older sessions may lack a Watch stop record. This boundary admits their
+// verified current audio without treating elapsed time as completion proof.
+const LEGACY_AUDIO_COMPATIBILITY_BEFORE_MS: number = 1791302400000;
 
 export interface ComputerManifestCompletion {
   source: string;
@@ -66,6 +69,7 @@ export class PreparedComputerSession {
   directory: string;
   recordings: Array<ReceivedRecordingFile>;
   manifest: ComputerSessionManifest;
+  completionError: string = '';
 
   constructor(directory: string, recordings: Array<ReceivedRecordingFile>, manifest: ComputerSessionManifest) {
     this.directory = directory;
@@ -78,7 +82,10 @@ export class PreparedComputerSession {
   }
 
   canCommit(): boolean {
-    return this.manifest.continuityValid && this.manifest.completion !== undefined;
+    return this.manifest.continuityValid && this.manifest.chunks.length > 0 &&
+      this.completionError.length === 0 &&
+      (this.manifest.completion !== undefined ||
+        this.manifest.sessionStartedAt < LEGACY_AUDIO_COMPATIBILITY_BEFORE_MS);
   }
 }
 
@@ -121,6 +128,7 @@ function prepareOneSession(directory: string, recordings: Array<ReceivedRecordin
   let totalSamples = 0;
   let continuityValid = true;
   let previousRestoredIndex: number | undefined = undefined;
+  let previousIndex: number | undefined = undefined;
   for (let index = 0; index < ordered.length; index += 1) {
     const parsed = parseSegment(ordered[index]);
     const restoredIndex = isRestoredSession ? restoredSegmentIndex(ordered[index]) : parsed.index;
@@ -137,15 +145,19 @@ function prepareOneSession(directory: string, recordings: Array<ReceivedRecordin
     if (chunk.firstSample !== totalSamples) {
       continuityValid = false;
     }
+    if (previousIndex !== undefined && chunk.index !== previousIndex + 1) {
+      continuityValid = false;
+    }
     totalSamples = Math.max(totalSamples, chunk.firstSample + chunk.sampleCount);
     chunks.push(chunk);
     previousRestoredIndex = restoredIndex;
+    previousIndex = chunk.index;
   }
   const startedAt = sessionStartedAt(directory);
   const sessionKey = `watch-session:${startedAt}`;
   const completion = verifiedCompletion(directory, startedAt, chunks, totalSamples,
     continuityValid, allFiles, completions, sessionKey);
-  return new PreparedComputerSession(directory, ordered, {
+  const prepared = new PreparedComputerSession(directory, ordered, {
     format: COMPUTER_SESSION_MANIFEST_FORMAT,
     sessionKey: sessionKey,
     sessionStartedAt: startedAt,
@@ -162,6 +174,12 @@ function prepareOneSession(directory: string, recordings: Array<ReceivedRecordin
     continuityValid: continuityValid,
     completion: completion
   });
+  const summary = allFiles.find((file: ReceivedRecordingFile): boolean =>
+    file.sourcePath === `${directory}/session_summary.json`);
+  if (summary !== undefined && completion === undefined) {
+    prepared.completionError = '手表结束记录与已收分片不匹配或内容无效';
+  }
+  return prepared;
 }
 
 function verifiedCompletion(directory: string, startedAt: number,
