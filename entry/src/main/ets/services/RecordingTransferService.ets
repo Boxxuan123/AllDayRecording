@@ -1,3 +1,4 @@
+import { recordPeerBuild } from 'common';
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo } from '@kit.CoreFileKit';
@@ -253,7 +254,7 @@ export class WearEngineRecordingSender {
   constructor(context: common.UIAbilityContext, statusHandler?: TransferStatusHandler,
     controlHandler?: WatchRecordingControlHandler, wifiTransferHandler?: WatchWifiTransferHandler) {
     this.context = context;
-    this.transportEngine = new WearEngineTransport(context);
+    this.transportEngine = new WearEngineTransport(context, 'watch');
     this.automaticQueue = new AutomaticSyncQueue(context.filesDir);
     this.statusHandler = statusHandler;
     this.controlHandler = controlHandler;
@@ -358,6 +359,7 @@ export class WearEngineRecordingSender {
   private receiveMessage(incoming: wearEngine.P2pMessage): void {
     try {
       const message = decodeWatchSyncMessage(incoming.content);
+      recordPeerBuild('phone', message.runtime_build);
       if (message.type === WATCH_SYNC_FILE_RECEIVED && message.file !== undefined) {
         this.completeFileTransferAck(message.file);
         return;

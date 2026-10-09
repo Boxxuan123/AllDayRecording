@@ -1,3 +1,4 @@
+import { recordPeerBuild } from 'common';
 import { common } from '@kit.AbilityKit';
 import { fileIo, hash } from '@kit.CoreFileKit';
 import { wearEngine } from '@kit.WearEngine';
@@ -171,7 +172,7 @@ export class PhoneV3WearEngineReceiver {
     statusHandler: TransferStatusHandler, syncProgressHandler: WatchSyncProgressHandler,
     controlStatusHandler: WatchRecordingControlStatusHandler, recordingStore?: PhoneV3RecordingStore) {
     this.context = context;
-    this.transportEngine = new WearEngineTransport(context);
+    this.transportEngine = new WearEngineTransport(context, 'phone');
     this.receivedHandler = receivedHandler;
     this.statusHandler = statusHandler;
     this.syncProgressHandler = syncProgressHandler;
@@ -517,6 +518,7 @@ export class PhoneV3WearEngineReceiver {
   private receiveMessage(incoming: wearEngine.P2pMessage): void {
     try {
       const message = decodeWatchSyncMessage(incoming.content);
+      recordPeerBuild('watch', message.runtime_build);
       if (message.type === WATCH_SYNC_READY) {
         if (this.phoneControl.isActive() && !this.phoneControl.commandSent()) {
           this.sendControlProbe();

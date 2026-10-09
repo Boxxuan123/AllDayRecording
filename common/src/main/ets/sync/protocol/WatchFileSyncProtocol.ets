@@ -1,4 +1,5 @@
 import { util } from '@kit.ArkTS';
+import { RuntimeBuildInfo } from '../../diagnostics/RuntimeDiagnostics';
 import { WatchSyncFileDescriptor } from '../../models/RecordingModels';
 
 export const WATCH_SYNC_PROTOCOL_VERSION: number = 1;
@@ -26,6 +27,7 @@ export const WATCH_WIFI_TRANSFER_ACK: string = 'wifi_transfer_ack';
 
 export interface WatchSyncProtocolMessage {
   version: number;
+  runtime_build?: RuntimeBuildInfo;
   type: string;
   requestId: string;
   total?: number;

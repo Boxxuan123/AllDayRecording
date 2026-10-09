@@ -1,4 +1,5 @@
 import { util } from '@kit.ArkTS';
+import { RuntimeBuildInfo } from 'common';
 
 export const COMPUTER_TRANSFER_STATUS_PATH: string = '/api/v1/status';
 export const COMPUTER_TRANSFER_UPLOADS_PATH: string = '/api/v1/uploads';
@@ -170,6 +171,8 @@ export function confirmedComputerSessionId(response: ComputerUploadResponse,
 }
 
 export interface ComputerStatusResponse {
+  build?: RuntimeBuildInfo;
+  diagnostic_features?: Array<string>;
   v3?: DeviceV3StatusResponse | null;
   protocol: string;
   version: number;

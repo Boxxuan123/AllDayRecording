@@ -10,6 +10,7 @@
 *.log
 **/build
 /common/BuildProfile.ets
+/common/src/main/ets/diagnostics/GeneratedBuildIdentity.ets
 /.hvigor
 /.hvigor-local
 .cxx

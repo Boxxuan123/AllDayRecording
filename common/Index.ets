@@ -1,4 +1,9 @@
 export {
+  RuntimeBuildInfo, PeerBuildReport, PhoneRuntimeReport, localBuildInfo, recordPeerBuild,
+  peerBuildReport, diagnosticText, copyDiagnostics
+} from './src/main/ets/diagnostics/RuntimeDiagnostics';
+
+export {
   RecordingFile,
   WatchSyncFileDescriptor,
   ReceivedRecordingFile,

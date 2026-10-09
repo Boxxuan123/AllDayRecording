@@ -1,3 +1,4 @@
+import { localBuildInfo, peerBuildReport, recordPeerBuild, PhoneRuntimeReport } from 'common';
 import { ComputerReviewNotSentError } from './ComputerReviewNotSentError';
 import { computerJsonText, COMPUTER_JSON_MAX_BYTES } from './ComputerJsonBody';
 import { ComputerConnectionError, connectionFailure, connectionDiagnosticId } from './ComputerConnectionError';
@@ -115,6 +116,7 @@ export class ComputerTransferHttpClient {
   private deviceId: string;
   private diagnosticId: string;
   private lastDiagnosticAt: number = 0;
+  private static lastBuildReportAt: number = 0;
 
   constructor(context: common.UIAbilityContext, baseUrl: string, caPath: string, deviceId: string = '', diagnosticId: string = '',
     signingKeyAlias: string = 'alldayrecording.computer-transfer.device-signing.v1') {
@@ -177,8 +179,25 @@ export class ComputerTransferHttpClient {
   }
 
   async status(): Promise<ComputerStatusResponse> {
-    return this.authenticatedJson<ComputerStatusResponse>('GET', COMPUTER_TRANSFER_STATUS_PATH,
+    const status = await this.authenticatedJson<ComputerStatusResponse>('GET', COMPUTER_TRANSFER_STATUS_PATH,
       new Uint8Array(0), undefined, undefined);
+    recordPeerBuild('pc-backend', status.build);
+    if (status.diagnostic_features?.includes('runtime-build-report') &&
+      Date.now() - ComputerTransferHttpClient.lastBuildReportAt > 60000) {
+      ComputerTransferHttpClient.lastBuildReportAt = Date.now();
+      const report: PhoneRuntimeReport = {
+        phone: localBuildInfo('phone'), watch: peerBuildReport('watch')
+      };
+      const body = util.TextEncoder.create('utf-8').encodeInto(JSON.stringify(report));
+      try {
+        await this.authenticatedJson<Object>('POST', '/device/v3/diagnostics',
+          body, undefined, undefined);
+      } catch (_) {
+        // Optional reporting cannot undo a successful authenticated status probe.
+        console.warn('[diagnostics] build report unavailable');
+      }
+    }
+    return status;
   }
 
   async createUpload(metadata: ComputerUploadMetadata, onRetry: () => void = (): void => {}): Promise<ComputerUploadResponse> {

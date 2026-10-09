@@ -1,4 +1,5 @@
 import { bundleManager, common } from '@kit.AbilityKit';
+import { localBuildInfo } from '../../diagnostics/RuntimeDiagnostics';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { wearEngine } from '@kit.WearEngine';
@@ -49,7 +50,10 @@ export async function destroyWearEngineChannel(): Promise<void> {
 export class WearEngineTransport {
   private context: common.UIAbilityContext;
 
-  constructor(context: common.UIAbilityContext) {
+  private component: string;
+
+  constructor(context: common.UIAbilityContext, component: string = 'unknown') {
+    this.component = component;
     this.context = context;
   }
 
@@ -116,6 +120,9 @@ export class WearEngineTransport {
 
   async sendProtocolMessage(connection: WearEngineConnection,
     message: WatchSyncProtocolMessage): Promise<void> {
+    if (this.component !== 'unknown') {
+      message.runtime_build = localBuildInfo(this.component);
+    }
     const p2pMessage: wearEngine.P2pMessage = {
       content: encodeWatchSyncMessage(message)
     };

@@ -1,3 +1,4 @@
+import { localBuildInfo, diagnosticText, copyDiagnostics } from 'common';
 import { formatRecordingDuration } from 'common';
 import { WatchRecordingViewModel } from './WatchRecordingViewModel';
 
@@ -94,6 +95,18 @@ export struct WatchDeveloperPage {
         .fontColor($r('app.color.text_secondary'))
         .textAlign(TextAlign.Center)
         .maxLines(2)
+
+      Text('手表 ' + localBuildInfo('watch').release_version + ' · ' +
+        localBuildInfo('watch').git_commit.substring(0, 8))
+        .fontSize(9).fontColor($r('app.color.text_secondary'))
+      Button('复制诊断', { type: ButtonType.Capsule }).fontSize(10).height(26)
+        .onClick((): void => {
+          copyDiagnostics('watch').catch(() => {
+            this.getUIContext().getPromptAction().showToast({ message: '复制失败' });
+          });
+        })
+      Text(diagnosticText('watch')).fontSize(8).maxLines(2)
+        .copyOption(CopyOptions.LocalDevice)
 
       Text('上滑返回首页')
         .fontSize(9)
