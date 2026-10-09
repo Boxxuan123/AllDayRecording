@@ -7,6 +7,7 @@ import { PHONE_V3_FLOATING_TAB_BAR_CONTENT_END_OFFSET } from './PhoneV3NativeUi'
 export struct PhoneV3MorePage {
   @ObjectLink viewModel: PhoneV3ViewModel;
   @Prop stateRevision: number = 0;
+  @State private showDiagnostics: boolean = false;
   onOpenSync: () => void = (): void => {};
   onOpenReminders: () => void = (): void => {};
   onOpenDaily: () => void = (): void => {};
@@ -89,6 +90,30 @@ export struct PhoneV3MorePage {
   build() {
     Scroll() {
       Column({ space: 12 }) {
+        this.sectionLabel('版本与诊断')
+        Text('手机 ' + localBuildInfo('phone').release_version + ' · 构建 ' +
+          (localBuildInfo('phone').build_version ?? 'unknown'))
+          .fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
+        Text('提交 ' + localBuildInfo('phone').git_commit.substring(0, 12) +
+          (localBuildInfo('phone').dirty === true ? ' · 含未提交修改' : ''))
+          .fontSize(12).fontColor($r('app.color.text_secondary'))
+        Text('构建时间 ' + (localBuildInfo('phone').built_at ?? '未知'))
+          .fontSize(11).fontColor($r('app.color.text_secondary'))
+        Row({ space: 12 }) {
+          Button('复制诊断信息').onClick((): void => {
+            copyDiagnostics('phone').catch(() => {
+              this.getUIContext().getPromptAction().showToast({ message: '复制失败，请展开并长按诊断文字复制' });
+            });
+          })
+          Button(this.showDiagnostics ? '收起详情' : '展开详情').onClick((): void => {
+            this.showDiagnostics = !this.showDiagnostics;
+          })
+        }
+        if (this.showDiagnostics) {
+          Text(diagnosticText('phone')).fontSize(10)
+            .fontColor($r('app.color.text_secondary')).copyOption(CopyOptions.LocalDevice)
+        }
+
         this.sectionLabel('功能')
         this.menuRow($r('sys.symbol.calendar'), '每日总结', '查看每日事件和原始证据', this.onOpenDaily)
         this.menuRow($r('sys.symbol.arrow_2_circlepath'), '同步与备份',
@@ -97,17 +122,6 @@ export struct PhoneV3MorePage {
           `${this.currentUiState().snapshot.reminders.length} 条已确认提醒`, this.onOpenReminders)
         this.menuRow($r('sys.symbol.hourglass'), '转写与处理',
           this.processingDetail(), this.onOpenProcessing)
-
-        this.sectionLabel('版本与诊断')
-        Text('手机 ' + localBuildInfo('phone').release_version)
-          .fontSize(14).fontColor($r('app.color.text_primary'))
-        Text(diagnosticText('phone')).fontSize(10)
-          .fontColor($r('app.color.text_secondary')).copyOption(CopyOptions.LocalDevice)
-        Button('复制诊断信息').onClick((): void => {
-          copyDiagnostics('phone').catch(() => {
-            this.getUIContext().getPromptAction().showToast({ message: '复制失败，请长按诊断文字复制' });
-          });
-        })
 
         this.sectionLabel('设备与数据')
         this.menuRow($r('sys.symbol.computer'), '电脑连接',
