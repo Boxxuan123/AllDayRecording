@@ -1,4 +1,4 @@
-import { localBuildInfo, diagnosticText, copyDiagnostics } from 'common';
+import { localBuildInfo, diagnosticText, copyDiagnostics, peerBuildReport } from 'common';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 import { PHONE_V3_UI_STATE_STORAGE_KEY, PhoneV3UiState } from './PhoneV3UiState';
 import { PHONE_V3_FLOATING_TAB_BAR_CONTENT_END_OFFSET } from './PhoneV3NativeUi';
@@ -7,6 +7,7 @@ import { PHONE_V3_FLOATING_TAB_BAR_CONTENT_END_OFFSET } from './PhoneV3NativeUi'
 export struct PhoneV3MorePage {
   @ObjectLink viewModel: PhoneV3ViewModel;
   @Prop stateRevision: number = 0;
+  @State private aboutVisible: boolean = false;
   @State private showDiagnostics: boolean = false;
   onOpenSync: () => void = (): void => {};
   onOpenReminders: () => void = (): void => {};
@@ -87,33 +88,87 @@ export struct PhoneV3MorePage {
     .onClick(action)
   }
 
-  build() {
+  private peerVersion(component: string): string {
+    const report = peerBuildReport(component);
+    if (report.build === undefined) { return '尚未收到版本信息'; }
+    return report.build.release_version +
+      (report.state === 'reported' ? ' · 最近连接' : ' · 离线或信息已过期');
+  }
+
+  private buildTime(): string {
+    const value = localBuildInfo('phone').built_at;
+    return value === null ? '未知' : new Date(value).toLocaleString();
+  }
+
+  @Builder
+  private diagnosticRow(label: string, value: string) {
+    Row({ space: 20 }) {
+      Text(label).fontSize(13).fontColor($r('app.color.text_secondary')).width(76)
+      Text(value).fontSize(13).fontColor($r('app.color.text_primary'))
+        .layoutWeight(1).textAlign(TextAlign.End).copyOption(CopyOptions.LocalDevice)
+    }
+    .width('100%').padding({ top: 14, bottom: 14 })
+  }
+
+  @Builder
+  private aboutSheet() {
     Scroll() {
-      Column({ space: 12 }) {
-        this.sectionLabel('版本与诊断')
-        Text('手机 ' + localBuildInfo('phone').release_version + ' · 构建 ' +
-          (localBuildInfo('phone').build_version ?? 'unknown'))
-          .fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
-        Text('提交 ' + localBuildInfo('phone').git_commit.substring(0, 12) +
-          (localBuildInfo('phone').dirty === true ? ' · 含未提交修改' : ''))
-          .fontSize(12).fontColor($r('app.color.text_secondary'))
-        Text('构建时间 ' + (localBuildInfo('phone').built_at ?? '未知'))
-          .fontSize(11).fontColor($r('app.color.text_secondary'))
-        Row({ space: 12 }) {
-          Button('复制诊断信息').onClick((): void => {
-            copyDiagnostics('phone').catch(() => {
+      Column({ space: 20 }) {
+        Column({ space: 8 }) {
+          Text('AllDay Recording').fontSize(24).fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_primary'))
+          Text('版本 ' + localBuildInfo('phone').release_version + ' · 构建 ' +
+            (localBuildInfo('phone').build_version ?? '未知'))
+            .fontSize(14).fontColor($r('app.color.text_secondary'))
+        }.width('100%').alignItems(HorizontalAlign.Start).padding({ top: 8, bottom: 4 })
+
+        Column() {
+          this.diagnosticRow('构建时间', this.buildTime())
+          Divider().color($r('app.color.surface_accent'))
+          this.diagnosticRow('Git 提交', localBuildInfo('phone').git_commit)
+          Divider().color($r('app.color.surface_accent'))
+          this.diagnosticRow('构建状态', localBuildInfo('phone').dirty === true ?
+            '包含本地修改' : localBuildInfo('phone').dirty === false ? '已发布构建' : '未知')
+        }.width('100%').padding({ left: 16, right: 16 }).borderRadius(16)
+          .backgroundColor($r('app.color.surface_primary'))
+
+        Column({ space: 4 }) {
+          Text('已连接的设备').fontSize(13).fontColor($r('app.color.text_secondary'))
+            .width('100%')
+          Column() {
+            this.diagnosticRow('电脑', this.peerVersion('pc-backend'))
+            Divider().color($r('app.color.surface_accent'))
+            this.diagnosticRow('手表', this.peerVersion('watch'))
+          }.width('100%').padding({ left: 16, right: 16 }).borderRadius(16)
+            .backgroundColor($r('app.color.surface_primary'))
+        }.width('100%').alignItems(HorizontalAlign.Start)
+
+        Button('复制诊断信息', { type: ButtonType.ROUNDED_RECTANGLE })
+          .width('100%').height(44).fontSize(14)
+          .fontColor($r('app.color.brand_primary')).backgroundColor($r('app.color.surface_accent'))
+          .onClick((): void => {
+            copyDiagnostics('phone').then((): void => {
+              this.getUIContext().getPromptAction().showToast({ message: '诊断信息已复制' });
+            }).catch(() => {
               this.getUIContext().getPromptAction().showToast({ message: '复制失败，请展开并长按诊断文字复制' });
             });
           })
-          Button(this.showDiagnostics ? '收起详情' : '展开详情').onClick((): void => {
+        Button(this.showDiagnostics ? '收起原始数据' : '查看原始诊断数据')
+          .buttonStyle(ButtonStyleMode.TEXTUAL).fontSize(12)
+          .fontColor($r('app.color.text_secondary')).onClick((): void => {
             this.showDiagnostics = !this.showDiagnostics;
           })
-        }
         if (this.showDiagnostics) {
-          Text(diagnosticText('phone')).fontSize(10)
-            .fontColor($r('app.color.text_secondary')).copyOption(CopyOptions.LocalDevice)
+          Text(diagnosticText('phone')).fontSize(11).fontFamily('monospace')
+            .fontColor($r('app.color.text_secondary')).copyOption(CopyOptions.LocalDevice).width('100%')
         }
+      }.width('100%').alignItems(HorizontalAlign.Start).padding({ left: 24, right: 24, top: 24, bottom: 32 })
+    }.width('100%').height('100%').backgroundColor($r('app.color.page_background'))
+  }
 
+  build() {
+    Scroll() {
+      Column({ space: 12 }) {
         this.sectionLabel('功能')
         this.menuRow($r('sys.symbol.calendar'), '每日总结', '查看每日事件和原始证据', this.onOpenDaily)
         this.menuRow($r('sys.symbol.arrow_2_circlepath'), '同步与备份',
@@ -129,6 +184,11 @@ export struct PhoneV3MorePage {
           this.onOpenComputerConnection)
         this.menuRow($r('sys.symbol.checkmark_shield'), '存储与数据安全',
           `${this.currentUiState().snapshot.sessions.length} 条录音 · 原始录音不会自动删除`, this.onOpenData)
+        this.menuRow($r('sys.symbol.info_circle'), '关于 AllDay',
+          localBuildInfo('phone').release_version + ' · 版本与诊断', (): void => {
+            this.showDiagnostics = false;
+            this.aboutVisible = true;
+          })
       }
       .width('100%')
       .padding({ left: 20, right: 20, top: 8 })
@@ -139,5 +199,7 @@ export struct PhoneV3MorePage {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.page_background'))
+    .bindSheet($$this.aboutVisible, this.aboutSheet(), { height: SheetSize.LARGE, showClose: true })
   }
 }
+
