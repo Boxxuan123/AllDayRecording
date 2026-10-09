@@ -97,7 +97,11 @@ export struct PhoneV3MorePage {
 
   private buildTime(): string {
     const value = localBuildInfo('phone').built_at;
-    return value === null ? '未知' : new Date(value).toLocaleString();
+    if (value === null) { return '未知'; }
+    const date = new Date(value);
+    return date.getFullYear().toString() + '-' + (date.getMonth() + 1).toString().padStart(2, '0') +
+      '-' + date.getDate().toString().padStart(2, '0') + ' ' +
+      date.getHours().toString().padStart(2, '0') + ':' + date.getMinutes().toString().padStart(2, '0');
   }
 
   @Builder
@@ -125,7 +129,7 @@ export struct PhoneV3MorePage {
         Column() {
           this.diagnosticRow('构建时间', this.buildTime())
           Divider().color($r('app.color.surface_accent'))
-          this.diagnosticRow('Git 提交', localBuildInfo('phone').git_commit)
+          this.diagnosticRow('Git 提交', localBuildInfo('phone').git_commit.substring(0, 12))
           Divider().color($r('app.color.surface_accent'))
           this.diagnosticRow('构建状态', localBuildInfo('phone').dirty === true ?
             '包含本地修改' : localBuildInfo('phone').dirty === false ? '已发布构建' : '未知')
@@ -133,7 +137,7 @@ export struct PhoneV3MorePage {
           .backgroundColor($r('app.color.surface_primary'))
 
         Column({ space: 4 }) {
-          Text('已连接的设备').fontSize(13).fontColor($r('app.color.text_secondary'))
+          Text('设备版本').fontSize(13).fontColor($r('app.color.text_secondary'))
             .width('100%')
           Column() {
             this.diagnosticRow('电脑', this.peerVersion('pc-backend'))
@@ -154,7 +158,7 @@ export struct PhoneV3MorePage {
             });
           })
         Button(this.showDiagnostics ? '收起原始数据' : '查看原始诊断数据')
-          .buttonStyle(ButtonStyleMode.TEXTUAL).fontSize(12)
+          .buttonStyle(ButtonStyleMode.TEXTUAL).width('100%').fontSize(12)
           .fontColor($r('app.color.text_secondary')).onClick((): void => {
             this.showDiagnostics = !this.showDiagnostics;
           })
@@ -163,7 +167,8 @@ export struct PhoneV3MorePage {
             .fontColor($r('app.color.text_secondary')).copyOption(CopyOptions.LocalDevice).width('100%')
         }
       }.width('100%').alignItems(HorizontalAlign.Start).padding({ left: 24, right: 24, top: 24, bottom: 32 })
-    }.width('100%').height('100%').backgroundColor($r('app.color.page_background'))
+    }.width('100%').height('100%').align(Alignment.TopStart)
+      .backgroundColor($r('app.color.page_background'))
   }
 
   build() {
@@ -202,4 +207,3 @@ export struct PhoneV3MorePage {
     .bindSheet($$this.aboutVisible, this.aboutSheet(), { height: SheetSize.LARGE, showClose: true })
   }
 }
-
