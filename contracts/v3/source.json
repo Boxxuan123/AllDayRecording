@@ -1,5 +1,5 @@
 {
-  "contract_version": "3.9.0",
+  "contract_version": "3.9.1",
   "projection_version": 6,
   "canonical_repository": "AllDayRecording-ASR",
   "canonical_manifest_path": "contracts/v3/manifest.json",
