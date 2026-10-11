@@ -1,20 +1,20 @@
 {
-  "contract_version": "3.8.0",
-  "projection_version": 5,
+  "contract_version": "3.9.0",
+  "projection_version": 6,
   "canonical_repository": "AllDayRecording-ASR",
   "canonical_manifest_path": "contracts/v3/manifest.json",
-  "canonical_manifest_sha256": "316c42ace4895d1665df6d7c96d3c1e4db9f1fda81cc8a312c8a17d1d5ab2267",
+  "canonical_manifest_sha256": "4c328a4ac663714a6eeacf1c284aebbecb52279f3ca293cdf795e67d51d7d321",
   "release_lock": {
-    "release_version": "3.8.0",
-    "core_schema_version": 27,
-    "phone_projection_schema_version": 19,
+    "release_version": "3.9.0",
+    "core_schema_version": 33,
+    "phone_projection_schema_version": 20,
     "default_entry": "v3",
     "phone_runtime": "v3_native_only",
     "phone_fallback": "none",
     "phone_file_identity": "exact_source_path"
   },
   "canonical_fixtures": {
-    "core-resources.json": "65e9c8058ee412ba5e0972a2b1e407233bf77fd8ab20bbb88f90f0cf815c5511",
+    "core-resources.json": "3c843ab30c4e6aa194481bb5e56d15b48f4dc3dc6af0a09fd812dd6a34850c79",
     "forward-enums.json": "48b9953a58f50b18400bbff03c120052692e4b477f739bcab0c0c4d6304799c0"
   },
   "consumer_snapshot": "phone/src/main/ets/v3/contracts/V3ContractModels.ets"

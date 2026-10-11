@@ -45,7 +45,7 @@ export class CalendarReminderScheduler implements PhoneV3ReminderSchedulerPort {
     this.states = await this.storage.calendarMappings();
     const relevant = reminders.filter((task: PhoneV3Reminder): boolean =>
       (task.status === 'scheduled' && Date.parse(task.scheduledAt) > Date.now()) ||
-      ((task.status === 'cancelled' || task.status === 'completed') &&
+      ((task.status === 'cancelled' || task.status === 'completed' || task.status === 'stale') &&
         this.states.some((value: CalendarReminderMapping): boolean => value.taskId === task.eventId &&
           value.calendarSyncState !== 'removed' &&
           (value.calendarEventId >= 0 || value.calendarAccountId >= 0))));
@@ -96,7 +96,7 @@ export class CalendarReminderScheduler implements PhoneV3ReminderSchedulerPort {
     let current = events.find((value: CalendarReminderEvent): boolean =>
       (mapping.calendarEventId >= 0 && value.id === mapping.calendarEventId &&
         mapping.calendarAccountId === accountId) || value.identifier === identifier);
-    if (task.status === 'cancelled' || task.status === 'completed') {
+    if (task.status === 'cancelled' || task.status === 'completed' || task.status === 'stale') {
       // A create can commit in Calendar before its event ID reaches local storage.
       // The durable creating intent and stable identifier still identify the event.
       const owned = events.filter((value: CalendarReminderEvent): boolean =>

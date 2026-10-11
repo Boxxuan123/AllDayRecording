@@ -1,3 +1,4 @@
+import { V3_CONTRACT_VERSION, V3_PROJECTION_VERSION } from '../main/ets/v3/contracts/V3ContractModels';
 import { PhoneV3LocalAnnotation, applyLocalAnnotations } from '../main/ets/v3/domain/PhoneV3LocalAnnotation';
 import { describe, expect, it } from '@ohos/hypium';
 import {
@@ -213,13 +214,13 @@ class FakePhoneV3RemoteSession implements PhoneV3RemoteSession {
   }
 
   async status(): Promise<DeviceV3StatusResponse> {
-    return { contract_version: '3.8.0', projection_version: 5, server_time: '2026-08-31T00:00:00Z' };
+    return { contract_version: V3_CONTRACT_VERSION, projection_version: V3_PROJECTION_VERSION, server_time: '2026-08-31T00:00:00Z' };
   }
 
   async sync(_request: DeviceV3SyncRequest): Promise<DeviceV3SyncResponse> {
     this.syncRequests.push(_request);
     return {
-      projection_version: 5,
+      projection_version: V3_PROJECTION_VERSION,
       receipts: [],
       changes: [],
       next_cursor: 'cursor-1',

@@ -1,3 +1,4 @@
+import { V3_PROJECTION_VERSION } from '../main/ets/v3/contracts/V3ContractModels';
 import { describe, it, expect } from '@ohos/hypium';
 import {
   DeviceV3ApiError,
@@ -133,7 +134,7 @@ function response(status: string = 'applied'): DeviceV3SyncResponse {
     resource: asset
   };
   return {
-    projection_version: 5,
+    projection_version: V3_PROJECTION_VERSION,
     receipts: [receipt],
     changes: [sessionChange, assetChange],
     next_cursor: 'cursor-2',

@@ -3,10 +3,10 @@
  * Canonical schemas and enums remain in the Computer repository.
  */
 
-export const V3_CONTRACT_VERSION: string = '3.8.0';
-export const V3_PROJECTION_VERSION: number = 5;
-export const V3_CORE_SCHEMA_VERSION: number = 27;
-export const V3_PHONE_PROJECTION_SCHEMA_VERSION: number = 19;
+export const V3_CONTRACT_VERSION: string = '3.9.0';
+export const V3_PROJECTION_VERSION: number = 6;
+export const V3_CORE_SCHEMA_VERSION: number = 33;
+export const V3_PHONE_PROJECTION_SCHEMA_VERSION: number = 20;
 export const V3_UNKNOWN_ENUM_VALUE: string = 'unknown';
 export const V3_FEATURE_ENABLED_BY_DEFAULT: boolean = true;
 
@@ -54,9 +54,10 @@ export interface V3UtteranceDto {
 
 export interface V3ReminderDto {
   event_id: string;
-  session_id: string;
+  session_id: string|null;
   event_revision: number;
-  source_candidate_id: string;
+  source_candidate_id: string|null;
+  source_type?: string;
   title: string;
   actor_person_id: string;
   commitment_direction: string;
@@ -182,8 +183,10 @@ export function validateV3UtteranceDto(value: Object): V3UtteranceDto {
 
 export function validateV3ReminderDto(value: Object): V3ReminderDto {
   const reminder = value as V3ReminderDto;
-  if (!STABLE_ID.test(reminder.event_id) || !STABLE_ID.test(reminder.session_id) ||
-    !STABLE_ID.test(reminder.source_candidate_id) ||
+  const chat = reminder.source_type === 'chat_record';
+  if (!STABLE_ID.test(reminder.event_id) ||
+    (chat ? reminder.session_id !== null || reminder.source_candidate_id !== null :
+      reminder.session_id === null || !STABLE_ID.test(reminder.session_id) || reminder.source_candidate_id === null || !STABLE_ID.test(reminder.source_candidate_id)) ||
     !Number.isSafeInteger(reminder.event_revision) || reminder.event_revision < 1 ||
     typeof reminder.title !== 'string' || reminder.title.length === 0 ||
     typeof reminder.actor_person_id !== 'string' || reminder.actor_person_id.length === 0 ||

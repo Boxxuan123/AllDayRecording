@@ -27,11 +27,11 @@ import { PhoneCalendarMappingStore } from './PhoneCalendarMappingStore';
 import { PhoneReviewQueueStore } from './PhoneReviewQueueStore';
 
 const DATABASE_NAME: string = 'phone_v3_projection.db';
-const SCHEMA_VERSION: number = 19;
+const SCHEMA_VERSION: number = 20;
 const TABLES: Array<string> = [
   'projection_recordings', 'projection_audio_assets', 'projection_processing_runs',
   'projection_utterances', 'projection_review_items', 'projection_reminders',
-  'projection_daily_events', 'projection_daily_summaries'
+  'projection_chat_followups', 'projection_daily_events', 'projection_daily_summaries'
 ];
 const CREATE_STATEMENTS: Array<string> = [
   `CREATE TABLE IF NOT EXISTS projection_recordings (
@@ -288,7 +288,7 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
 
   async reminderOperations(): Promise<Array<PhonePendingOperation>> {
     const rows = await this.store.querySql(`SELECT operation_id,kind,base_revision,payload_json,
-      attempt_count,applied_revision FROM outbox WHERE kind IN ('reminder.review','reminder.task') ORDER BY created_at,rowid`);
+      attempt_count,applied_revision FROM outbox WHERE kind IN ('reminder.review','reminder.task','chat.followup') ORDER BY created_at,rowid`);
     const values: Array<PhonePendingOperation> = [];
     try {
       while (rows.goToNextRow()) {
@@ -644,7 +644,7 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
         if (pending.goToNextRow()) {
           const payload = JSON.parse(pending.getString(0)) as OperationDependencies;
           const selections = payload.selections ?? [];
-          const reminder = pending.getString(1).startsWith('reminder.');
+          const reminder = pending.getString(1).startsWith('reminder.') || pending.getString(1)==='chat.followup';
           if (pending.getString(1) === 'reminder.review') {
             const source = pending.getString(0);
             await this.store.executeSql(`DELETE FROM projection_review_items
@@ -678,6 +678,9 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
   }
 
   private async clearProjectedOperations(): Promise<void> {
+    await this.store.executeSql(`UPDATE outbox_resource_receipts SET projected=1 WHERE projected=0
+      AND operation_id IN (SELECT operation_id FROM outbox WHERE kind='chat.followup')
+      AND EXISTS (SELECT 1 FROM projection_chat_followups p WHERE p.resource_id=outbox_resource_receipts.resource_id AND p.revision>=outbox_resource_receipts.target_revision)`);
     await this.store.executeSql(`UPDATE outbox_resource_receipts SET projected=1 WHERE projected=0
       AND operation_id IN (SELECT operation_id FROM outbox WHERE kind IN ('reminder.review','reminder.task'))
       AND EXISTS (SELECT 1 FROM projection_reminders p WHERE p.resource_id=outbox_resource_receipts.resource_id
@@ -907,6 +910,12 @@ async function migrate(store: relationalStore.RdbStore): Promise<void> {
       // New resource types do not reset the existing cursor or audio bindings.
       await store.executeSql('UPDATE sync_state SET projection_version=5 WHERE singleton_id=1');
       store.version = 19;
+    }
+    if (store.version < 20) {
+      await store.executeSql(`CREATE TABLE IF NOT EXISTS projection_chat_followups (
+        resource_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, payload_json TEXT NOT NULL, updated_at INTEGER NOT NULL)`);
+      await store.executeSql('UPDATE sync_state SET projection_version=6 WHERE singleton_id=1');
+      store.version = 20;
     }
     store.commit();
   } catch (error) {

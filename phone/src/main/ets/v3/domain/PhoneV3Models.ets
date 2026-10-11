@@ -1,3 +1,4 @@
+import { ChatFollowup } from './PhoneChatFollowup';
 import { phoneV3SoundKind } from './PhoneV3SoundKind';
 import { annotationFacts, PhoneV3AnnotationFacts, AnnotationRow } from './PhoneV3AnnotationState';
 import { phoneV3PersonFact, phoneV3PersonUncertain, PhoneV3Evidence } from './PhoneV3PersonFact';
@@ -448,6 +449,7 @@ export class PhoneV3ReviewItem {
 }
 
 export class PhoneV3Snapshot {
+  chatFollowups: Array<ChatFollowup>;
   sessions: Array<PhoneV3SessionCard>;
   conflicts: Array<PhoneV3Conflict>;
   sync: PhoneV3SyncStatus;
@@ -457,13 +459,14 @@ export class PhoneV3Snapshot {
 
   constructor(sessions: Array<PhoneV3SessionCard> = [], conflicts: Array<PhoneV3Conflict> = [],
     sync: PhoneV3SyncStatus = new PhoneV3SyncStatus(), paired: boolean = false,
-    reminders: Array<PhoneV3Reminder> = [], reviewItems: Array<PhoneV3ReviewItem> = []) {
+    reminders: Array<PhoneV3Reminder> = [], reviewItems: Array<PhoneV3ReviewItem> = [], chatFollowups: Array<ChatFollowup> = []) {
     this.sessions = sessions;
     this.conflicts = conflicts;
     this.sync = sync;
     this.paired = paired;
     this.reminders = reminders;
     this.reviewItems = reviewItems;
+    this.chatFollowups = chatFollowups;
   }
 }
 

@@ -1,3 +1,4 @@
+import { ChatFollowup, ChatFollowupChanges, explicitChatTime } from '../domain/PhoneChatFollowup';
 import { annotationTiming } from '../application/PhoneAnnotationTiming';
 import { PhoneDailyCache, PhoneDailyEvidence } from '../domain/PhoneV3DailyModels';
 import { PhoneV3ReminderCommand, editedReminderTime } from '../domain/PhoneV3ReminderCommands';
@@ -485,7 +486,7 @@ export class PhoneV3ViewModel {
       const current = this.snapshot;
       const snapshot = new PhoneV3Snapshot(
         current.sessions, current.conflicts, current.sync, current.paired,
-        current.reminders, reviewItems);
+        current.reminders, reviewItems, current.chatFollowups);
       this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SNAPSHOT_READY,
         snapshot, undefined, '审核结果已保存到电脑'));
       onResolved();
@@ -512,7 +513,7 @@ export class PhoneV3ViewModel {
       const current = this.snapshot;
       this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SNAPSHOT_READY,
         new PhoneV3Snapshot(current.sessions, current.conflicts, current.sync, current.paired,
-          current.reminders, items)));
+          current.reminders, items, current.chatFollowups)));
       onResolved();
     }).catch((error: Object): void => {
       if (lifecycle === this.lifecycleGeneration) { this.fail(error); }
@@ -561,7 +562,7 @@ export class PhoneV3ViewModel {
     this.useCases.refreshReviews().then((items): void => {
       const current = this.snapshot;
       this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.SNAPSHOT_READY,
-        new PhoneV3Snapshot(current.sessions, current.conflicts, current.sync, current.paired, current.reminders, items)));
+        new PhoneV3Snapshot(current.sessions, current.conflicts, current.sync, current.paired, current.reminders, items, current.chatFollowups)));
       const all = phoneV3VoiceTasks(items).concat(phoneV3VoiceTasks(items, true));
       this.reviewSubmissions.forEach((pending: PhoneV3PendingReview, key: string): void => {
         if (pending.state === 'sending' || pending.state === 'queued' || pending.state === 'saving') { return; }
@@ -645,7 +646,7 @@ export class PhoneV3ViewModel {
         this.snapshot = new PhoneV3Snapshot(sessions, current.conflicts,
           new PhoneV3SyncStatus(status.cursor, status.lastServerTime, status.lastError,
             status.pendingOperations + operations.length, status.retryCount),
-          current.paired, current.reminders, current.reviewItems);
+          current.paired, current.reminders, current.reviewItems, current.chatFollowups);
         if (lifecycle !== this.lifecycleGeneration) { return; }
         this.clearError('已在手机保存，待同步到电脑');
         onSaved(true);
@@ -1015,8 +1016,34 @@ export class PhoneV3ViewModel {
     }).catch((error: Object): void => { if (generation === this.lifecycleGeneration) { this.fail(error); } });
   }
 
+  chatFollowupCommand(item: ChatFollowup, action: string, title: string = '', due: string = ''): void {
+    const useCases=this.useCases;
+    if(useCases===undefined || this.busy || item.pendingAction){return;}
+    const changes: ChatFollowupChanges = {};
+    if(action==='edit') {
+      if(!title.trim()){this.fail(new Error('请填写事项标题'));return;}
+      changes.title=title.trim();
+      if(due.trim()) {try{changes.at=explicitChatTime(due);}catch(error){this.fail(error as Object);return;}}
+    }
+    if(action==='confirm'){changes.category='self';}
+    if(action==='enable_reminder') {
+      try{changes.at=explicitChatTime(due);}catch(error){this.fail(error as Object);return;}
+      changes.confirm_current=true;
+    }
+    this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.BUSY,undefined,undefined,'正在保存聊天事项操作…'));
+    useCases.queueReminder('chat.followup',{event_id:item.event_id,action:action,changes:changes},item.revision).then(():void=>{
+      this.clearError('操作已保存在手机，等待电脑同步确认');this.refresh();this.synchronize();
+    }).catch((error:Object):void=>this.fail(error));
+  }
+
   reminderCommand(kind: string, targetId: string, action: string, revision: number | null = null,
     title: string = '', due: string = ''): void {
+    const chat=this.snapshot.chatFollowups.find((v:ChatFollowup):boolean=>v.event_id===targetId);
+    if(kind==='reminder.task' && chat!==undefined) {
+      let absolute='';
+      if(action==='reschedule'){try{absolute=editedReminderTime(due);}catch(error){this.fail(error as Object);return;}}
+      this.chatFollowupCommand(chat,action==='reschedule'?'edit':action,title,absolute);return;
+    }
     const useCases = this.useCases;
     if (useCases === undefined || this.busy) { return; }
     const command: PhoneV3ReminderCommand = { action: action };
