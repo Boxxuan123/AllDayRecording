@@ -2,6 +2,7 @@ import { ChatFollowup, ChatFollowupEvidence } from '../domain/PhoneChatFollowup'
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 @Component
 export struct PhoneV3ChatFollowupsSection {
+  @Prop eventId: string = '';
   @ObjectLink viewModel: PhoneV3ViewModel;
   @State private editing: string = '';
   @State private mode: string = '';
@@ -57,7 +58,7 @@ export struct PhoneV3ChatFollowupsSection {
     Column({space:12}) {
       Text(`聊天跟进（${this.viewModel.snapshot.chatFollowups.length}）`).width('100%').fontSize(16).fontWeight(FontWeight.Medium)
       if(this.viewModel.snapshot.chatFollowups.length===0){Text('Windows 接纳后，同步电脑即可查看聊天事项。').fontSize(13)}
-      ForEach(this.viewModel.snapshot.chatFollowups,(item:ChatFollowup)=>{this.card(item)},(item:ChatFollowup):string=>item.event_id)
+      ForEach(this.viewModel.snapshot.chatFollowups.filter((item: ChatFollowup): boolean => this.eventId.length === 0 || item.event_id === this.eventId),(item:ChatFollowup)=>{this.card(item)},(item:ChatFollowup):string=>item.event_id)
     }.width('100%').alignItems(HorizontalAlign.Start)
   }
 }

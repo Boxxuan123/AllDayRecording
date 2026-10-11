@@ -1,3 +1,4 @@
+import { PhoneUnifiedReview } from './PhoneUnifiedReview';
 export interface PhoneDailyParticipant {
   key: string;
   kind: string;
@@ -63,6 +64,7 @@ export interface PhoneDailyItem {
 }
 
 export interface PhoneDailyObjective {
+  unified_review?: PhoneUnifiedReview;
   date: string;
   headline: string;
   overview?: string;

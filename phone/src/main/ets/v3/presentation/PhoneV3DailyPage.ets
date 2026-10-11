@@ -1,3 +1,4 @@
+import { PhoneUnifiedReviewSection } from './PhoneUnifiedReviewSection';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 import { PhoneV3SessionCard } from '../domain/PhoneV3Models';
 import {
@@ -180,6 +181,9 @@ export struct PhoneV3DailyPage {
             .value(this.date).onSelect((_index: number, value: string): void => {
               this.date = value; this.selectedEventId = ''; this.showSecondary = false;
             })
+          if (this.summary()?.objective.unified_review !== undefined) {
+            PhoneUnifiedReviewSection({ viewModel:this.viewModel, review:this.summary()?.objective.unified_review, onOpenSession:this.onOpenSession })
+          }
           if (this.summary()?.objective.semantic_status === 'complete') {
             Text(this.displaySummaryText(this.summary()?.objective.headline ?? '')).fontSize(20).fontWeight(FontWeight.Bold)
             Text(this.displaySummaryText(this.summary()?.objective.overview ?? '')).fontSize(15).width('100%')

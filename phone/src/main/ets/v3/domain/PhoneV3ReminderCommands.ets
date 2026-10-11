@@ -1,3 +1,4 @@
+import { validCalendarFields } from './PhoneExplicitTime';
 import { ChatFollowupCommand, ChatFollowupChanges } from './PhoneChatFollowup';
 import { PhonePendingOperation } from '../data/PhoneSyncProjection';
 import { PhoneV3Reminder, PhoneV3ReviewItem } from './PhoneV3Models';
@@ -78,6 +79,8 @@ export function pendingReminderReview(item: PhoneV3ReviewItem,
 export function editedReminderTime(value: string): string {
   const local = value.trim().replace(' ', 'T');
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(local)) { throw new Error('时间格式应为 YYYY-MM-DD HH:mm'); }
+  if (!validCalendarFields(Number(local.slice(0,4)), Number(local.slice(5,7)), Number(local.slice(8,10)),
+    Number(local.slice(11,13)), Number(local.slice(14,16)))) { throw new Error('日期或时间不存在，请重新选择'); }
   const timestamp = Date.parse(local);
   if (!Number.isFinite(timestamp) || timestamp <= Date.now()) { throw new Error('请选择明确的未来时间'); }
   if (localReminderTime(new Date(timestamp).toISOString()).replace(' ', 'T') !== local) {

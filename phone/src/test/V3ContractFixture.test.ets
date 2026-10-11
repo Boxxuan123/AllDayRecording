@@ -15,7 +15,7 @@ import {
 // Generated with the fixture bodies. Python contract tests verify these receipts
 // against the canonical JSON files when both repositories are checked out.
 const CORE_FIXTURE_SHA256: string =
-  '3c843ab30c4e6aa194481bb5e56d15b48f4dc3dc6af0a09fd812dd6a34850c79';
+  'ba0de9926a017b827e73c16a23f16f2ac379499959b46442f51f3a023452a1aa';
 const FORWARD_FIXTURE_SHA256: string =
   '48b9953a58f50b18400bbff03c120052692e4b477f739bcab0c0c4d6304799c0';
 
@@ -32,7 +32,7 @@ interface IdentityEvidenceFixture {
 
 function canonicalFixture(): V3ContractFixture {
   return {
-    contract_version: '3.9.0',
+    contract_version: '3.9.1',
     recording_session: {
       state: 'ready_for_processing',
       status_code: 'ready'
@@ -48,7 +48,7 @@ function canonicalFixture(): V3ContractFixture {
 
 function futureEnumFixture(): V3ContractFixture {
   return {
-    contract_version: '3.9.0',
+    contract_version: '3.9.1',
     recording_session: {
       state: 'future_archived_state',
       status_code: 'future_aggregate_status'
@@ -74,7 +74,7 @@ export default function v3ContractFixtureTest() {
     it('decodesCanonicalComputerFixture', 0, () => {
       expect(CORE_FIXTURE_SHA256.length).assertEqual(64);
       expectDecoded(decodeV3ContractFixture(canonicalFixture()), {
-        contract_version: '3.9.0',
+        contract_version: '3.9.1',
         session_state: 'ready_for_processing',
         aggregate_status: 'ready',
         processing_status: 'running',
@@ -88,7 +88,7 @@ export default function v3ContractFixtureTest() {
     it('degradesUnknownEnumsAndKeepsV3EnabledByDefault', 0, () => {
       expect(FORWARD_FIXTURE_SHA256.length).assertEqual(64);
       expectDecoded(decodeV3ContractFixture(futureEnumFixture()), {
-        contract_version: '3.9.0',
+        contract_version: '3.9.1',
         session_state: 'unknown',
         aggregate_status: 'unknown',
         processing_status: 'unknown',

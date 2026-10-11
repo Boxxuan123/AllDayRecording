@@ -6,6 +6,7 @@ import { localReminderTime, reminderConflictMessage } from '../domain/PhoneV3Rem
 
 @Component
 export struct PhoneV3RemindersPage {
+  @Prop eventId: string = '';
   @ObjectLink viewModel: PhoneV3ViewModel;
   @State private editingId: string = '';
   @State private editedTitle: string = '';
@@ -115,7 +116,7 @@ export struct PhoneV3RemindersPage {
             .backgroundColor($r('app.color.surface_primary'))
             .borderRadius(16)
         } else {
-          ForEach(this.viewModel.snapshot.reminders, (reminder: PhoneV3Reminder) => {
+          ForEach(this.viewModel.snapshot.reminders.filter((item: PhoneV3Reminder): boolean => this.eventId.length === 0 || item.eventId === this.eventId), (reminder: PhoneV3Reminder) => {
             this.reminderCard(reminder)
           }, (reminder: PhoneV3Reminder): string => reminder.eventId)
         }

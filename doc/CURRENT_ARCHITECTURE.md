@@ -119,3 +119,7 @@ Phone/Watch 真机录音、系统 Calendar 和音频播放只有设备测试才�
 ## 2026-10-11 聊天事项手机接入
 
 契约 3.9.0 / 投影 6 / Core 33 / Phone 20。聊天事项使用现有 Event、人工操作、同步 outbox 和回执；chat_record 证据独立于录音身份。首次提醒由用户确认执行时间后进入现有 ReminderSchedule 与 Calendar Kit 专用日历。新进展保存同一 Event 的待审核变化，人工标题／状态受保护。本轮跨 UI、Transport、Storage，既有超 500 行 ViewModel／Repository 复审与验证结果见 [验收记录](CHAT_FOLLOWUP_PHONE_ACCEPTANCE_20261011.md)。代码接入完成；实机 NOT_RUN。
+
+## 统一每日回顾 V1（2026-10-11）
+
+复用 daily_summary 的稳定日期对象与修订，objective 增加可选 unified_review，Phone schema 20 不新增表。独立 domain 类型与证据组件消费已有同步和音频能力，聊天证据保持 record_id，不借用录音会话 ID。关联事项复用聊天跟进或已有提醒页的指定事件详情。跨 UI/Transport/Storage 变更已通过实际 SQLite、独立 Debug/Release；本轮无设备，Hypium 与基线 lint 限制见脱敏验收记录。

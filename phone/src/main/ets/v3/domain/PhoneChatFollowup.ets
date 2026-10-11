@@ -1,3 +1,4 @@
+import { parseExplicitTime } from './PhoneExplicitTime';
 import { PhonePendingOperation } from '../data/PhoneSyncProjection';
 export interface ChatFollowupTime { expression?: string; date?: string|null; at?: string|null; timezone?: string|null; uncertainty?: string|null; }
 export interface ChatFollowupEvidence { source_type: string; record_id: string; record_revision: number; platform: string; sent_at: number|null; quote: string; is_from_self: boolean|null; speaker: string; context: Object; }
@@ -13,8 +14,9 @@ export function validateChatFollowup(value: Object): ChatFollowup {
 }
 export function explicitChatTime(value: string): string {
   const time = value.trim();
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:\d{2})$/.test(time) || !Number.isFinite(Date.parse(time)) || Date.parse(time)<=Date.now()) { throw new Error('请确认明确的未来时间，包含时区偏移，例如 2026-10-12T09:00+08:00'); }
-  return new Date(time).toISOString();
+  const timestamp = parseExplicitTime(time);
+  if (timestamp <= Date.now()) { throw new Error('请确认明确的未来时间，包含时区偏移，例如 2030-10-12T09:00+08:00'); }
+  return new Date(timestamp).toISOString();
 }
 export function overlayChatCommands(items: Array<ChatFollowup>, commands: Array<PhonePendingOperation>): Array<ChatFollowup> {
   for(let op of commands) {
