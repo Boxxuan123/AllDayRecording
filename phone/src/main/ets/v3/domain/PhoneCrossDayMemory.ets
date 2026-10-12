@@ -3,6 +3,8 @@ export function safeMemoryText(value:string):string {
   if(/<(?:msg|appmsg|img|video|refermsg)\b|(?:aeskey|cdnthumbaeskey|access.?token|authkey|encryptkey|password|signature)\s*[=：:]/i.test(value)) {
     return /<img\b/i.test(value)?'收到图片，内容未解析':'附件访问材料已省略；请在来源中查看有效文字';
   }
+  const opaque=/^(?:1\d{10}|@(?=[A-Za-z\d_]*[A-Za-z])(?=[A-Za-z\d_]*\d)[A-Za-z\d_]{8,})$/;
+  value=value.split(/([;；])/g).map((part:string):string=>opaque.test(part.trim())?'独立账号或访问字符串已省略，请在来源中查看':part).join('');
   return value.replace(/https?:\/\/[^\s<>"']+/g,(url:string):string=>url.split(/[?#]/)[0].replace(/^(https?:\/\/)[^/@]+@/,'$1'));
 }
 export interface MemoryContact { id:string; label:string; identity_basis:string; platform:string; person_id?:string; last_evidence_at?:string; discussion_ids:Array<string>; }
@@ -11,13 +13,16 @@ export interface MemoryDiscussion { id:string; title:string; summary?:string; co
 export interface MemoryThing { id:string; title:string; discussion_ids:Array<string>; progress:string; last_evidence_at?:string; needs_confirmation:boolean; }
 export interface MemoryTopic { label:string; discussion_ids:Array<string>; }
 export interface MemoryCandidate { source:string; target:string; reason:string; }
-export interface MemoryCoverage { missing_sources:Array<string>; }
+export interface MemoryIncremental { deferred_discussions:number; excluded_discussions:number; discussion_limit:number; }
+export interface MemoryCoverage { missing_sources:Array<string>; incremental?:MemoryIncremental; }
 export interface MemoryScope { first:string; last:string; timezone:string; coverage:MemoryCoverage; }
 export interface MemoryIndex { id:string; revision:number; status:string; scope:MemoryScope; people:Array<MemoryContact>; discussions:Array<MemoryDiscussion>; things:Array<MemoryThing>; topics:Array<MemoryTopic>; candidates:Array<MemoryCandidate>; }
 export interface MemoryCommand { source:string; target:string; action:string; }
 export function validateMemoryIndex(value:Object):MemoryIndex {
   const v=value as MemoryIndex;
   if(!Number.isSafeInteger(v.revision)||v.revision<1||!Array.isArray(v.discussions)||v.discussions.length>7||!Array.isArray(v.people)||v.people.length>3||!Array.isArray(v.things)||!Array.isArray(v.topics)||v.topics.length>3||!Array.isArray(v.candidates)||v.scope.timezone!=='Asia/Singapore') { throw new Error('跨天记忆投影无效'); }
+  const incremental=v.scope.coverage.incremental;
+  if(incremental!==undefined&&(!Number.isSafeInteger(incremental.deferred_discussions)||incremental.deferred_discussions<0||!Number.isSafeInteger(incremental.excluded_discussions)||incremental.excluded_discussions<0||incremental.discussion_limit!==7)){throw new Error('增量范围统计无效');}
   const ids=new Set<string>();
   for(let r of v.discussions) {
     if(ids.has(r.id)||!Array.isArray(r.evidence)||r.evidence.length<1||r.evidence.length>8||!['valid','source_changed_or_missing'].includes(r.evidence_status)) {throw new Error('讨论依据无效');}

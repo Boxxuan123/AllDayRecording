@@ -17,5 +17,8 @@ const raw={id:'fictional',revision:1,status:'ready',scope:{first:'2026-10-05',la
  assert.equal(projected.discussions[0].summary,raw.discussions[0].summary);
  assert.equal(safeMemoryText('https://user:secret@files.example/download?token='+secret),'https://files.example/download');
  assert.deepEqual(validateMemoryIndex(JSON.parse(saved.payloadJson)),projected);
+ assert.ok(!safeMemoryText('13900000000；@Fictional12345').includes('Fictional12345'));
+ const bad=JSON.parse(JSON.stringify(raw));bad.scope.coverage.incremental={deferred_discussions:-1,excluded_discussions:0,discussion_limit:7};assert.throws(()=>validateMemoryIndex(bad),/增量范围统计无效/);
+ const current=JSON.parse(JSON.stringify(raw));current.scope.coverage.incremental={deferred_discussions:24,excluded_discussions:3,discussion_limit:7};assert.equal(validateMemoryIndex(current).scope.coverage.incremental.deferred_discussions,24);
  console.log('PASS old offline memory cache + replay validation redact attachment access materials; source IDs/revisions/time/cursor and factual summary preserved; zero models');
 })().catch(e=>{console.error(e);process.exitCode=1;}).finally(()=>{for(const s of stores)s.db.close();fs.rmSync(temp,{recursive:true,force:true});});

@@ -81,6 +81,7 @@ export struct PhoneCrossDayMemorySection {
       else {
         Text(`${this.index()?.scope.first??''} 至 ${this.index()?.scope.last??''} · Asia/Singapore`).fontSize(13)
         if((this.index()?.scope.coverage.missing_sources.length??0)>0){Text(`资料缺失：${this.index()?.scope.coverage.missing_sources.join('、')??''}`).fontSize(13)}
+        if((this.index()?.scope.coverage.incremental?.deferred_discussions??0)>0){Text(`本轮容量已满，还有 ${this.index()?.scope.coverage.incremental?.deferred_discussions??0} 段讨论未纳入。请在电脑缩小范围后更新；已有记录与人工决定保留。`).fontSize(13)}
         if(this.viewModel.snapshot.memoryPending){Text('人工关联操作已保存，等待电脑同步回执；原记录保留。').fontSize(13)}
         if(this.index()?.status==='no_data'){Text('已选范围尚无可用讨论。').fontSize(14)}
         Button('全部讨论').onClick(():void=>{this.person='';this.thing='';this.topic='';})
