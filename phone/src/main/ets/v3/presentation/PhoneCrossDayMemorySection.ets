@@ -87,21 +87,21 @@ export struct PhoneCrossDayMemorySection {
           Text(`${p.label} · ${p.platform}`).fontSize(17).fontWeight(FontWeight.Medium)
           Text(`${p.identity_basis} · 最后证据 ${this.time(p.last_evidence_at)}`).fontSize(12)
           Button('最近互动与涉及的事情').onClick(():void=>{this.person=p.id;this.thing='';this.topic='';})
-        },(p:MemoryContact):string=>p.id)
+        },(p:MemoryContact):string=>p.id+':'+String(this.index()?.revision??0))
         ForEach(this.index()?.things.filter((t:MemoryThing):boolean=>this.person.length===0||this.index()?.discussions.some((r:MemoryDiscussion):boolean=>t.discussion_ids.includes(r.id)&&r.contacts.some((p:MemoryContact):boolean=>p.id===this.person))===true)??[],(t:MemoryThing)=>{
           Text(`${t.title} · ${t.discussion_ids.length} 次记录`).fontSize(15).onClick(():void=>{this.thing=t.id;this.topic='';this.person='';})
           if(this.thing===t.id){Text(`${t.progress} · 最后证据 ${this.time(t.last_evidence_at)}`).fontSize(12)}
-        },(t:MemoryThing):string=>t.id)
+        },(t:MemoryThing):string=>t.id+':'+String(this.index()?.revision??0))
         Text('同一话题下的独立讨论').fontSize(16)
-        ForEach(this.index()?.topics??[],(t:MemoryTopic)=>{Button(`${t.label} · ${t.discussion_ids.length} 次讨论`).onClick(():void=>{this.topic=t.label;this.thing='';this.person='';})},(t:MemoryTopic):string=>t.label)
+        ForEach(this.index()?.topics??[],(t:MemoryTopic)=>{Button(`${t.label} · ${t.discussion_ids.length} 次讨论`).onClick(():void=>{this.topic=t.label;this.thing='';this.person='';})},(t:MemoryTopic):string=>t.label+':'+String(this.index()?.revision??0))
         Text('话题词语索引不代表同一事情、用户观点或长期偏好。').fontSize(12)
-        ForEach(this.rows(),(r:MemoryDiscussion)=>{this.discussion(r)},(r:MemoryDiscussion):string=>r.id)
+        ForEach(this.rows(),(r:MemoryDiscussion)=>{this.discussion(r)},(r:MemoryDiscussion):string=>r.id+':'+String(this.index()?.revision??0))
         ForEach(this.index()?.candidates??[],(c:MemoryCandidate)=>{
           Text(c.reason).fontSize(13)
           Text(`${this.index()?.discussions.find((r:MemoryDiscussion):boolean=>r.id===c.source)?.title??''} ↔ ${this.index()?.discussions.find((r:MemoryDiscussion):boolean=>r.id===c.target)?.title??''}`).fontSize(13)
           Button('关联到这件事').enabled(this.canOperate()).onClick(():void=>this.decide(c.source,c.target,'link'))
           Button('不是同一件事').enabled(this.canOperate()).onClick(():void=>this.decide(c.source,c.target,'reject'))
-        },(c:MemoryCandidate):string=>c.source+c.target)
+        },(c:MemoryCandidate):string=>c.source+c.target+':'+String(this.index()?.revision??0))
       }
     }.width('100%').alignItems(HorizontalAlign.Start).padding(12).bindSheet(this.showTask,this.taskSheet())
   }
