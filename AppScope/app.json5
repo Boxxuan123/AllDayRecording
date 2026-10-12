@@ -2,9 +2,9 @@
   "app": {
     "bundleName": "AllDayRecording.huawei.com",
     "vendor": "huawei.com",
-    "versionCode": 1000007,
-    "versionName": "1.0.7",
-    "buildVersion": "7",
+    "versionCode": 1000008,
+    "versionName": "1.0.8",
+    "buildVersion": "8",
     "icon": "$media:layered_image",
     "label": "$string:app_name",
     "configuration": "$profile:font_configuration"

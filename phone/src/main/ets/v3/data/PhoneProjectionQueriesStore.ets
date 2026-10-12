@@ -150,6 +150,7 @@ export function projectionTable(resourceType: string): string {
     case 'processing_run': return 'projection_processing_runs';
     case 'utterance': return 'projection_utterances';
     case 'review_item': return 'projection_review_items';
+    case 'memory_index': return 'projection_memory_indexes';
     case 'chat_followup': return 'projection_chat_followups';
     case 'reminder': return 'projection_reminders';
     case 'daily_event': return 'projection_daily_events';

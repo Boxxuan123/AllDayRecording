@@ -3,10 +3,10 @@
  * Canonical schemas and enums remain in the Computer repository.
  */
 
-export const V3_CONTRACT_VERSION: string = '3.9.1';
-export const V3_PROJECTION_VERSION: number = 6;
-export const V3_CORE_SCHEMA_VERSION: number = 33;
-export const V3_PHONE_PROJECTION_SCHEMA_VERSION: number = 20;
+export const V3_CONTRACT_VERSION: string = '3.10.0';
+export const V3_PROJECTION_VERSION: number = 7;
+export const V3_CORE_SCHEMA_VERSION: number = 34;
+export const V3_PHONE_PROJECTION_SCHEMA_VERSION: number = 21;
 export const V3_UNKNOWN_ENUM_VALUE: string = 'unknown';
 export const V3_FEATURE_ENABLED_BY_DEFAULT: boolean = true;
 

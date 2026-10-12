@@ -1,3 +1,4 @@
+import { MemoryIndex } from './PhoneCrossDayMemory';
 import { ChatFollowup } from './PhoneChatFollowup';
 import { phoneV3SoundKind } from './PhoneV3SoundKind';
 import { annotationFacts, PhoneV3AnnotationFacts, AnnotationRow } from './PhoneV3AnnotationState';
@@ -449,6 +450,8 @@ export class PhoneV3ReviewItem {
 }
 
 export class PhoneV3Snapshot {
+  memoryIndex: MemoryIndex | undefined = undefined;
+  memoryPending: boolean = false;
   chatFollowups: Array<ChatFollowup>;
   sessions: Array<PhoneV3SessionCard>;
   conflicts: Array<PhoneV3Conflict>;

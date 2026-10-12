@@ -1,3 +1,4 @@
+import { validateMemoryIndex } from '../domain/PhoneCrossDayMemory';
 import { validateChatFollowup } from '../domain/PhoneChatFollowup';
 import {
   DeviceV3Change,
@@ -16,7 +17,7 @@ const STABLE_ID: RegExp = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-
 const CURSOR: RegExp = /^(cursor-(0|[1-9][0-9]*)|snapshot-v1-(0|[1-9][0-9]*)-(0|[1-9][0-9]*))$/;
 const RESOURCE_TYPES: Array<string> = [
   'recording_session', 'audio_asset', 'processing_run', 'utterance', 'review_item', 'reminder',
-  'chat_followup', 'daily_event', 'daily_summary'
+  'memory_index', 'chat_followup', 'daily_event', 'daily_summary'
 ];
 
 export interface PhonePendingOperation extends DeviceV3ClientOperation {
@@ -125,6 +126,7 @@ export function validateSyncResponse(response: DeviceV3SyncResponse): void {
       validateV3ReminderDto(change.resource as Object);
     }
     if(change.resource_type==='chat_followup' && change.operation==='upsert') { validateChatFollowup(change.resource as Object); }
+    if(change.resource_type==='memory_index' && change.operation==='upsert') { validateMemoryIndex(change.resource as Object); }
     validateDailyChange(change);
     previousSequence = change.sequence;
   }

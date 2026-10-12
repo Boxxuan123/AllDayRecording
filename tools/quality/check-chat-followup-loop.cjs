@@ -32,9 +32,9 @@ const due=new Date(Date.now()+3600000).toISOString(),due2=new Date(Date.now()+72
   const oldStore=stores.at(-1),legacy=oldStore.db;
   legacy.exec("DROP TABLE projection_chat_followups; UPDATE sync_state SET projection_version=5,cursor='cursor-123'; INSERT INTO outbox(operation_id,kind,base_revision,payload_json,created_at) VALUES('legacy-op','reminder.task',2,'{\"event_id\":\"legacy-event\",\"action\":\"complete\"}',1); INSERT INTO calendar_reminder_account VALUES(1,6); INSERT INTO calendar_reminder_mappings VALUES('legacy-event',6,77,'2030-10-12T06:00:00Z','Legacy synthetic','scheduled','')");
   const capture=()=>['outbox','calendar_reminder_mappings','calendar_reminder_account'].map(t=>legacy.prepare('SELECT * FROM '+t).all());
-  const retained=capture();oldStore.version=19;await Repository.open({databasePath:legacyPath});assert.equal(stores.at(-1).version,20);assert.deepEqual(capture(),retained);assert.equal(legacy.prepare('SELECT cursor FROM sync_state').get().cursor,'cursor-123');assert.equal(legacy.prepare('SELECT projection_version FROM sync_state').get().projection_version,6);
+  const retained=capture();oldStore.version=19;await Repository.open({databasePath:legacyPath});assert.equal(stores.at(-1).version,21);assert.deepEqual(capture(),retained);assert.equal(legacy.prepare('SELECT cursor FROM sync_state').get().cursor,'cursor-123');assert.equal(legacy.prepare('SELECT projection_version FROM sync_state').get().projection_version,7);
   await Repository.open({databasePath:legacyPath});assert.deepEqual(capture(),retained);
-  console.log('PASS populated Phone schema 19 → 20: queue/cursor/Calendar binding preserved; repeat upgrade idempotent');
+  console.log('PASS populated Phone schema 19 → 21: queue/cursor/Calendar binding preserved; repeat upgrade idempotent');
 
   const context={databasePath:path.join(temp,'phone.sqlite3')};repo=await Repository.open(context);
   await apply(repo,peer());let snap=await snapshot();assert.equal(snap.chatFollowups.length,1);assert.equal(snap.reminders.length,0);

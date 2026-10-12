@@ -1,3 +1,4 @@
+import { MemoryCommand } from '../domain/PhoneCrossDayMemory';
 import { annotationTiming } from './PhoneAnnotationTiming';
 import { PhoneV3AnnotationCommands } from './PhoneV3AnnotationCommands';
 import { PhoneV3ProjectionQueries } from './PhoneV3ProjectionQueries';
@@ -206,6 +207,15 @@ export class PhoneV3UseCases implements ReviewAudioPrefetchPort {
     return false;
   }
 
+  async queueMemory(payload:MemoryCommand, revision:number):Promise<void> {
+    await this.repository.beginTransaction();
+    try {
+      if((this.repository.reminderOperations===undefined ? await this.repository.pendingOperations() : await this.repository.reminderOperations()).some((op):boolean=>op.kind==='memory.link')) {throw new Error('已有记忆操作待同步，请先同步');}
+      await this.repository.enqueue({operation_id:newOperationId(),kind:'memory.link',base_revision:revision,payload:payload});
+      await this.repository.commit();
+    } catch(error) {await this.repository.rollback();throw error as Error;}
+  }
+
   async queueReminder(kind: string, payload: PhoneV3ReminderCommand, revision: number | null = null): Promise<void> {
     if (['reminder.review', 'reminder.task', 'chat.followup'].indexOf(kind) < 0) { throw new Error('提醒操作无效'); }
     await this.repository.beginTransaction();
@@ -251,7 +261,8 @@ export class PhoneV3UseCases implements ReviewAudioPrefetchPort {
         session.revision,session.updatedAt,session.localPaths,session.sizeBytes,session.durationMs,session.uploadStatus,
         session.processingStatus,session.processingStage,session.processingProgress,merged);
     });
-    return new PhoneV3Snapshot(sessions,snapshot.conflicts,status,snapshot.paired,snapshot.reminders,snapshot.reviewItems, snapshot.chatFollowups);
+    const next=new PhoneV3Snapshot(sessions,snapshot.conflicts,status,snapshot.paired,snapshot.reminders,snapshot.reviewItems, snapshot.chatFollowups);
+    next.memoryIndex=snapshot.memoryIndex;next.memoryPending=snapshot.memoryPending;return next;
   }
 
   async queueUtteranceCorrection(utterance: PhoneV3Utterance,
@@ -468,8 +479,9 @@ export class PhoneV3UseCases implements ReviewAudioPrefetchPort {
 
   async refreshReviewSnapshot(snapshot: PhoneV3Snapshot): Promise<PhoneV3Snapshot> {
     const reviews = phoneV3ReviewItems(await this.repository.projectionRows('review_item'));
-    return new PhoneV3Snapshot(snapshot.sessions, snapshot.conflicts, snapshot.sync,
+    const next=new PhoneV3Snapshot(snapshot.sessions, snapshot.conflicts, snapshot.sync,
       snapshot.paired, snapshot.reminders, await this.withPendingPurity(reviews), snapshot.chatFollowups);
+    next.memoryIndex=snapshot.memoryIndex;next.memoryPending=snapshot.memoryPending;return next;
   }
 
   private async withPendingPurity(items: Array<PhoneV3ReviewItem>): Promise<Array<PhoneV3ReviewItem>> {

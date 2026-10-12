@@ -1,3 +1,4 @@
+import { validateMemoryIndex } from '../domain/PhoneCrossDayMemory';
 import { ChatFollowup, validateChatFollowup, overlayChatCommands } from '../domain/PhoneChatFollowup';
 import { PhoneDailyCache, PhoneDailyEvent, PhoneDailySummary } from '../domain/PhoneV3DailyModels';
 import { overlayReminderCommands, pendingReminderReview } from '../domain/PhoneV3ReminderCommands';
@@ -109,11 +110,15 @@ export class PhoneV3ProjectionQueries {
           });
       }
     }
-    return new PhoneV3Snapshot(
+    const snapshot = new PhoneV3Snapshot(
       sessions,
       conflicts, status, paired, reminderValues, overlayPendingPurityReviews(phoneV3ReviewItems(reviews).filter(
         (item: PhoneV3ReviewItem): boolean => !pendingReminderReview(item, commands)),
         await this.repository.pendingPurityReviews()), overlayChatCommands(chatRows.map((row:PhoneV3ProjectionRow):ChatFollowup=>validateChatFollowup(JSON.parse(row.payloadJson) as Object)), commands));
+    const memoryRows = await this.repository.projectionRows('memory_index');
+    snapshot.memoryIndex = memoryRows.length > 0 ? validateMemoryIndex(JSON.parse(memoryRows[0].payloadJson) as Object) : undefined;
+    snapshot.memoryPending = commands.some((op):boolean => op.kind === 'memory.link');
+    return snapshot;
   }
 
   async loadSessionUtterancePage(card: PhoneV3SessionCard, targetCount: number): Promise<void> {

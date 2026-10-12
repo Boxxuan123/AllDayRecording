@@ -188,9 +188,9 @@ export struct PhoneV3ReviewInboxPage {
         this.decisionButton('不提醒', false, true, (): void =>
           this.viewModel.reminderCommand('reminder.review', item.sourceId, 'ignore'))
       } else if (item.kind === 'person_memory') {
-        this.decisionButton('记住', true, true, (): void =>
+        this.decisionButton(item.contextJson.includes('memory_association')?'关联到这件事':'记住', true, true, (): void =>
           this.viewModel.resolveReview(item.reviewId, 'confirm'))
-        this.decisionButton('不记住', false, true, (): void =>
+        this.decisionButton(item.contextJson.includes('memory_association')?'不是同一件事':'不记住', false, true, (): void =>
           this.viewModel.resolveReview(item.reviewId, 'reject'))
       } else if (item.kind === 'knowledge_proposal') {
         this.decisionButton('确认事件', true, true, (): void =>

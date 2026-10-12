@@ -1,3 +1,4 @@
+import { PhoneCrossDayMemorySection } from './PhoneCrossDayMemorySection';
 import { phoneV3PendingReviews } from '../domain/PhoneV3ReviewModels';
 import { PhoneV3SessionCard, PhoneV3Utterance } from '../domain/PhoneV3Models';
 import { phoneV3SpeakerKey } from '../domain/PhoneV3PeopleGrouping';
@@ -74,6 +75,7 @@ export struct PhoneV3PeoplePage {
   }
   build() {
     List({ space: 4 }) {
+      ListItem() { PhoneCrossDayMemorySection({viewModel:this.viewModel,onOpenSession:this.onOpenSession}) }
       if (this.pendingPeopleReviews() > 0) {
         ListItem() {
           Row() {

@@ -15,9 +15,9 @@ import {
 // Generated with the fixture bodies. Python contract tests verify these receipts
 // against the canonical JSON files when both repositories are checked out.
 const CORE_FIXTURE_SHA256: string =
-  'ba0de9926a017b827e73c16a23f16f2ac379499959b46442f51f3a023452a1aa';
+  '37d91400c3f6b828c85690ed0c644a9f78b3acb8077d35560e1f295abf9e9c7a';
 const FORWARD_FIXTURE_SHA256: string =
-  '48b9953a58f50b18400bbff03c120052692e4b477f739bcab0c0c4d6304799c0';
+  'f1e52653fd209201e21493d8eaf7093254fb65f33282c9ae09671c0e58744734';
 
 interface UtteranceEvidenceFixture {
   media_id: string;

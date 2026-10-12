@@ -123,3 +123,8 @@ Phone/Watch 真机录音、系统 Calendar 和音频播放只有设备测试才�
 ## 统一每日回顾 V1（2026-10-11）
 
 复用 daily_summary 的稳定日期对象与修订，objective 增加可选 unified_review，Phone schema 20 不新增表。独立 domain 类型与证据组件消费已有同步和音频能力，聊天证据保持 record_id，不借用录音会话 ID。关联事项复用聊天跟进或已有提醒页的指定事件详情。跨 UI/Transport/Storage 变更已通过实际 SQLite、独立 Debug/Release；本轮无设备，Hypium 与基线 lint 限制见脱敏验收记录。
+
+
+## 2026-10-12 Cross-day memory V1
+
+Phone 1.0.8 uses contract 3.10.0 / projection 7 / Core 34 / Phone 21. memory_index is a bounded, rebuildable original-evidence projection. memory.link uses existing transactions, operation IDs, offline outbox, CAS receipts and conflict records. It owns no task status, voice eligibility, or Calendar state. Existing large ViewModel/Repository changes are restricted to dispatch/query integration; source validation and UI live in dedicated PhoneCrossDayMemory and PhoneCrossDayMemorySection. Synthetic actual SQLite peer checks, migrations, replay/conflict checks and signed builds passed; device installation/UI NOT_RUN. See CROSS_DAY_MEMORY_V1.md.

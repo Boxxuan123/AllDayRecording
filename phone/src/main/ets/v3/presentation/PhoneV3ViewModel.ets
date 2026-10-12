@@ -1016,6 +1016,15 @@ export class PhoneV3ViewModel {
     }).catch((error: Object): void => { if (generation === this.lifecycleGeneration) { this.fail(error); } });
   }
 
+  memoryCommand(source:string,target:string,action:string,revision:number):void {
+    const useCases=this.useCases;
+    if(useCases===undefined||this.busy||this.snapshot.memoryPending) {return;}
+    this.dispatch(new PhoneV3UiAction(PhoneV3UiActionType.BUSY,undefined,undefined,'正在保存记忆关联操作…'));
+    useCases.queueMemory({source:source,target:target,action:action},revision).then(():void=>{
+      this.clearError('关联操作已保存，等待电脑同步确认');this.refresh();this.synchronize();
+    }).catch((error:Object):void=>this.fail(error));
+  }
+
   chatFollowupCommand(item: ChatFollowup, action: string, title: string = '', due: string = ''): void {
     const useCases=this.useCases;
     if(useCases===undefined || this.busy || item.pendingAction){return;}
