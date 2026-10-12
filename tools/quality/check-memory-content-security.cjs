@@ -1,0 +1,21 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+const {Repository,stores,root}=require('./phone-sqlite-harness.cjs');
+const {validateMemoryIndex,safeMemoryText}=require(path.join(root,'domain/PhoneCrossDayMemory.ets'));
+const temp=fs.mkdtempSync(path.join(os.tmpdir(),'memory-security-'));
+const secret='SYNTHETIC_PRIVATE_ACCESS';
+const xml=`<msg><img aeskey="${secret}" cdnthumbaeskey="${secret}" cdnthumburl="https://files.example/download?token=${secret}"/></msg>`;
+const raw={id:'fictional',revision:1,status:'ready',scope:{first:'2026-10-05',last:'2026-10-07',timezone:'Asia/Singapore',coverage:{missing_sources:[]}},people:[],things:[],topics:[],candidates:[],discussions:[{id:'fictional-discussion',title:'fictional',summary:'准备婉拒，尚未确认是否实际回复',contacts:[],thing_id:'fictional-discussion',link_basis:'independent_discussion',occurred_at:'2026-10-05T01:22:21Z',evidence_status:'valid',pending_change:false,evidence:[{source_type:'chat',quote:xml,revision:1,occurred_at:'2026-10-05T01:42:18Z',speaker:'fictional',assertion:'未核实',status:'valid'}]}]};
+(async()=>{
+ const ctx={databasePath:path.join(temp,'phone.db')};let repo=await Repository.open(ctx);
+ stores[stores.length-1].db.prepare('INSERT INTO projection_memory_indexes VALUES(?,?,?,?)').run('fictional',1,JSON.stringify(raw),123);
+ const cursor=await repo.currentCursor();repo=await Repository.open(ctx);
+ const saved=(await repo.projectionRows('memory_index'))[0];
+ assert.equal(saved.revision,1);assert.equal(saved.updatedAt,123);assert.equal(await repo.currentCursor(),cursor);
+ assert.ok(!saved.payloadJson.includes(secret));assert.ok(!saved.payloadJson.includes('aeskey'));
+ const projected=validateMemoryIndex(JSON.parse(JSON.stringify(raw)));
+ assert.equal(projected.discussions[0].evidence[0].quote,'收到图片，内容未解析');
+ assert.equal(projected.discussions[0].summary,raw.discussions[0].summary);
+ assert.equal(safeMemoryText('https://user:secret@files.example/download?token='+secret),'https://files.example/download');
+ assert.deepEqual(validateMemoryIndex(JSON.parse(saved.payloadJson)),projected);
+ console.log('PASS old offline memory cache + replay validation redact attachment access materials; source IDs/revisions/time/cursor and factual summary preserved; zero models');
+})().catch(e=>{console.error(e);process.exitCode=1;}).finally(()=>{for(const s of stores)s.db.close();fs.rmSync(temp,{recursive:true,force:true});});

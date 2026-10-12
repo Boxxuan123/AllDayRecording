@@ -1,3 +1,4 @@
+import { validateMemoryIndex } from '../domain/PhoneCrossDayMemory';
 import { common } from '@kit.AbilityKit';
 import { relationalStore } from '@kit.ArkData';
 import {
@@ -136,6 +137,13 @@ export class PhoneProjectionRepository implements PhoneV3ProjectionRepositoryPor
     };
     const store = await relationalStore.getRdbStore(context, config);
     await migrate(store);
+    // Security cleanup of the one bounded index, including offline caches from 1.0.8.
+    // Keep resource revisions/timestamps, queue, cursor and every original unchanged.
+    const rows=await new PhoneProjectionQueriesStore(store).projectionRows('memory_index');
+    for(let row of rows) {
+      const safe=JSON.stringify(validateMemoryIndex(JSON.parse(row.payloadJson) as Object));
+      if(safe!==row.payloadJson){await store.executeSql('UPDATE projection_memory_indexes SET payload_json=? WHERE resource_id=? AND revision=?',[safe,row.resourceId,row.revision]);}
+    }
     return new PhoneProjectionRepository(store);
   }
 

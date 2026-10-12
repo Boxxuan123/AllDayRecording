@@ -18,7 +18,7 @@ export struct PhoneCrossDayMemorySection {
   private time(value:string|undefined):string {
     if(typeof value!=='string'||value.length===0){return '证据已失效';}
     const d=new Date(new Date(value).getTime()+8*60*60*1000);
-    return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')} ${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`;
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')} ${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}:${String(d.getUTCSeconds()).padStart(2,'0')}`;
   }
   private index():MemoryIndex|undefined {return this.viewModel.snapshot.memoryIndex;}
   private rows():Array<MemoryDiscussion> {
@@ -44,6 +44,7 @@ export struct PhoneCrossDayMemorySection {
     Column({space:8}) {
       Text(r.title).fontSize(16).fontWeight(FontWeight.Medium).onClick(():void=>{this.expanded=this.expanded===r.id?'':r.id;})
       Text(`${this.time(r.occurred_at)} · ${r.link_basis==='existing_event'?'已有事件依据':r.link_basis==='human_confirmed'?'人工关联':'独立讨论'}`).fontSize(12)
+      if(typeof r.summary==='string'){Text(r.summary).fontSize(15)}
       if(r.evidence_status!=='valid'){Text('证据已变化／缺失；以下为原修订，不能继续当作已确认事实。').fontColor($r('app.color.brand_warning'))}
       Button(this.expanded===r.id?'收起原文':'查看原文依据').onClick(():void=>{this.expanded=this.expanded===r.id?'':r.id;})
       if(this.expanded===r.id) {
@@ -94,7 +95,7 @@ export struct PhoneCrossDayMemorySection {
         },(t:MemoryThing):string=>t.id+':'+String(this.index()?.revision??0))
         Text('同一话题下的独立讨论').fontSize(16)
         ForEach(this.index()?.topics??[],(t:MemoryTopic)=>{Button(`${t.label} · ${t.discussion_ids.length} 次讨论`).onClick(():void=>{this.topic=t.label;this.thing='';this.person='';})},(t:MemoryTopic):string=>t.label+':'+String(this.index()?.revision??0))
-        Text('话题词语索引不代表同一事情、用户观点或长期偏好。').fontSize(12)
+        Text('话题按讨论内容分组，不代表同一事情、用户观点或长期偏好。').fontSize(12)
         ForEach(this.rows(),(r:MemoryDiscussion)=>{this.discussion(r)},(r:MemoryDiscussion):string=>r.id+':'+String(this.index()?.revision??0))
         ForEach(this.index()?.candidates??[],(c:MemoryCandidate)=>{
           Text(c.reason).fontSize(13)
