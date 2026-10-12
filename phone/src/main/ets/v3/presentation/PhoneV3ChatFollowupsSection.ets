@@ -1,4 +1,4 @@
-import { ChatFollowup, ChatFollowupEvidence } from '../domain/PhoneChatFollowup';
+import { ChatFollowup, ChatFollowupEvidence, explicitChatTime } from '../domain/PhoneChatFollowup';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 @Component
 export struct PhoneV3ChatFollowupsSection {
@@ -8,6 +8,16 @@ export struct PhoneV3ChatFollowupsSection {
   @State private mode: string = '';
   @State private title: string = '';
   @State private at: string = '';
+  @State private inputError: string = '';
+  private save(item: ChatFollowup): void {
+    if (this.mode === 'enable_reminder' || this.at.trim().length > 0) {
+      try { explicitChatTime(this.at); }
+      catch (error) { this.inputError = (error as Error).message; return; }
+    }
+    this.inputError = '';
+    this.viewModel.chatFollowupCommand(item, this.mode, this.title, this.at);
+    this.editing = '';
+  }
   @Builder
   private evidence(rows: Array<ChatFollowupEvidence>) {
     ForEach(rows,(e:ChatFollowupEvidence)=>{
@@ -40,16 +50,17 @@ export struct PhoneV3ChatFollowupsSection {
           Button('完成').enabled(!this.viewModel.busy&&!item.pendingAction).onClick(():void=>this.viewModel.chatFollowupCommand(item,'complete'))
           Button('忽略').enabled(!this.viewModel.busy&&!item.pendingAction).onClick(():void=>this.viewModel.chatFollowupCommand(item,'ignore'))
         }
-        Button('启用提醒').enabled(!this.viewModel.busy&&!item.pendingAction&&item.actor_is_from_self===true).onClick(():void=>{this.editing=item.event_id;this.mode='enable_reminder';this.title=item.title;this.at=item.time.at??'';})
+        Button('启用提醒').enabled(!this.viewModel.busy&&!item.pendingAction&&item.actor_is_from_self===true).onClick(():void=>{this.editing=item.event_id;this.mode='enable_reminder';this.inputError='';this.title=item.title;this.at=item.time.at??'';})
       } else {
         Button('重新开启').enabled(!this.viewModel.busy&&!item.pendingAction).onClick(():void=>this.viewModel.chatFollowupCommand(item,'reopen'))
       }
-      Button('编辑事项').enabled(!this.viewModel.busy&&!item.pendingAction).onClick(():void=>{this.editing=item.event_id;this.mode='edit';this.title=item.title;this.at=item.time.at??'';})
+      Button('编辑事项').enabled(!this.viewModel.busy&&!item.pendingAction).onClick(():void=>{this.editing=item.event_id;this.mode='edit';this.inputError='';this.title=item.title;this.at=item.time.at??'';})
       if(this.editing===item.event_id) {
         if(this.mode==='edit'){TextInput({text:this.title,placeholder:'事项标题'}).onChange((v:string):void=>{this.title=v;})}
-        TextInput({text:this.at,placeholder:'明确时间含时区，如 2026-10-12T09:00+08:00'}).onChange((v:string):void=>{this.at=v;})
+        TextInput({text:this.at,placeholder:'明确时间含时区，如 2026-10-12T09:00+08:00'}).onChange((v:string):void=>{this.at=v;this.inputError='';})
+        if(this.inputError.length > 0) { Text(this.inputError).fontSize(13).fontColor($r('app.color.brand_warning')) }
         if(this.mode==='enable_reminder'){Text('点击确认表示当前仍需执行，并确认上述准确时间；只有日期或未知时间不能安排提醒。').fontSize(13)}
-        Button(this.mode==='enable_reminder'?'确认当前仍需执行并启用提醒':'保存修改').enabled(!this.viewModel.busy&&!item.pendingAction).onClick(():void=>{this.viewModel.chatFollowupCommand(item,this.mode,this.title,this.at);this.editing='';})
+        Button(this.mode==='enable_reminder'?'确认当前仍需执行并启用提醒':'保存修改').enabled(!this.viewModel.busy&&!item.pendingAction).onClick(():void=>{this.save(item);})
         Button('收起').onClick(():void=>{this.editing='';})
       }
     }.width('100%').padding(16).alignItems(HorizontalAlign.Start).backgroundColor($r('app.color.surface_primary')).borderRadius(16)

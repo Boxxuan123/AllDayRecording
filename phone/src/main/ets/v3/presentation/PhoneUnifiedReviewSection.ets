@@ -34,7 +34,10 @@ export struct PhoneUnifiedReviewSection {
   }
   @Builder private claimCard(claim: PhoneUnifiedClaim, key: string) {
     Column({ space: 8 }) {
-      Button(`【${this.perspective(claim.perspective)}】${claim.certainty === 'uncertain' ? '【不确定】' : ''}${claim.text} · 查看依据`)
+      Text(`【${this.perspective(claim.perspective)}】${claim.certainty === 'uncertain' ? '【不确定】' : ''}${claim.text}`)
+        .width('100%').fontSize(15)
+        .onClick((): void => { this.selected = this.selected === key ? '' : key; })
+      Button(this.selected === key ? '收起依据' : '查看依据')
         .onClick((): void => { this.selected = this.selected === key ? '' : key; })
       if(this.selected === key) {
         ForEach(this.sources(claim), (e: PhoneUnifiedEvidence) => {
