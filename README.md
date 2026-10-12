@@ -2,7 +2,7 @@
 
 AllDayRecording 是一个同时交付到手机与 HUAWEI WATCH 5 的 HarmonyOS 应用。手表负责连续 PCM 录音、WAV 安全封口、中断恢复和源文件生命周期；手机负责 Wear Engine 接收、持久化索引和试听。
 
-当前工程按设备交付两个 HAP，并通过本地 `common` HAR 复用协议和纯逻辑：Watch 使用 `entry` HAP，Phone 使用 `phone` HAP。应用版本为 `1.0.6`（`versionCode = 1000006`），两个 HAP 保持同一 `bundleName`、Client ID、签名配置和 API 23/26 边界。Phone 只有 V3 本地优先工作台、V3 原生设备运行层和单一生产入口，不包含备用页面或只读入口。
+当前工程按设备交付两个 HAP，并通过本地 `common` HAR 复用协议和纯逻辑：Watch 使用 `entry` HAP，Phone 使用 `phone` HAP。应用版本为 `1.0.7`（`versionCode = 1000007`），两个 HAP 保持同一 `bundleName`、Client ID、签名配置和 API 23/26 边界。Phone 只有 V3 本地优先工作台、V3 原生设备运行层和单一生产入口，不包含备用页面或只读入口。
 
 ## 主要目录
 
@@ -179,3 +179,5 @@ Windows 接纳事项后，在现有手机“更多→提醒”页同步查看和
 ## 聊天＋录音统一每日回顾 V1
 
 更新 Phone 包与后端并同步后，在“更多→每日总结”选择日期；点击结论查看聊天原话或录音转写，复用片段播放与跟进详情。时间补丁、迁移兼容及未测项见 [脱敏验收记录](doc/UNIFIED_REVIEW_ACCEPTANCE_20261011.md)。
+
+统一每日回顾互动优先、来源身份与本地修订兼容性见 [2026-10-12 内容修补验收](doc/UNIFIED_REVIEW_CONTENT_ACCEPTANCE_20261012.md)。
