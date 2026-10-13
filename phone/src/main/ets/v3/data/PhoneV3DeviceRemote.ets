@@ -1,3 +1,4 @@
+import { RecallRequest, RecallResponse } from '../domain/PhoneHistoryRecall';
 import { common } from '@kit.AbilityKit';
 import {
   DeviceV3AnnotationRequest,
@@ -38,6 +39,13 @@ class PhoneV3HttpRemoteSession implements PhoneV3RemoteSession {
   async sync(request: DeviceV3SyncRequest): Promise<DeviceV3SyncResponse> {
     await verifyConfiguration(this.store, this.config);
     const response = await this.client.sync(request);
+    await verifyConfiguration(this.store, this.config);
+    return response;
+  }
+
+  async recall(request: RecallRequest): Promise<RecallResponse> {
+    await verifyConfiguration(this.store, this.config);
+    const response = await this.client.recall(request);
     await verifyConfiguration(this.store, this.config);
     return response;
   }

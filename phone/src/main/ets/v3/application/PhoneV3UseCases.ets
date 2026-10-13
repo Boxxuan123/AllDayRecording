@@ -1,3 +1,4 @@
+import { RecallRequest, RecallResponse } from '../domain/PhoneHistoryRecall';
 import { MemoryCommand } from '../domain/PhoneCrossDayMemory';
 import { annotationTiming } from './PhoneAnnotationTiming';
 import { PhoneV3AnnotationCommands } from './PhoneV3AnnotationCommands';
@@ -162,6 +163,12 @@ export class PhoneV3UseCases implements ReviewAudioPrefetchPort {
 
   async loadLocal(): Promise<Array<PhoneV3LocalAudioFact>> {
     return this.localAudio.list();
+  }
+
+  async historyRecall(request: RecallRequest): Promise<RecallResponse> {
+    const session = await this.remote.connect();
+    if (session.recall === undefined) { throw new Error('电脑版本尚不支持历史回忆'); }
+    return session.recall(request);
   }
 
   async searchTranscriptSessionIds(search: string): Promise<Array<string>> {

@@ -1,3 +1,4 @@
+import { RecallRequest, RecallResponse } from '../domain/PhoneHistoryRecall';
 import {
   DeviceV3ClientOperation,
   DeviceV3PersonChoice,
@@ -93,6 +94,7 @@ export interface PhoneV3ReminderSchedulerPort {
 }
 
 export interface PhoneV3RemoteSession {
+  recall?(request: RecallRequest): Promise<RecallResponse>;
   status(): Promise<DeviceV3StatusResponse>;
   sync(request: DeviceV3SyncRequest): Promise<DeviceV3SyncResponse>;
   annotations(request: DeviceV3AnnotationRequest): Promise<DeviceV3AnnotationResponse>;

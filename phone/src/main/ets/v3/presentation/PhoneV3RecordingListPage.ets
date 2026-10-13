@@ -1,3 +1,4 @@
+import { PhoneHistoryRecallSection } from './PhoneHistoryRecallSection';
 import { phoneV3PendingReviews } from '../domain/PhoneV3ReviewModels';
 import {
   ExceptionPromptV2,
@@ -24,6 +25,7 @@ export struct PhoneV3RecordingListPage {
   @ObjectLink viewModel: PhoneV3ViewModel;
   @Prop @Watch('refreshTranscriptSearch') stateRevision: number = 0;
   @State private searchText: string = '';
+  @State private showRecall:boolean=false;
   @State private transcriptMatchIds: Array<string> = [];
   @State private searchPending: boolean = false;
   @State private searchError: string = '';
@@ -245,8 +247,18 @@ export struct PhoneV3RecordingListPage {
     .borderRadius(14)
   }
 
+  @Builder private recallSheet() {
+    Scroll() {
+      Column({space:8}) {
+        Button('关闭历史回忆').onClick(():void=>{this.showRecall=false;})
+        PhoneHistoryRecallSection({viewModel:this.viewModel,onOpenSession:this.onOpenSession})
+      }.width('100%')
+    }.width('100%').height('100%')
+  }
+
   build() {
     Column({ space: 12 }) {
+      Button('跨 QQ／微信／录音检索与回忆').onClick(():void=>{this.showRecall=true;}).bindSheet(this.showRecall,this.recallSheet())
       TextInput({ text: this.searchText, placeholder: '搜索日期、转写、人物或 Session ID' })
         .width('100%')
         .height(46)

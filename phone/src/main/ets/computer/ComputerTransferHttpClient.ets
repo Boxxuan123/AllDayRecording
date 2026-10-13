@@ -1,3 +1,4 @@
+import { RecallRequest, RecallResponse } from '../v3/domain/PhoneHistoryRecall';
 import { localBuildInfo, peerBuildReport, recordPeerBuild, PhoneRuntimeReport } from 'common';
 import { ComputerReviewNotSentError } from './ComputerReviewNotSentError';
 import { computerJsonText, COMPUTER_JSON_MAX_BYTES } from './ComputerJsonBody';
@@ -266,6 +267,11 @@ export class ComputerTransferHttpClient {
       body, 'application/json; charset=utf-8', undefined);
   }
 
+  async recall(request: RecallRequest): Promise<RecallResponse> {
+    const body = util.TextEncoder.create('utf-8').encodeInto(JSON.stringify(request));
+    return this.authenticatedJson<RecallResponse>('POST', '/device/v3/recall', body, 'application/json', undefined);
+  }
+
   async annotations(request: DeviceV3AnnotationRequest): Promise<DeviceV3AnnotationResponse> {
     const body = util.TextEncoder.create('utf-8').encodeInto(JSON.stringify(request));
     return this.authenticatedJson<DeviceV3AnnotationResponse>('POST', '/device/v3/annotations',
@@ -346,8 +352,8 @@ export class ComputerTransferHttpClient {
         method: requestMethod(method),
         header: headers,
         usingCache: false,
-        connectTimeout: CONNECT_TIMEOUT_MS,
-        readTimeout: READ_TIMEOUT_MS,
+        connectTimeout: path === '/device/v3/recall' ? 5000 : CONNECT_TIMEOUT_MS,
+        readTimeout: path === '/device/v3/recall' ? 35000 : READ_TIMEOUT_MS,
         expectDataType: http.HttpDataType.ARRAY_BUFFER,
         maxLimit: COMPUTER_JSON_MAX_BYTES,
         caPath: this.caPath

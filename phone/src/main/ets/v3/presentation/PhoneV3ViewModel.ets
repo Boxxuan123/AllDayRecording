@@ -1,3 +1,4 @@
+import { RecallRequest, RecallResponse } from '../domain/PhoneHistoryRecall';
 import { ChatFollowup, ChatFollowupChanges, explicitChatTime } from '../domain/PhoneChatFollowup';
 import { annotationTiming } from '../application/PhoneAnnotationTiming';
 import { PhoneDailyCache, PhoneDailyEvidence } from '../domain/PhoneV3DailyModels';
@@ -230,6 +231,13 @@ export class PhoneV3ViewModel {
       this.peoplePageTask = undefined;
       this.stateChangeListener();
     });
+  }
+
+  async historyRecall(request: RecallRequest): Promise<RecallResponse> {
+    if (this.useCases === undefined) { throw new Error('手机尚未连接电脑'); }
+    const result = await this.useCases.historyRecall(request);
+    if (request.action === 'identity' && this.coordinator !== undefined) { this.coordinator.trigger(false, true); }
+    return result;
   }
 
   async searchTranscriptSessionIds(search: string): Promise<Array<string>> {
