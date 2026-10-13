@@ -262,7 +262,7 @@ export class PhoneV3UseCases implements ReviewAudioPrefetchPort {
         session.processingStatus,session.processingStage,session.processingProgress,merged);
     });
     const next=new PhoneV3Snapshot(sessions,snapshot.conflicts,status,snapshot.paired,snapshot.reminders,snapshot.reviewItems, snapshot.chatFollowups);
-    next.memoryIndex=snapshot.memoryIndex;next.memoryPending=snapshot.memoryPending;return next;
+    next.memoryPages=snapshot.memoryPages;next.memoryIndex=snapshot.memoryIndex;next.memoryPending=snapshot.memoryPending;return next;
   }
 
   async queueUtteranceCorrection(utterance: PhoneV3Utterance,
@@ -481,7 +481,7 @@ export class PhoneV3UseCases implements ReviewAudioPrefetchPort {
     const reviews = phoneV3ReviewItems(await this.repository.projectionRows('review_item'));
     const next=new PhoneV3Snapshot(snapshot.sessions, snapshot.conflicts, snapshot.sync,
       snapshot.paired, snapshot.reminders, await this.withPendingPurity(reviews), snapshot.chatFollowups);
-    next.memoryIndex=snapshot.memoryIndex;next.memoryPending=snapshot.memoryPending;return next;
+    next.memoryPages=snapshot.memoryPages;next.memoryIndex=snapshot.memoryIndex;next.memoryPending=snapshot.memoryPending;return next;
   }
 
   private async withPendingPurity(items: Array<PhoneV3ReviewItem>): Promise<Array<PhoneV3ReviewItem>> {

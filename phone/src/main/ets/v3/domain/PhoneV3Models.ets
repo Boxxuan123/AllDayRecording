@@ -450,6 +450,7 @@ export class PhoneV3ReviewItem {
 }
 
 export class PhoneV3Snapshot {
+  memoryPages: Array<MemoryIndex> = [];
   memoryIndex: MemoryIndex | undefined = undefined;
   memoryPending: boolean = false;
   chatFollowups: Array<ChatFollowup>;

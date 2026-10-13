@@ -7,6 +7,8 @@ import { PhoneV3RemindersPage } from './PhoneV3RemindersPage';
 @Component
 export struct PhoneCrossDayMemorySection {
   @ObjectLink viewModel:PhoneV3ViewModel;
+  @State private page:number=0;
+  @State private evidencePage:number=0;
   @State private person:string='';
   @State private thing:string='';
   @State private topic:string='';
@@ -20,7 +22,11 @@ export struct PhoneCrossDayMemorySection {
     const d=new Date(new Date(value).getTime()+8*60*60*1000);
     return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')} ${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}:${String(d.getUTCSeconds()).padStart(2,'0')}`;
   }
-  private index():MemoryIndex|undefined {return this.viewModel.snapshot.memoryIndex;}
+  private index():MemoryIndex|undefined {return this.viewModel.snapshot.memoryPages.find((item:MemoryIndex):boolean=>item.page?.kind==='discussions'&&item.page.number===this.page)??this.viewModel.snapshot.memoryIndex;}
+  private evidence(r:MemoryDiscussion):Array<MemoryEvidence> {
+    if(this.evidencePage===0){return r.evidence;}
+    return this.viewModel.snapshot.memoryPages.find((item:MemoryIndex):boolean=>item.page?.kind==='evidence'&&item.page.discussion_id===r.id&&item.discussions[0]?.evidence_page===this.evidencePage)?.discussions[0]?.evidence??[];
+  }
   private rows():Array<MemoryDiscussion> {
     const index=this.index();
     return index?.discussions.filter((r:MemoryDiscussion):boolean=>(this.person.length===0||r.contacts.some((p:MemoryContact):boolean=>p.id===this.person))&&(this.thing.length===0||r.thing_id===this.thing)&&(this.topic.length===0||index.topics.some((t:MemoryTopic):boolean=>t.label===this.topic&&t.discussion_ids.includes(r.id)))).sort((a:MemoryDiscussion,b:MemoryDiscussion):number=>a.occurred_at.localeCompare(b.occurred_at))??[];
@@ -42,17 +48,25 @@ export struct PhoneCrossDayMemorySection {
   }
   @Builder private discussion(r:MemoryDiscussion) {
     Column({space:8}) {
-      Text(r.title).fontSize(16).fontWeight(FontWeight.Medium).onClick(():void=>{this.expanded=this.expanded===r.id?'':r.id;})
+      if(typeof r.window_label==='string'){Text(`历史窗口：${r.window_label}`).fontSize(12)}
+      Text(r.title).fontSize(16).fontWeight(FontWeight.Medium).onClick(():void=>{this.expanded=this.expanded===r.id?'':r.id;this.evidencePage=0;})
       Text(`${this.time(r.occurred_at)} · ${r.link_basis==='existing_event'?'已有事件依据':r.link_basis==='human_confirmed'?'人工关联':'独立讨论'}`).fontSize(12)
       if(typeof r.summary==='string'){Text(r.summary).fontSize(15)}
       if(r.evidence_status!=='valid'){Text('证据已变化／缺失；以下为原修订，不能继续当作已确认事实。').fontColor($r('app.color.brand_warning'))}
-      Button(this.expanded===r.id?'收起原文':'查看原文依据').onClick(():void=>{this.expanded=this.expanded===r.id?'':r.id;})
+      Button(this.expanded===r.id?'收起原文':'查看原文依据').onClick(():void=>{this.expanded=this.expanded===r.id?'':r.id;this.evidencePage=0;})
       if(this.expanded===r.id) {
-        ForEach(r.evidence,(e:MemoryEvidence)=>{
+        if((r.evidence_total??r.evidence.length)>8){
+          Row({space:8}) {
+            Button('前一页原文').enabled(this.evidencePage>0).onClick(():void=>{this.evidencePage--;})
+            Text(`原文第 ${this.evidencePage+1} 页 · 共 ${r.evidence_total??r.evidence.length} 条`)
+            Button('后一页原文').enabled((this.evidencePage+1)*8<(r.evidence_total??r.evidence.length)).onClick(():void=>{this.evidencePage++;})
+          }
+        }
+        ForEach(this.evidence(r),(e:MemoryEvidence)=>{
           Column({space:6}) {
             Text(`${e.speaker} · ${this.time(e.occurred_at)} · 原文修订 ${e.revision}`).fontSize(12)
             Text(e.quote).fontSize(15)
-            Text(e.assertion).fontSize(12)
+            Text(`${e.role==='context'?'邻近上下文，不作为核心事实':'核心证据'} · is_from_self=${e.is_from_self===undefined?'未知':String(e.is_from_self)} · ${e.identity_basis??'来源身份依据'} · ${e.assertion}`).fontSize(12)
             if(typeof e.learned_at==='string'){Text(`系统获知于 ${this.time(e.learned_at)}`).fontSize(12)}
             if(e.source_type==='recording') {
               Button('播放引用片段').enabled(e.status==='valid').onClick(():void=>this.play(e))
@@ -81,9 +95,14 @@ export struct PhoneCrossDayMemorySection {
       else {
         Text(`${this.index()?.scope.first??''} 至 ${this.index()?.scope.last??''} · Asia/Singapore`).fontSize(13)
         if((this.index()?.scope.coverage.missing_sources.length??0)>0){Text(`资料缺失：${this.index()?.scope.coverage.missing_sources.join('、')??''}`).fontSize(13)}
-        if((this.index()?.scope.coverage.incremental?.deferred_discussions??0)>0){Text(`本轮容量已满，还有 ${this.index()?.scope.coverage.incremental?.deferred_discussions??0} 段讨论未纳入。请在电脑缩小范围后更新；已有记录与人工决定保留。`).fontSize(13)}
+        if((this.index()?.scope.coverage.incremental?.deferred_discussions??0)>0){Text(`有限批次待处理 ${this.index()?.scope.coverage.incremental?.deferred_discussions??0} 段；请在电脑继续下一批。已处理 ${this.index()?.scope.coverage.incremental?.processed_discussions??0} 段，历史不会被容量限制删除。`).fontSize(13)}
         if(this.viewModel.snapshot.memoryPending){Text('人工关联操作已保存，等待电脑同步回执；原记录保留。').fontSize(13)}
         if(this.index()?.status==='no_data'){Text('已选范围尚无可用讨论。').fontSize(14)}
+        Row({space:8}) {
+          Button('前一页讨论').enabled(this.page>0).onClick(():void=>{this.page--;this.person='';this.thing='';this.topic='';this.expanded='';})
+          Text(`第 ${this.page+1}/${this.index()?.page?.total??1} 页 · 历史记录保留`)
+          Button('后一页／历史讨论').enabled(this.page+1<(this.index()?.page?.total??1)).onClick(():void=>{this.page++;this.person='';this.thing='';this.topic='';this.expanded='';})
+        }
         Button('全部讨论').onClick(():void=>{this.person='';this.thing='';this.topic='';})
         ForEach(this.index()?.people??[],(p:MemoryContact)=>{
           Text(`${p.label} · ${p.platform}`).fontSize(17).fontWeight(FontWeight.Medium)

@@ -8,15 +8,18 @@ export function safeMemoryText(value:string):string {
   return value.replace(/https?:\/\/[^\s<>"']+/g,(url:string):string=>url.split(/[?#]/)[0].replace(/^(https?:\/\/)[^/@]+@/,'$1'));
 }
 export interface MemoryContact { id:string; label:string; identity_basis:string; platform:string; person_id?:string; last_evidence_at?:string; discussion_ids:Array<string>; }
-export interface MemoryEvidence { source_type:string; quote:string; revision:number; occurred_at:string; learned_at?:string; assertion:string; status:string; speaker:string; record_id?:string; session_id?:string; utterance_id?:string; start_ms?:number; end_ms?:number; }
-export interface MemoryDiscussion { id:string; title:string; summary?:string; contacts:Array<MemoryContact>; thing_id:string; link_basis:string; occurred_at:string; evidence_status:string; evidence:Array<MemoryEvidence>; event_id?:string; pending_change:boolean; }
+export interface MemoryEvidence { source_type:string; quote:string; revision:number; occurred_at:string; learned_at?:string; assertion:string; status:string; speaker:string; is_from_self?:boolean; identity_basis?:string; role?:string; record_id?:string; session_id?:string; utterance_id?:string; start_ms?:number; end_ms?:number; }
+export interface MemoryDiscussion { id:string; title:string; summary?:string; contacts:Array<MemoryContact>; thing_id:string; link_basis:string; occurred_at:string; evidence_status:string; evidence:Array<MemoryEvidence>; event_id?:string; pending_change:boolean; evidence_total?:number; evidence_page?:number; window_label?:string; }
 export interface MemoryThing { id:string; title:string; discussion_ids:Array<string>; progress:string; last_evidence_at?:string; needs_confirmation:boolean; }
 export interface MemoryTopic { label:string; discussion_ids:Array<string>; }
 export interface MemoryCandidate { source:string; target:string; reason:string; }
-export interface MemoryIncremental { deferred_discussions:number; excluded_discussions:number; discussion_limit:number; }
+export interface MemoryIncremental { deferred_discussions:number; excluded_discussions:number; discussion_limit:number; processed_discussions?:number; }
 export interface MemoryCoverage { missing_sources:Array<string>; incremental?:MemoryIncremental; }
 export interface MemoryScope { first:string; last:string; timezone:string; coverage:MemoryCoverage; }
-export interface MemoryIndex { id:string; revision:number; status:string; scope:MemoryScope; people:Array<MemoryContact>; discussions:Array<MemoryDiscussion>; things:Array<MemoryThing>; topics:Array<MemoryTopic>; candidates:Array<MemoryCandidate>; }
+export interface MemoryPage { number:number; total:number; discussion_total:number; kind:string; discussion_id?:string; }
+export interface MemoryReviewContext { memory_association?:MemoryCandidateRevision; }
+export interface MemoryCandidateRevision { source:string; target:string; reason:string; revision:number; }
+export interface MemoryIndex { page?:MemoryPage; id:string; revision:number; status:string; scope:MemoryScope; people:Array<MemoryContact>; discussions:Array<MemoryDiscussion>; things:Array<MemoryThing>; topics:Array<MemoryTopic>; candidates:Array<MemoryCandidate>; }
 export interface MemoryCommand { source:string; target:string; action:string; }
 export function validateMemoryIndex(value:Object):MemoryIndex {
   const v=value as MemoryIndex;

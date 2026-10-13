@@ -1,3 +1,4 @@
+import { MemoryReviewContext } from '../domain/PhoneCrossDayMemory';
 import { phoneV3VoiceTasks } from '../domain/PhoneV3VoiceReviewTask';
 import { reminderContext, localReminderTime } from '../domain/PhoneV3ReminderCommands';
 import { phoneV3PendingReviews, phoneV3ReviewIsHistory } from '../domain/PhoneV3ReviewModels';
@@ -175,6 +176,14 @@ export struct PhoneV3ReviewInboxPage {
       .onClick(action)
   }
 
+  private decideMemory(item:PhoneV3ReviewItem,action:string):void {
+    const context=JSON.parse(item.contextJson) as MemoryReviewContext;
+    if(context.memory_association!==undefined){
+      const candidate=context.memory_association;
+      this.viewModel.memoryCommand(candidate.source,candidate.target,action==='confirm'?'link':'reject',candidate.revision);
+    } else {this.viewModel.resolveReview(item.reviewId,action);}
+  }
+
   @Builder
   private standardActions(item: PhoneV3ReviewItem) {
     Row({ space: 8 }) {
@@ -189,9 +198,9 @@ export struct PhoneV3ReviewInboxPage {
           this.viewModel.reminderCommand('reminder.review', item.sourceId, 'ignore'))
       } else if (item.kind === 'person_memory') {
         this.decisionButton(item.contextJson.includes('memory_association')?'关联到这件事':'记住', true, true, (): void =>
-          this.viewModel.resolveReview(item.reviewId, 'confirm'))
+          this.decideMemory(item, 'confirm'))
         this.decisionButton(item.contextJson.includes('memory_association')?'不是同一件事':'不记住', false, true, (): void =>
-          this.viewModel.resolveReview(item.reviewId, 'reject'))
+          this.decideMemory(item, 'reject'))
       } else if (item.kind === 'knowledge_proposal') {
         this.decisionButton('确认事件', true, true, (): void =>
           this.viewModel.resolveReview(item.reviewId, 'confirm'))
