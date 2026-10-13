@@ -57,9 +57,9 @@ export struct PhoneCrossDayMemorySection {
       if(this.expanded===r.id) {
         if((r.evidence_total??r.evidence.length)>8){
           Row({space:8}) {
-            Button('前一页原文').enabled(this.evidencePage>0).onClick(():void=>{this.evidencePage--;})
-            Text(`原文第 ${this.evidencePage+1} 页 · 共 ${r.evidence_total??r.evidence.length} 条`)
-            Button('后一页原文').enabled((this.evidencePage+1)*8<(r.evidence_total??r.evidence.length)).onClick(():void=>{this.evidencePage++;})
+            Button('前一页原文').fontSize(12).layoutWeight(1).enabled(this.evidencePage>0).onClick(():void=>{this.evidencePage--;})
+            Text(`原文第 ${this.evidencePage+1} 页 · 共 ${r.evidence_total??r.evidence.length} 条`).fontSize(12).maxLines(2).layoutWeight(1)
+            Button('后一页原文').fontSize(12).layoutWeight(1).enabled((this.evidencePage+1)*8<(r.evidence_total??r.evidence.length)).onClick(():void=>{this.evidencePage++;})
           }
         }
         ForEach(this.evidence(r),(e:MemoryEvidence)=>{
@@ -99,9 +99,9 @@ export struct PhoneCrossDayMemorySection {
         if(this.viewModel.snapshot.memoryPending){Text('人工关联操作已保存，等待电脑同步回执；原记录保留。').fontSize(13)}
         if(this.index()?.status==='no_data'){Text('已选范围尚无可用讨论。').fontSize(14)}
         Row({space:8}) {
-          Button('前一页讨论').enabled(this.page>0).onClick(():void=>{this.page--;this.person='';this.thing='';this.topic='';this.expanded='';})
-          Text(`第 ${this.page+1}/${this.index()?.page?.total??1} 页 · 历史记录保留`)
-          Button('后一页／历史讨论').enabled(this.page+1<(this.index()?.page?.total??1)).onClick(():void=>{this.page++;this.person='';this.thing='';this.topic='';this.expanded='';})
+          Button('前一页讨论').fontSize(12).layoutWeight(1).enabled(this.page>0).onClick(():void=>{this.page--;this.person='';this.thing='';this.topic='';this.expanded='';})
+          Text(`第 ${this.page+1}/${this.index()?.page?.total??1} 页 · 历史保留`).fontSize(12).maxLines(2).layoutWeight(1)
+          Button('后一页／历史讨论').fontSize(12).layoutWeight(1).enabled(this.page+1<(this.index()?.page?.total??1)).onClick(():void=>{this.page++;this.person='';this.thing='';this.topic='';this.expanded='';})
         }
         Button('全部讨论').onClick(():void=>{this.person='';this.thing='';this.topic='';})
         ForEach(this.index()?.people??[],(p:MemoryContact)=>{
