@@ -1,5 +1,5 @@
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
-import { RecallRequest, RecallResponse, RecallPerson, RecallIdentity, RecallEvidence, RecallClaim, RecallCommand, RecallDecision, recallRequestId, recallDate } from '../domain/PhoneHistoryRecall';
+import { RecallRequest, RecallResponse, RecallPerson, RecallIdentity, RecallEvidence, RecallClaim, RecallCommand, RecallDecision, recallRequestId, recallDate, applyRecallContext, applyRecallPage } from '../domain/PhoneHistoryRecall';
 import { PhoneV3SessionCard } from '../domain/PhoneV3Models';
 
 @Component
@@ -53,14 +53,14 @@ export struct PhoneHistoryRecallSection {
   }
   private async page(number:number):Promise<void> {
     const version=this.revision;this.busy=true;this.error='';
-    try{const result=await this.viewModel.historyRecall({action:'page',query_id:this.queryId,page:number});if(version===this.revision){this.result=result;}}
+    try{const result=await this.viewModel.historyRecall({action:'page',query_id:this.queryId,page:number});if(version===this.revision){this.result=applyRecallPage(this.result,result);}}
     catch(error){if(version===this.revision){this.result={};this.error=this.message(error);}}
     finally{if(version===this.revision){this.busy=false;}}
   }
   private async original(id:string):Promise<void> {
     const version=++this.contextRevision;this.error='';this.context={};
-    try{const result=await this.viewModel.historyRecall({action:'context',query_id:this.queryId,evidence_id:id});if(version===this.contextRevision){this.context=result;}}
-    catch(error){if(version===this.contextRevision){this.error=this.message(error);}}
+    try{const result=await this.viewModel.historyRecall({action:'context',query_id:this.queryId,evidence_id:id});if(version===this.contextRevision){this.context=result;this.result=applyRecallContext(this.result,result);}}
+    catch(error){if(version===this.contextRevision){this.result={};this.error=this.message(error);}}
   }
   private async decide(identity:RecallIdentity,action:string):Promise<void> {
     if(this.person.length===0||this.basis.trim().length===0){this.error='请先选择人物并填写依据';return;}
@@ -85,22 +85,23 @@ export struct PhoneHistoryRecallSection {
   @Builder private evidence(e:RecallEvidence) {
     Column({space:6}) {
       Text(`${e.speaker} · ${e.source} · ${this.time(e.sent_at)} +08:00`).fontSize(13)
+      if(e.validity==='stale'){Text('原文已失效，仅供核对历史').fontSize(13).fontColor($r('app.color.brand_warning'))}
       Text(e.quote).fontSize(15).copyOption(CopyOptions.InApp)
       Text(`${e.role==='context'?'邻近上下文':'查询命中'} · ${e.identity_basis} · ${e.assertion}`).fontSize(12)
       if(e.source_account_id!==undefined){Text(`采集账号 ${e.source_account_id} · 发送账号 ${e.sender_account_id??'未知'} · 会话 ${e.conversation_id??''}`).fontSize(11)}
       if(e.quote_truncated){Text('片段已截断，请打开来源核对。').fontSize(12)}
       Button('打开依据／核对来源').onClick(():void=>{this.original(e.id);})
       if(e.source==='recording'){
-        Button('播放引用片段').onClick(():void=>this.play(e))
-        Button('打开原转写／纠正说话人').onClick(():void=>this.open(e))
+        Button('播放引用片段').enabled(e.validity!=='stale').onClick(():void=>this.play(e))
+        Button('打开原转写／纠正说话人').enabled(e.validity!=='stale').onClick(():void=>this.open(e))
       }
     }.width('100%').alignItems(HorizontalAlign.Start).padding(10).backgroundColor($r('app.color.surface_secondary')).borderRadius(10)
   }
   build() {
     Column({space:10}) {
       Text('历史检索与回忆').fontSize(20).fontWeight(FontWeight.Bold)
-      TextInput({text:this.question,placeholder:'输入问题，如：之前讨论过杭电哪些专业？'}).onChange((v:string):void=>{this.question=v;})
-      TextInput({text:this.keyword,placeholder:'可选精确关键词／主题，如：杭电、物理老师（每次一个）'}).onChange((v:string):void=>{this.keyword=v;})
+      TextInput({text:this.question,placeholder:'输入问题：查原话、问原因、回顾经过或最终状态'}).onChange((v:string):void=>{this.question=v;})
+      TextInput({text:this.keyword,placeholder:'可选精确关键词／主题（每次一个）'}).onChange((v:string):void=>{this.keyword=v;})
       Row({space:6}) {
         TextInput({text:this.first,placeholder:'起日 YYYY-MM-DD'}).layoutWeight(1).onChange((v:string):void=>{this.first=v;})
         TextInput({text:this.last,placeholder:'止日 YYYY-MM-DD'}).layoutWeight(1).onChange((v:string):void=>{this.last=v;})
@@ -134,7 +135,7 @@ export struct PhoneHistoryRecallSection {
         },(identity:RecallIdentity):string=>identity.key)
         if(this.catalog.next_offset!==undefined&&this.catalog.next_offset!==null){Button('下一页来源身份').enabled(!this.catalogBusy).onClick(():void=>{this.loadCatalog(this.catalog.next_offset??0);})}
       }
-      Row(){Toggle({type:ToggleType.Switch,isOn:this.expand}).onChange((v:boolean):void=>{this.expand=v;});Text('本地不足时按需取回').fontSize(13)}
+      Row(){Toggle({type:ToggleType.Switch,isOn:this.expand}).onChange((v:boolean):void=>{this.expand=v;});Text('按需核对来源与后续').fontSize(13)}
       Row(){Toggle({type:ToggleType.Switch,isOn:this.summarize}).onChange((v:boolean):void=>{this.summarize=v;});Text('生成有依据的简短归纳').fontSize(13)}
       Button(this.busy?'取消上一轮并开始新查询':'查询').enabled(this.question.trim().length>0).onClick(():void=>{this.search();})
       if(this.busy){Button('取消查询').onClick(():void=>{this.cancel();this.result={};this.context={};})}
@@ -144,6 +145,7 @@ export struct PhoneHistoryRecallSection {
         Text(`状态：${this.result.status??''} · 归纳：${this.result.model_status??''}`).fontSize(12)
         if(this.result.scope!==undefined){Text(`范围：${this.time(this.result.scope.sent_from)} 至 ${this.time(this.result.scope.sent_to)} · ${this.result.scope.source} · 关键词 ${(this.result.terms??[]).join('、')}`).fontSize(12)}
         ForEach(this.result.coverage??[],(v:string)=>{Text(v).fontSize(12)},(v:string):string=>v)
+        if(this.result.latest_status_confirmed===false){Text('当前证据覆盖不完整，不能认定最终状态。').fontSize(12)}
         ForEach(this.result.claims??[],(c:RecallClaim)=>{
           Text(`${c.kind==='quote'?'原文引用':c.kind==='inference'?'推测':'模型归纳（待核对）'}：${c.text}`).fontSize(15)
           ForEach(c.citations,(id:string)=>{Button('核对这条依据').onClick(():void=>{this.original(id);})},(id:string):string=>id)

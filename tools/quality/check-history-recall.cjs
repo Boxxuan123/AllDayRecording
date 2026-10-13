@@ -2,7 +2,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {spawn}=require('node:child_process');const readline=require('node:readline');
 const {Repository,UseCases,stores,root}=require('./phone-sqlite-harness.cjs');
-const {recallDate}=require(path.join(root,'domain/PhoneHistoryRecall.ets'));
+const {recallDate,applyRecallContext,applyRecallPage}=require(path.join(root,'domain/PhoneHistoryRecall.ets'));
 const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'history-recall-phone-'));
 const asr=process.env.CHAT_PHONE_ASR_ROOT;
 const child=spawn(process.env.CHAT_PHONE_PYTHON,[path.join(asr,'tools/recall_phone_fixture.py'),path.join(tmp,'asr')],{cwd:asr,env:{...process.env,PYTHONIOENCODING:'utf-8',PYTHONPATH:asr+path.delimiter+path.join(asr,'src')},stdio:['pipe','pipe','pipe']});
@@ -13,6 +13,13 @@ function peer(v){return new Promise((resolve,reject)=>{pending.push({resolve,rej
 (async()=>{
  const repository=await Repository.open({databasePath:path.join(tmp,'phone.db')});
  const use=new UseCases(repository,{list:async()=>[]},{isPaired:async()=>true,connect:async()=>({recall:peer})});
+ const shown={query_id:'shown-query',model_status:'available',claims:[{kind:'summary',text:'旧结论',citations:['r1']}],evidence:[{id:'r1',validity:'valid'},{id:'r2',validity:'valid'}]};
+ const stale=applyRecallContext(shown,{status:'stale',query_id:'shown-query',invalidated_evidence_ids:['r1'],notice:'来源已变化'});
+ assert.equal(stale.model_status,'stale');assert.deepEqual(stale.claims,[]);assert.equal(stale.evidence[0].validity,'stale');assert.equal(stale.evidence[1].validity,'valid');
+ assert.equal(applyRecallContext(shown,{status:'stale',query_id:'older-query'}),shown);
+ assert.equal(applyRecallPage(stale,shown).model_status,'stale');assert.deepEqual(applyRecallPage(stale,shown).claims,[]);
+ assert.equal(applyRecallPage(stale,{...shown,query_id:'new-query'}).model_status,'available');
+ const offline=applyRecallContext(shown,{status:'unavailable',notice:'来源离线，缓存未核对'});assert.equal(offline.model_status,'available');assert.equal(offline.claims.length,1);assert(offline.coverage[0].includes('离线'));
  assert.equal(recallDate('2026-10-09',false),1791475200);assert.throws(()=>recallDate('bad-date',false));
  let catalog=await use.historyRecall({action:'catalog'});
  assert.equal(catalog.people.length,3);
