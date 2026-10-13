@@ -76,7 +76,7 @@ export struct PhoneV3PeoplePage {
   }
   build() {
     List({ space: 4 }) {
-      ListItem() { PhoneHistoryRecallSection({viewModel:this.viewModel,onOpenSession:this.onOpenSession}) }
+      ListItem() { PhoneHistoryRecallSection({viewModel:this.viewModel,onOpenSession:this.onOpenSession,identitiesOnly:true}) }
       ListItem() { PhoneCrossDayMemorySection({viewModel:this.viewModel,onOpenSession:this.onOpenSession}) }
       if (this.pendingPeopleReviews() > 0) {
         ListItem() {

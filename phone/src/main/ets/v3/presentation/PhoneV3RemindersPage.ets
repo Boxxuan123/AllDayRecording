@@ -2,10 +2,15 @@ import { PhoneV3ChatFollowupsSection } from './PhoneV3ChatFollowupsSection';
 import { PhoneV3Reminder, PhoneV3SessionCard, PhoneV3Conflict } from '../domain/PhoneV3Models';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 import { phoneV3ReminderState, phoneV3ReminderTime } from './PhoneV3UiFormat';
+import { PHONE_V3_FLOATING_TAB_BAR_CONTENT_END_OFFSET } from './PhoneV3NativeUi';
 import { localReminderTime, reminderConflictMessage } from '../domain/PhoneV3ReminderCommands';
 
 @Component
 export struct PhoneV3RemindersPage {
+  @Prop stateRevision: number = 0;
+  @State private filter: string = 'self';
+  @State private limit: number = 15;
+  onOpenReviews: () => void = (): void => {};
   @Prop eventId: string = '';
   @ObjectLink viewModel: PhoneV3ViewModel;
   @State private editingId: string = '';
@@ -13,6 +18,11 @@ export struct PhoneV3RemindersPage {
   @State private editedDue: string = '';
   onOpenSession: (session: PhoneV3SessionCard) => void = (_session: PhoneV3SessionCard): void => {};
 
+  private matchingReminders(): Array<PhoneV3Reminder> {
+    return this.viewModel.snapshot.reminders.filter((r: PhoneV3Reminder): boolean =>
+      this.eventId.length > 0 ? r.eventId === this.eventId : this.filter === 'ended' ? r.status === 'completed' || r.status === 'cancelled' : (r.status === 'scheduled' || r.status === 'delivered') && (this.filter !== 'self' || r.actorPersonId === 'self'));
+  }
+  private reminders(): Array<PhoneV3Reminder> { return this.matchingReminders().slice(0, this.limit); }
   private matchingSession(reminder: PhoneV3Reminder): PhoneV3SessionCard | undefined {
     return this.viewModel.snapshot.sessions.find((session: PhoneV3SessionCard): boolean =>
       session.sessionId === reminder.sessionId);
@@ -61,7 +71,7 @@ export struct PhoneV3RemindersPage {
       }
       if (this.matchingSession(reminder) !== undefined) {
         Button('查看来源录音', { type: ButtonType.Capsule })
-          .height(40)
+          .height(44)
           .buttonStyle(ButtonStyleMode.TEXTUAL)
           .onClick((): void => this.onOpenSession(this.matchingSession(reminder) as PhoneV3SessionCard))
       }
@@ -95,7 +105,13 @@ export struct PhoneV3RemindersPage {
   build() {
     Scroll() {
       Column({ space: 12 }) {
-        PhoneV3ChatFollowupsSection({viewModel:this.viewModel})
+        if (this.eventId.length === 0) {
+          Select([{value:'需要我处理'},{value:'等待对方'},{value:'已确认提醒'},{value:'已完成'},{value:'待明确'}])
+            .selected(['self','waiting','scheduled','ended','pending'].indexOf(this.filter)).value(['需要我处理','等待对方','已确认提醒','已完成','待明确'][['self','waiting','scheduled','ended','pending'].indexOf(this.filter)]).onSelect((i: number): void => { this.filter = ['self','waiting','scheduled','ended','pending'][i]; this.limit = 15; })
+          Button('待判断建议与审核').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).onClick(this.onOpenReviews)
+          Text('跟进不等于提醒；候选确认后才会安排。').fontSize(13).fontColor($r('app.color.text_secondary'))
+        }
+        if (this.filter !== 'scheduled' && this.eventId.length === 0) { PhoneV3ChatFollowupsSection({viewModel:this.viewModel, category:this.filter}) }
         if (this.viewModel.reminderSchedulingError().length > 0) {
           Text(this.viewModel.reminderSchedulingError()).fontSize(14).fontColor($r('app.color.brand_warning'))
         }
@@ -103,12 +119,13 @@ export struct PhoneV3RemindersPage {
           (conflict: PhoneV3Conflict) => {
             Text(`提醒操作未被电脑接受：${reminderConflictMessage(conflict.errorJson)}`).fontSize(13).fontColor($r('app.color.brand_warning'))
           }, (conflict: PhoneV3Conflict): string => conflict.operationId)
-        Text(`${this.viewModel.snapshot.reminders.length} 条已确认提醒`)
+        if (this.filter === 'self' || this.filter === 'scheduled' || this.filter === 'ended' || this.eventId.length > 0) {
+        Text(this.filter === 'ended' ? '已完成与已取消提醒' : '已确认提醒')
           .width('100%')
           .fontSize(13)
           .fontColor($r('app.color.text_secondary'))
-        if (this.viewModel.snapshot.reminders.length === 0) {
-          Text('当前没有已确认提醒；新候选会先进入审核页。')
+        if (this.reminders().length === 0) {
+          Text(this.filter === 'ended' ? '当前已同步范围没有已完成或取消的提醒。' : '当前已同步范围没有这一类已确认提醒；候选会先等待你判断。')
             .width('100%')
             .padding(18)
             .fontSize(14)
@@ -116,15 +133,18 @@ export struct PhoneV3RemindersPage {
             .backgroundColor($r('app.color.surface_primary'))
             .borderRadius(16)
         } else {
-          ForEach(this.viewModel.snapshot.reminders.filter((item: PhoneV3Reminder): boolean => this.eventId.length === 0 || item.eventId === this.eventId), (reminder: PhoneV3Reminder) => {
+          ForEach(this.reminders(), (reminder: PhoneV3Reminder) => {
             this.reminderCard(reminder)
           }, (reminder: PhoneV3Reminder): string => reminder.eventId)
+        }
+        if (this.matchingReminders().length > this.limit) { Button('加载更多提醒').height(44).onClick((): void => { this.limit += 15; }) }
         }
       }
       .width('100%')
       .padding({ left: 18, right: 18, top: 10, bottom: 32 })
       .alignItems(HorizontalAlign.Start)
     }
+    .contentEndOffset(PHONE_V3_FLOATING_TAB_BAR_CONTENT_END_OFFSET)
     .align(Alignment.TopStart)
     .width('100%')
     .height('100%')

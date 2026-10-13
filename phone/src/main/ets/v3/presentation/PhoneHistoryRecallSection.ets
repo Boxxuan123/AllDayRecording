@@ -4,6 +4,7 @@ import { PhoneV3SessionCard } from '../domain/PhoneV3Models';
 
 @Component
 export struct PhoneHistoryRecallSection {
+  @Prop identitiesOnly:boolean=false;
   @ObjectLink viewModel:PhoneV3ViewModel;
   onOpenSession:(session:PhoneV3SessionCard)=>void=():void=>{};
   @State private question:string='';
@@ -17,17 +18,23 @@ export struct PhoneHistoryRecallSection {
   @State private context:RecallResponse={};
   @State private busy:boolean=false;
   @State private catalogBusy:boolean=false;
+  @State private catalogSlow:boolean=false;
+  @State private catalogError:string='';
+  private catalogTimer:number=-1;
   @State private error:string='';
   @State private showIdentities:boolean=false;
+  @State private showFilters:boolean=false;
+  @State private showTechnical:boolean=false;
+  @State private showContext:boolean=false;
   @State private basis:string='';
-  @State private summarize:boolean=true;
+  @State private summarize:boolean=false;
   @State private expand:boolean=true;
   @State private pending:RecallCommand|undefined=undefined;
   private queryId:string='';
   private revision:number=0;
   private contextRevision:number=0;
-  aboutToAppear():void { this.result={};this.context={}; }
-  aboutToDisappear():void { this.cancel(); }
+  aboutToAppear():void { if(this.catalogBusy){this.catalogSlow=true;}else{this.loadCatalog();} }
+  aboutToDisappear():void { if(this.busy){this.cancel();} if(this.catalogTimer>=0){clearTimeout(this.catalogTimer);this.catalogTimer=-1;} }
   private message(error:Object):string {return error instanceof Error?error.message:String(error);}
   private time(stamp:number):string {return new Date(stamp*1000+8*3600000).toISOString().slice(0,19).replace('T',' ');}
   private cancel():void {
@@ -36,10 +43,12 @@ export struct PhoneHistoryRecallSection {
     if(old.length>0){this.viewModel.historyRecall({action:'cancel',query_id:old}).catch(():void=>{});}
   }
   private async loadCatalog(offset:number=0):Promise<void> {
-    this.catalogBusy=true;this.error='';
+    if(this.catalogBusy){return;}
+    this.catalogBusy=true;this.catalogSlow=false;this.catalogError='';
+    this.catalogTimer=setTimeout(():void=>{this.catalogSlow=true;},10000);
     try {this.catalog=await this.viewModel.historyRecall({action:'catalog',offset:offset});}
-    catch(error){this.error=this.message(error);}
-    finally{this.catalogBusy=false;}
+    catch(error){this.catalogError='人物筛选暂不可用：'+this.message(error)+'。可直接按全部人物查询。';}
+    finally{if(this.catalogTimer>=0){clearTimeout(this.catalogTimer);this.catalogTimer=-1;}this.catalogBusy=false;this.catalogSlow=false;}
   }
   private async search():Promise<void> {
     this.cancel();const version=this.revision;const qid=recallRequestId();this.queryId=qid;
@@ -54,13 +63,13 @@ export struct PhoneHistoryRecallSection {
   private async page(number:number):Promise<void> {
     const version=this.revision;this.busy=true;this.error='';
     try{const result=await this.viewModel.historyRecall({action:'page',query_id:this.queryId,page:number});if(version===this.revision){this.result=applyRecallPage(this.result,result);}}
-    catch(error){if(version===this.revision){this.result={};this.error=this.message(error);}}
+    catch(error){if(version===this.revision){this.error=this.message(error)+'；已有原文仍保留，可重新查询。';}}
     finally{if(version===this.revision){this.busy=false;}}
   }
   private async original(id:string):Promise<void> {
-    const version=++this.contextRevision;this.error='';this.context={};
+    const version=++this.contextRevision;this.error='';this.context={};this.showContext=true;
     try{const result=await this.viewModel.historyRecall({action:'context',query_id:this.queryId,evidence_id:id});if(version===this.contextRevision){this.context=result;this.result=applyRecallContext(this.result,result);}}
-    catch(error){if(version===this.contextRevision){this.result={};this.error=this.message(error);}}
+    catch(error){if(version===this.contextRevision){this.error=this.message(error)+'；已有原文仍保留，可重新查询。';}}
   }
   private async decide(identity:RecallIdentity,action:string):Promise<void> {
     if(this.person.length===0||this.basis.trim().length===0){this.error='请先选择人物并填写依据';return;}
@@ -73,7 +82,7 @@ export struct PhoneHistoryRecallSection {
     try {
       await this.viewModel.historyRecall({action:'identity',decision:decision});
       this.pending=undefined;this.cancel();this.result={};this.context={};
-      await this.loadCatalog();
+      this.catalogBusy=false;await this.loadCatalog();
     }catch(error){this.error=this.message(error);}
     finally{this.catalogBusy=false;}
   }
@@ -87,31 +96,61 @@ export struct PhoneHistoryRecallSection {
       Text(`${e.speaker} · ${e.source} · ${this.time(e.sent_at)} +08:00`).fontSize(13)
       if(e.validity==='stale'){Text('原文已失效，仅供核对历史').fontSize(13).fontColor($r('app.color.brand_warning'))}
       Text(e.quote).fontSize(15).copyOption(CopyOptions.InApp)
-      Text(`${e.role==='context'?'邻近上下文':'查询命中'} · ${e.identity_basis} · ${e.assertion}`).fontSize(12)
-      if(e.source_account_id!==undefined){Text(`采集账号 ${e.source_account_id} · 发送账号 ${e.sender_account_id??'未知'} · 会话 ${e.conversation_id??''}`).fontSize(11)}
+      Text(e.role==='context'?'邻近上下文 · 原话':'查询命中 · 原话').fontSize(12)
+      if(this.showTechnical){Text(`${e.identity_basis} · ${e.assertion}`).fontSize(12)}
+      if(this.showTechnical&&e.source_account_id!==undefined){Text(`采集账号 ${e.source_account_id} · 发送账号 ${e.sender_account_id??'未知'} · 会话 ${e.conversation_id??''}`).fontSize(11)}
       if(e.quote_truncated){Text('片段已截断，请打开来源核对。').fontSize(12)}
-      Button('打开依据／核对来源').onClick(():void=>{this.original(e.id);})
+      Button('打开依据／核对来源').height(44).onClick(():void=>{this.original(e.id);})
       if(e.source==='recording'){
-        Button('播放引用片段').enabled(e.validity!=='stale').onClick(():void=>this.play(e))
-        Button('打开原转写／纠正说话人').enabled(e.validity!=='stale').onClick(():void=>this.open(e))
+        Button('播放引用片段').enabled(e.validity!=='stale'&&this.context.status!=='stale').onClick(():void=>this.play(e))
+        Button('打开原转写／纠正说话人').enabled(e.validity!=='stale'&&this.context.status!=='stale').onClick(():void=>this.open(e))
       }
     }.width('100%').alignItems(HorizontalAlign.Start).padding(10).backgroundColor($r('app.color.surface_secondary')).borderRadius(10)
   }
+  @Builder private contextSheet() {
+    Scroll(){
+      Column({space:12}){
+        Text('原文与上下文').fontSize(20).fontWeight(FontWeight.Bold)
+        Text(this.context.notice??'正在核对来源…').fontSize(14)
+        if(this.error.length>0){Text(this.error).fontSize(13).fontColor($r('app.color.brand_warning'))}
+        ForEach(this.context.evidence??[],(e:RecallEvidence)=>{this.evidence(e)},(e:RecallEvidence):string=>e.id)
+        Button('返回回答').height(44).onClick(():void=>{this.contextRevision++;this.showContext=false;})
+      }.width('100%').padding(16).alignItems(HorizontalAlign.Start)
+    }.width('100%').height('100%')
+  }
   build() {
     Column({space:10}) {
-      Text('历史检索与回忆').fontSize(20).fontWeight(FontWeight.Bold)
+      Text(this.identitiesOnly?'人物与已确认来源身份':'找回记忆').fontSize(20).fontWeight(FontWeight.Bold)
+      if(!this.identitiesOnly){
       TextInput({text:this.question,placeholder:'输入问题：查原话、问原因、回顾经过或最终状态'}).onChange((v:string):void=>{this.question=v;})
+      Button(this.showFilters?'收起时间与分析选项':'时间范围与分析选项').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).onClick(():void=>{this.showFilters=!this.showFilters;})
+      if(this.showFilters){
       TextInput({text:this.keyword,placeholder:'可选精确关键词／主题（每次一个）'}).onChange((v:string):void=>{this.keyword=v;})
       Row({space:6}) {
         TextInput({text:this.first,placeholder:'起日 YYYY-MM-DD'}).layoutWeight(1).onChange((v:string):void=>{this.first=v;})
         TextInput({text:this.last,placeholder:'止日 YYYY-MM-DD'}).layoutWeight(1).onChange((v:string):void=>{this.last=v;})
       }
       Text('默认最近 30 天；日期按 Asia/Singapore；单次最多 366 天。').fontSize(12)
-      Select([{value:'全部来源'},{value:'QQ'},{value:'微信'},{value:'录音'}]).selected(['all','qq','wechat','recording'].indexOf(this.source)).onSelect((i:number):void=>{this.source=['all','qq','wechat','recording'][i];})
-      Button(this.catalogBusy?'读取人物中…':'选择人物／查看来源身份').enabled(!this.catalogBusy).onClick(():void=>{this.showIdentities=!this.showIdentities;this.loadCatalog();})
+      }
+      Select([{value:'全部来源'},{value:'QQ'},{value:'微信'},{value:'录音'}]).selected(['all','qq','wechat','recording'].indexOf(this.source)).value(['全部来源','QQ','微信','录音'][['all','qq','wechat','recording'].indexOf(this.source)]).onSelect((i:number):void=>{this.source=['all','qq','wechat','recording'][i];})
+      }
+      if(this.catalogSlow){Text('电脑暂未响应，人物筛选仍在读取。可直接按全部人物查询，连接状态见管理。').fontSize(13).fontColor($r('app.color.brand_warning'))}
+      if(this.catalogError.length>0){Text(this.catalogError).fontSize(13).fontColor($r('app.color.brand_warning'))}
+      if(this.identitiesOnly&&this.error.length>0){Text(this.error).fontSize(13).fontColor($r('app.color.brand_warning'))}
+      Button(this.catalogBusy?'读取人物中…':'来源身份与安全关联（高级）').enabled(!this.catalogBusy).onClick(():void=>{this.showIdentities=!this.showIdentities;this.loadCatalog();})
       if((this.catalog.people?.length??0)>0){
         Button('全部人物').onClick(():void=>{this.person='';})
         Select(this.catalog.people?.map((p:RecallPerson):SelectOption=>({value:p.display_name}))??[]).value(this.catalog.people?.find((p:RecallPerson):boolean=>p.person_id===this.person)?.display_name??'选择已有人物').onSelect((i:number):void=>{this.person=this.catalog.people?.[i]?.person_id??'';})
+      }
+      if(this.identitiesOnly){
+        Text('未确认身份保持独立，只有明确关联才归到同一人物。').fontSize(13)
+        ForEach(this.catalog.items?.filter((i:RecallIdentity):boolean=>i.person_id.length>0&&(this.person.length===0||i.person_id===this.person))??[],(identity:RecallIdentity)=>{
+          Column({space:4}){
+            Text(`${this.catalog.people?.find((p:RecallPerson):boolean=>p.person_id===identity.person_id)?.display_name??'已确认人物'} · ${identity.platform==='wechat'?'微信':identity.platform==='qq'?'QQ':'录音'}`).fontSize(15)
+            Text(identity.label).fontSize(14)
+          }.width('100%').alignItems(HorizontalAlign.Start).padding(10).backgroundColor($r('app.color.surface_secondary')).borderRadius(10)
+        },(identity:RecallIdentity):string=>identity.key)
+        if(this.catalog.items!==undefined&&(this.catalog.items?.filter((i:RecallIdentity):boolean=>i.person_id.length>0&&(this.person.length===0||i.person_id===this.person)).length??0)===0){Text('当前页没有已确认来源身份，可在高级关联中核对。').fontSize(13)}
       }
       if(this.showIdentities){
         Text(this.catalog.recording_notice??'').fontSize(12)
@@ -135,23 +174,28 @@ export struct PhoneHistoryRecallSection {
         },(identity:RecallIdentity):string=>identity.key)
         if(this.catalog.next_offset!==undefined&&this.catalog.next_offset!==null){Button('下一页来源身份').enabled(!this.catalogBusy).onClick(():void=>{this.loadCatalog(this.catalog.next_offset??0);})}
       }
+      if(!this.identitiesOnly){
+      if(this.showFilters){
       Row(){Toggle({type:ToggleType.Switch,isOn:this.expand}).onChange((v:boolean):void=>{this.expand=v;});Text('按需核对来源与后续').fontSize(13)}
       Row(){Toggle({type:ToggleType.Switch,isOn:this.summarize}).onChange((v:boolean):void=>{this.summarize=v;});Text('生成有依据的简短归纳').fontSize(13)}
-      Button(this.busy?'取消上一轮并开始新查询':'查询').enabled(this.question.trim().length>0).onClick(():void=>{this.search();})
+      Text('模型按配置处理必要资料，可能通过网络运行；关闭归纳仍可查原文。').fontSize(12)
+      }
+      Button(this.busy?'取消上一轮并开始新查询':'找回记忆').height(48).enabled(this.question.trim().length>0).onClick(():void=>{this.search();})
       if(this.busy){Button('取消查询').onClick(():void=>{this.cancel();this.result={};this.context={};})}
       if(this.error.length>0){Text(this.error).fontSize(14).fontColor($r('app.color.brand_warning'))}
       if(this.result.answer!==undefined){
         Text(this.result.answer).fontSize(16)
-        Text(`状态：${this.result.status??''} · 归纳：${this.result.model_status??''}`).fontSize(12)
-        if(this.result.scope!==undefined){Text(`范围：${this.time(this.result.scope.sent_from)} 至 ${this.time(this.result.scope.sent_to)} · ${this.result.scope.source} · 关键词 ${(this.result.terms??[]).join('、')}`).fontSize(12)}
+        if(this.result.model_status==='failed'||this.result.model_status==='unavailable'){Text('模型归纳未完成，已找到的原文仍可浏览。').fontSize(13)}
+        if(this.showTechnical){Text(`状态：${this.result.status??''} · 归纳：${this.result.model_status??''}`).fontSize(12)}
+        if(this.result.scope!==undefined){Text(`范围：${this.time(this.result.scope.sent_from)} 至 ${this.time(this.result.scope.sent_to)} · ${this.result.scope.source==='all'?'全部来源':this.result.scope.source==='recording'?'录音':this.result.scope.source==='wechat'?'微信':'QQ'} · 关键词 ${(this.result.terms??[]).join('、')}`).fontSize(12)}
         ForEach(this.result.coverage??[],(v:string)=>{Text(v).fontSize(12)},(v:string):string=>v)
         if(this.result.latest_status_confirmed===false){Text('当前证据覆盖不完整，不能认定最终状态。').fontSize(12)}
         ForEach(this.result.claims??[],(c:RecallClaim)=>{
           Text(`${c.kind==='quote'?'原文引用':c.kind==='inference'?'推测':'模型归纳（待核对）'}：${c.text}`).fontSize(15)
-          ForEach(c.citations,(id:string)=>{Button('核对这条依据').onClick(():void=>{this.original(id);})},(id:string):string=>id)
+          ForEach(c.citations,(id:string)=>{Button('核对这条依据').height(44).onClick(():void=>{this.original(id);})},(id:string):string=>id)
         },(c:RecallClaim):string=>c.kind+c.text)
         ForEach(this.result.unknown??[],(v:string)=>{Text(`尚不确定：${v}`).fontSize(13)},(v:string):string=>v)
-        Text(`命中 ${this.result.metrics?.hits??0} · 取回 ${this.result.metrics?.retrieved??0} · 模型调用 ${this.result.metrics?.model_calls??0} · ${this.result.metrics?.elapsed_ms??0} ms`).fontSize(12)
+        if(this.showTechnical){Text(`命中 ${this.result.metrics?.hits??0} · 取回 ${this.result.metrics?.retrieved??0} · 模型调用 ${this.result.metrics?.model_calls??0} · ${this.result.metrics?.elapsed_ms??0} ms`).fontSize(12)}
         ForEach(this.result.evidence??[],(e:RecallEvidence)=>{this.evidence(e)},(e:RecallEvidence):string=>e.id)
         Row({space:8}){
           Button('前页').layoutWeight(1).enabled(!this.busy&&(this.result.page??0)>0).onClick(():void=>{this.page((this.result.page??0)-1);})
@@ -159,11 +203,9 @@ export struct PhoneHistoryRecallSection {
           Button('后页').layoutWeight(1).enabled(!this.busy&&this.result.has_more===true).onClick(():void=>{this.page((this.result.page??0)+1);})
         }
       }
-      if(this.context.notice!==undefined){
-        Text(this.context.notice).fontSize(14)
-        ForEach(this.context.evidence??[],(e:RecallEvidence)=>{Text(`${e.speaker} · ${e.source} · ${this.time(e.sent_at)}：${e.quote}`).fontSize(14)},(e:RecallEvidence):string=>e.id)
-        Button('收起依据').onClick(():void=>{this.contextRevision++;this.context={};})
       }
+      Button(this.showTechnical?'收起技术详情':'查看技术详情').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).onClick(():void=>{this.showTechnical=!this.showTechnical;})
     }.width('100%').alignItems(HorizontalAlign.Start).padding(12)
+      .bindSheet($$this.showContext,this.contextSheet(),{height:SheetSize.LARGE,showClose:true})
   }
 }

@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { Repository, UseCases, contract, stores } = require('./phone-sqlite-harness.cjs');
+const { Repository, UseCases, contract, stores, schemaVersion } = require('./phone-sqlite-harness.cjs');
 const id = n => String(n).padStart(26, '0');
 const response = (request, more = false, cursor = 'cursor-0') => ({
   projection_version: contract.V3_PROJECTION_VERSION, next_cursor: cursor, has_more: more,
@@ -15,9 +15,9 @@ async function setup(count, sync) {
   for (let n = 1; n <= count; n++) await repo.enqueue({ operation_id: id(n), kind: 'segment.classify',
     base_revision: null, payload: { selections: [], sound_kind: 'speech' } });
   // Reopen the current schema to verify durable queue recovery before synchronization.
-  // Relabelling a v19 database as v8 is not a valid migration fixture.
+  // Relabelling a current database as v8 is not a valid migration fixture.
   stores.at(-1).db.close(); repo = await Repository.open({ databasePath });
-  assert.equal(stores.at(-1).version,19);
+  assert.equal(stores.at(-1).version,schemaVersion);
   const session = { status: async () => ({ contract_version: contract.V3_CONTRACT_VERSION,
     projection_version: contract.V3_PROJECTION_VERSION }), sync, reviews: async () => ({ items: [] }),
     annotations: async () => ({ people: [] }) };

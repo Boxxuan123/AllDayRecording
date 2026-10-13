@@ -509,7 +509,8 @@ export class WearEngineRecordingSender {
     this.wifiTransferCoordinator.begin();
     try {
       await this.beginWifiTransferExclusive();
-      const result = await this.wifiTransferHandler(command.requestId, credentials);
+      const transfer: Promise<WatchWifiTransferResult> = this.wifiTransferHandler(command.requestId, credentials);
+      const result = await transfer;
       const ack = await this.sendWifiTransferAck(transport, command.requestId, true,
         result.message, result.actualState);
       this.wifiTransferCoordinator.complete(command.requestId, ack);
@@ -574,7 +575,8 @@ export class WearEngineRecordingSender {
     }
     this.controlCoordinator.begin();
     try {
-      const result = await this.controlHandler(desiredState, command.requestId);
+      const control: Promise<WatchRecordingControlResult> = this.controlHandler(desiredState, command.requestId);
+      const result = await control;
       const ack = await this.sendRecordingAck(transport, command.requestId, desiredState, true,
         result.actualState, result.sessionId, result.message);
       this.controlCoordinator.complete(command.requestId, ack);

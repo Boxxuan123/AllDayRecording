@@ -20,6 +20,9 @@ import { PhoneV3DataPage } from '../../v3/presentation/PhoneV3DataPage';
 import { PhoneV3ProcessingCenterPage } from '../../v3/presentation/PhoneV3ProcessingCenterPage';
 import { PhoneV3RemindersPage } from '../../v3/presentation/PhoneV3RemindersPage';
 import { PhoneV3DailyPage } from '../../v3/presentation/PhoneV3DailyPage';
+import { PhoneV3MorePage } from '../../v3/presentation/PhoneV3MorePage';
+import { PhoneV3PeoplePage } from '../../v3/presentation/PhoneV3PeoplePage';
+import { PhoneV3ReviewInboxPage } from '../../v3/presentation/PhoneV3ReviewInboxPage';
 import { PhoneV3RootPage } from '../../v3/presentation/PhoneV3RootPage';
 import { PhoneV3SessionDetailPage } from '../../v3/presentation/PhoneV3SessionDetailPage';
 import { PhoneV3SyncCenterPage } from '../../v3/presentation/PhoneV3SyncCenterPage';
@@ -86,33 +89,9 @@ export struct PhoneRootPage {
     };
   }
 
-  private mainTitleText(): string {
-    if (this.selectedMainTab === 0) {
-      return '全天录音';
-    }
-    if (this.selectedMainTab === 1) {
-      return '录音';
-    }
-    if (this.selectedMainTab === 2) {
-      return '审核';
-    }
-    if (this.selectedMainTab === 3) {
-      return '人物';
-    }
-    return '更多';
-  }
-
+  private mainTitleText(): string { return ['今天', '回忆', '事项', '记录'][this.selectedMainTab] ?? '今天'; }
   private mainMenuItems(): Array<HdsNavigationMenuItemOptions> {
-    if (this.selectedMainTab === 0) {
-      return [{
-        content: {
-          icon: $r('sys.symbol.arrow_2_circlepath'),
-          label: '同步与备份',
-          action: (): void => this.openSecondary(PHONE_V3_SYNC_ROUTE)
-        }
-      }];
-    }
-    return [];
+    return [{ content: { icon: $r('sys.symbol.ellipsis_circle'), label: '管理', action: (): void => this.openSecondary('phoneV3Management') } }];
   }
 
   private foregroundChanged(): void {
@@ -132,6 +111,8 @@ export struct PhoneRootPage {
     this.v3ViewModel.stop();
     this.deviceRuntime.stop();
   }
+
+  private openPeople(): void { this.v3ViewModel.openPeoplePage(); this.openSecondary('phoneV3People'); }
 
   private openComputerTransfer(): void {
     this.navStack.pushPath({
@@ -241,6 +222,32 @@ export struct PhoneRootPage {
     } else if (name === 'annotation') {
       PhoneV3AnnotationPage({ viewModel: this.v3ViewModel, editor: (param as AnnotationRoute).editor,
         scopeTitle: (param as AnnotationRoute).title, navStack: this.navStack, stateRevision: this.v3StateRevision })
+    } else if (name === 'phoneV3Management') {
+      HdsNavDestination() {
+        PhoneV3MorePage({ viewModel: this.v3ViewModel, stateRevision: this.v3StateRevision,
+          onOpenSync: (): void => this.openSecondary(PHONE_V3_SYNC_ROUTE),
+          onOpenReminders: (): void => this.openSecondary(PHONE_V3_REMINDERS_ROUTE),
+          onOpenDaily: (): void => this.openSecondary(PHONE_V3_DAILY_ROUTE),
+          onOpenProcessing: (): void => this.openSecondary(PHONE_V3_PROCESSING_ROUTE),
+          onOpenComputerConnection: (): void => this.openComputerTransfer(),
+          onOpenData: (): void => this.openSecondary(PHONE_V3_DATA_ROUTE),
+          onOpenReviews: (): void => this.openSecondary('phoneV3Reviews'),
+          onOpenPeople: (): void => this.openPeople() })
+      }.titleBar({ enableComponentSafeArea: true, content: { title: { mainTitle: '管理' } }, style: this.immersiveTitleBarStyle() }).titleMode(HdsNavDestinationTitleMode.MINI)
+    } else if (name === 'phoneV3People') {
+      HdsNavDestination() {
+        PhoneV3PeoplePage({ viewModel: this.v3ViewModel, stateRevision: this.v3StateRevision, active: true,
+          onOpenSession: (session: PhoneV3SessionCard): void => this.openV3Session(session),
+          onOpenReviews: (): void => this.openSecondary('phoneV3Reviews'),
+          onOpenAnnotation: (rows: Array<PhoneV3Utterance>, title: string): void => this.openAnnotation(rows, title, true) })
+      }.titleBar({ enableComponentSafeArea: true, content: { title: { mainTitle: '人物与来源身份' } }, style: this.immersiveTitleBarStyle() }).titleMode(HdsNavDestinationTitleMode.MINI)
+    } else if (name === 'phoneV3Reviews') {
+      HdsNavDestination() {
+        PhoneV3ReviewInboxPage({ viewModel: this.v3ViewModel, stateRevision: this.v3StateRevision,
+          onOpenSession: (session: PhoneV3SessionCard): void => this.openV3Session(session),
+          onOpenVoice: (id: string, history: boolean): void => this.navStack.pushPath({ name: 'voiceReview', param: new VoiceReviewRoute(id, history) }),
+          onOpenPurity: (id: string, history: boolean): void => this.navStack.pushPath({ name: 'purityReview', param: new VoiceReviewRoute(id, history) }) })
+      }.titleBar({ enableComponentSafeArea: true, content: { title: { mainTitle: '待判断与审核' } }, style: this.immersiveTitleBarStyle() }).titleMode(HdsNavDestinationTitleMode.MINI)
     } else if (name === PHONE_COMPUTER_TRANSFER_ROUTE) {
       HdsNavDestination() {
         PhoneComputerTransferPage()
@@ -296,7 +303,7 @@ export struct PhoneRootPage {
       }
       .titleBar({
         enableComponentSafeArea: true,
-        content: { title: { mainTitle: '提醒' } },
+        content: { title: { mainTitle: '事项' } },
         style: this.immersiveTitleBarStyle()
       })
       .titleMode(HdsNavDestinationTitleMode.MINI)
@@ -366,6 +373,8 @@ export struct PhoneRootPage {
         viewModel: this.v3ViewModel,
         stateRevision: this.v3StateRevision,
         selectedTab: $selectedMainTab,
+        onOpenReviews: (): void => this.openSecondary('phoneV3Reviews'),
+        onOpenPeople: (): void => this.openPeople(),
         onOpenVoice: (reviewId: string, history: boolean): void => {
           this.v3ViewModel.stopPlayback();
           this.navStack.pushPath({ name: 'voiceReview', param: new VoiceReviewRoute(reviewId, history) });

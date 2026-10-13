@@ -501,7 +501,8 @@ export class PhoneV3DeviceRuntime {
     const cleanup = this.cleanupTask;
     if (cleanup !== undefined) {
       try {
-        await cleanup;
+        const pendingCleanup: Promise<void> = cleanup;
+        await pendingCleanup;
       } catch (error) {
         throw new Error('上一次手机接收器清理失败，已阻止重复注册');
       }

@@ -2,6 +2,9 @@ import { ChatFollowup, ChatFollowupEvidence, explicitChatTime } from '../domain/
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 @Component
 export struct PhoneV3ChatFollowupsSection {
+  @Prop @Watch('resetPage') category: string = 'all';
+  @State private limit: number = 15;
+  @State private technical: boolean = false;
   @Prop eventId: string = '';
   @ObjectLink viewModel: PhoneV3ViewModel;
   @State private editing: string = '';
@@ -9,6 +12,8 @@ export struct PhoneV3ChatFollowupsSection {
   @State private title: string = '';
   @State private at: string = '';
   @State private inputError: string = '';
+  private resetPage(): void { this.limit = 15; this.editing = ''; }
+  private matchingItems(): Array<ChatFollowup> { return this.viewModel.snapshot.chatFollowups.filter((item: ChatFollowup): boolean => this.eventId.length > 0 ? item.event_id === this.eventId : this.category === 'all' || item.category === this.category); }
   private save(item: ChatFollowup): void {
     if (this.mode === 'enable_reminder' || this.at.trim().length > 0) {
       try { explicitChatTime(this.at); }
@@ -23,7 +28,7 @@ export struct PhoneV3ChatFollowupsSection {
     ForEach(rows,(e:ChatFollowupEvidence)=>{
       Text(`${e.platform==='wechat'?'微信':'QQ'} · ${e.is_from_self===true?'我本人':e.speaker} · ${e.sent_at===null?'发送时间未知':new Date(e.sent_at*1000).toISOString()}`).fontSize(12).fontColor($r('app.color.text_secondary'))
       Text(e.quote).fontSize(14)
-      if(JSON.stringify(e.context)!=='{}') { Text(`引用／转发上下文：${JSON.stringify(e.context)}`).fontSize(12).fontColor($r('app.color.text_secondary')) }
+      if(this.technical && JSON.stringify(e.context)!=='{}') { Text(`引用／转发上下文：${JSON.stringify(e.context)}`).fontSize(12).fontColor($r('app.color.text_secondary')) }
     },(e:ChatFollowupEvidence):string=>`${e.record_id}:${e.record_revision}`)
   }
   @Builder
@@ -67,9 +72,11 @@ export struct PhoneV3ChatFollowupsSection {
   }
   build() {
     Column({space:12}) {
-      Text(`聊天跟进（${this.viewModel.snapshot.chatFollowups.length}）`).width('100%').fontSize(16).fontWeight(FontWeight.Medium)
-      if(this.viewModel.snapshot.chatFollowups.length===0){Text('Windows 接纳后，同步电脑即可查看聊天事项。').fontSize(13)}
-      ForEach(this.viewModel.snapshot.chatFollowups.filter((item: ChatFollowup): boolean => this.eventId.length === 0 || item.event_id === this.eventId),(item:ChatFollowup)=>{this.card(item)},(item:ChatFollowup):string=>item.event_id)
+      Text('聊天跟进').width('100%').fontSize(16).fontWeight(FontWeight.Medium)
+      if(this.matchingItems().length===0){Text('当前已同步范围没有这一类跟进；同步后可检查更多来源。').fontSize(13)}
+      ForEach(this.matchingItems().slice(0,this.limit),(item:ChatFollowup)=>{this.card(item)},(item:ChatFollowup):string=>item.event_id)
+      if(this.matchingItems().length > this.limit) { Button('加载更多跟进').height(44).onClick((): void => { this.limit += 15; }) }
+      Button(this.technical ? '收起技术详情' : '查看技术详情').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).onClick((): void => { this.technical = !this.technical; })
     }.width('100%').alignItems(HorizontalAlign.Start)
   }
 }

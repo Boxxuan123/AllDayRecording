@@ -1,7 +1,7 @@
 // Synthetic requests through the production use cases and real on-disk SQLite.
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
-const { Repository, UseCases, stores } = require('./phone-sqlite-harness.cjs');
+const { Repository, UseCases, stores, schemaVersion } = require('./phone-sqlite-harness.cjs');
 
 (async () => {
   const databasePath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'review-queues-')), 'synthetic.sqlite');
@@ -84,7 +84,7 @@ const { Repository, UseCases, stores } = require('./phone-sqlite-harness.cjs');
   db.exec('DROP TABLE pending_voice_reviews; PRAGMA user_version=16');
   db.close();
   repo = await Repository.open({ databasePath });
-  assert.equal(stores.at(-1).version, 19);
+  assert.equal(stores.at(-1).version, schemaVersion);
   assert.equal((await repo.pendingPurityReviews())[0].operation_id, before.operation_id);
   assert.equal((await repo.pendingVoiceReviews()).length, 0);
   for (const store of stores) { try { store.db.close(); } catch (_) {} }

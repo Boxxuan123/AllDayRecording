@@ -28,7 +28,8 @@ export async function connectComputerReceiverSession(context: common.UIAbilityCo
     config.caPath, config.rpId, config.baseUrl, config.signingKeyAlias]);
   const pending=connecting.get(key);
   if (pending !== undefined) {
-    const ready = await pending;
+    const connection: Promise<ComputerReceiverSession> = pending;
+    const ready = await connection;
     await verifyConfiguration(store, ready.config);
     return ready;
   }

@@ -24,8 +24,33 @@ export function recallDate(value:string,end:boolean):number|undefined {
 export function applyRecallContext(current:RecallResponse,context:RecallResponse):RecallResponse {
   if(context.query_id!==undefined&&context.query_id!==current.query_id){return current;}
   if(context.status!=='stale'&&context.status!=='unavailable'){return current;}
-  const next:RecallResponse=JSON.parse(JSON.stringify(current)) as RecallResponse;
-  next.coverage=next.coverage??[];
+  // Copy only the collections changed below; preserve optional fields and source values.
+  const next:RecallResponse={
+    status:current.status,
+    query_id:current.query_id,
+    version:current.version,
+    people:current.people,
+    items:current.items,
+    next_offset:current.next_offset,
+    recording_notice:current.recording_notice,
+    answer:current.answer,
+    evidence:current.evidence,
+    claims:current.claims,
+    unknown:current.unknown,
+    scope:current.scope,
+    terms:current.terms,
+    coverage:current.coverage,
+    model_status:current.model_status,
+    metrics:current.metrics,
+    page:current.page,
+    has_more:current.has_more,
+    notice:current.notice,
+    intent:current.intent,
+    invalidated_evidence_ids:current.invalidated_evidence_ids,
+    latest_status_confirmed:current.latest_status_confirmed
+  };
+  next.coverage=current.coverage?.slice()??[];
+  next.evidence=current.evidence?.map(copyRecallEvidence);
   if(context.status==='stale'){
     const ids:Array<string>=current.invalidated_evidence_ids?.slice()??[];
     (context.invalidated_evidence_ids??[]).forEach((id:string)=>{if(!ids.includes(id)){ids.push(id);}});
@@ -48,4 +73,35 @@ export function applyRecallPage(current:RecallResponse,incoming:RecallResponse):
     return applyRecallContext(incoming,{status:'stale',query_id:incoming.query_id,invalidated_evidence_ids:current.invalidated_evidence_ids,notice:'来源变化后旧分页不能恢复结论'});
   }
   return incoming;
+}
+
+// ArkTS uses explicit typed copies rather than object spread or JSON cloning.
+function copyRecallEvidence(value:RecallEvidence):RecallEvidence {
+  return {
+    id:value.id,
+    revision:value.revision,
+    source:value.source,
+    speaker:value.speaker,
+    person_id:value.person_id,
+    identity_basis:value.identity_basis,
+    identity_key:value.identity_key,
+    quote:value.quote,
+    quote_truncated:value.quote_truncated,
+    source_is_from_self:value.source_is_from_self,
+    effective_is_self:value.effective_is_self,
+    validity:value.validity,
+    sent_at:value.sent_at,
+    origin:value.origin,
+    role:value.role,
+    assertion:value.assertion,
+    source_account_id:value.source_account_id,
+    conversation_id:value.conversation_id,
+    sender_account_id:value.sender_account_id,
+    session_id:value.session_id,
+    utterance_id:value.utterance_id,
+    start_ms:value.start_ms,
+    end_ms:value.end_ms,
+    start_at:value.start_at,
+    end_at:value.end_at
+  };
 }

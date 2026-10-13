@@ -15,6 +15,11 @@ function peer(v){return new Promise((resolve,reject)=>{pending.push({resolve,rej
  const use=new UseCases(repository,{list:async()=>[]},{isPaired:async()=>true,connect:async()=>({recall:peer})});
  const shown={query_id:'shown-query',model_status:'available',claims:[{kind:'summary',text:'旧结论',citations:['r1']}],evidence:[{id:'r1',validity:'valid'},{id:'r2',validity:'valid'}]};
  const stale=applyRecallContext(shown,{status:'stale',query_id:'shown-query',invalidated_evidence_ids:['r1'],notice:'来源已变化'});
+ assert.equal(shown.evidence[0].validity,'valid','invalidation must not mutate the prior response');
+ assert.equal(shown.coverage,undefined,'a new notice must not mutate the prior coverage');
+ const covered={...shown,coverage:['已有覆盖提示']};
+ const additional=applyRecallContext(covered,{status:'unavailable',notice:'暂时离线'});
+ assert.deepEqual(covered.coverage,['已有覆盖提示']);assert.deepEqual(additional.coverage,['已有覆盖提示','暂时离线']);
  assert.equal(stale.model_status,'stale');assert.deepEqual(stale.claims,[]);assert.equal(stale.evidence[0].validity,'stale');assert.equal(stale.evidence[1].validity,'valid');
  assert.equal(applyRecallContext(shown,{status:'stale',query_id:'older-query'}),shown);
  assert.equal(applyRecallPage(stale,shown).model_status,'stale');assert.deepEqual(applyRecallPage(stale,shown).claims,[]);

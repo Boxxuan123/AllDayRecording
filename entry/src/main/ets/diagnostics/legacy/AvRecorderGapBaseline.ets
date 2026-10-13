@@ -83,7 +83,8 @@ export class AvRecorderGapBaseline {
     this.clearRotationTimer();
     const activeRotation = this.rotationPromise;
     if (activeRotation !== undefined) {
-      await activeRotation;
+      const rotation: Promise<void> = activeRotation;
+      await rotation;
     }
 
     try {
@@ -103,7 +104,8 @@ export class AvRecorderGapBaseline {
     const activeRotation = this.rotationPromise;
     if (activeRotation !== undefined) {
       try {
-        await activeRotation;
+        const rotation: Promise<void> = activeRotation;
+        await rotation;
       } catch (error) {
         // Continue releasing the current recorder after an interrupted rotation.
       }

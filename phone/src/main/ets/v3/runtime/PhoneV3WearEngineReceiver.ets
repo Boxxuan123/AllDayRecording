@@ -189,7 +189,8 @@ export class PhoneV3WearEngineReceiver {
       return;
     }
     if (this.startTask !== undefined) {
-      await this.startTask;
+      const pendingStart: Promise<void> = this.startTask;
+      await pendingStart;
       return;
     }
     const startToken = this.receiverLifecycle.beginStart();
@@ -291,7 +292,8 @@ export class PhoneV3WearEngineReceiver {
     const startTask = this.startTask;
     if (startTask !== undefined) {
       try {
-        await startTask;
+        const pendingStart: Promise<void> = startTask;
+        await pendingStart;
       } catch (error) {
         // A cancelled or failed startup has already cleaned up its partial registrations.
       }

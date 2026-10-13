@@ -9,6 +9,8 @@ export struct PhoneV3MorePage {
   @Prop stateRevision: number = 0;
   @State private aboutVisible: boolean = false;
   @State private showDiagnostics: boolean = false;
+  onOpenReviews: () => void = (): void => {};
+  onOpenPeople: () => void = (): void => {};
   onOpenSync: () => void = (): void => {};
   onOpenReminders: () => void = (): void => {};
   onOpenDaily: () => void = (): void => {};
@@ -174,12 +176,14 @@ export struct PhoneV3MorePage {
   build() {
     Scroll() {
       Column({ space: 12 }) {
-        this.sectionLabel('功能')
-        this.menuRow($r('sys.symbol.calendar'), '每日总结', '查看每日事件和原始证据', this.onOpenDaily)
+        this.sectionLabel('管理与工具')
+        this.menuRow($r('sys.symbol.checkmark_circle_fill'), '待判断与审核', '保留原审核、人工标注与声音判断', this.onOpenReviews)
+        this.menuRow($r('sys.symbol.person_2_fill'), '人物与声纹工具', '来源身份关联、纠正与声纹授权', this.onOpenPeople)
+        this.menuRow($r('sys.symbol.calendar'), '每日回顾', '查看每日事件和原始证据', this.onOpenDaily)
         this.menuRow($r('sys.symbol.arrow_2_circlepath'), '同步与备份',
           this.syncDetail(), this.onOpenSync)
-        this.menuRow($r('sys.symbol.bell'), '提醒',
-          `${this.currentUiState().snapshot.reminders.length} 条已确认提醒`, this.onOpenReminders)
+        this.menuRow($r('sys.symbol.bell'), '事项',
+          `${this.currentUiState().snapshot.reminders.filter((r):boolean=>r.status==='scheduled'||r.status==='delivered').length} 条已确认提醒`, this.onOpenReminders)
         this.menuRow($r('sys.symbol.hourglass'), '转写与处理',
           this.processingDetail(), this.onOpenProcessing)
 

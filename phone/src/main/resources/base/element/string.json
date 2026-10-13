@@ -1,6 +1,9 @@
 {
   "string": [
-    { "name": "calendar_permission_reason", "value": "为已确认任务创建和管理系统日历提醒" },
+    {
+      "name": "calendar_permission_reason",
+      "value": "为已确认任务创建和管理系统日历提醒"
+    },
     {
       "name": "module_desc",
       "value": "接收、管理并播放手表录音"
@@ -15,11 +18,11 @@
     },
     {
       "name": "tab_home",
-      "value": "首页"
+      "value": "今天"
     },
     {
       "name": "tab_recordings",
-      "value": "录音"
+      "value": "记录"
     },
     {
       "name": "tab_reviews",
@@ -32,6 +35,14 @@
     {
       "name": "tab_more",
       "value": "更多"
+    },
+    {
+      "name": "tab_recall",
+      "value": "回忆"
+    },
+    {
+      "name": "tab_tasks",
+      "value": "事项"
     }
   ]
 }

@@ -8,8 +8,10 @@ let response, destroyed = 0;
 const native = { '@kit.NetworkKit': { http: { HttpDataType: { STRING: 0 }, RequestMethod: {GET:'GET',POST:'POST',PUT:'PUT'},
   createHttp: () => ({ request: async () => { if (response instanceof Error || response.code) throw response; return response; }, destroy: () => destroyed++ })
 } } };
+// Load the real diagnostics module; platform clipboard APIs remain inert.
 const oldLoad = Module._load;
 Module._load = function(name, ...args) { return native[name] || (name.startsWith('@kit.') || name.startsWith('@hms.') ? {} : oldLoad.call(this, name, ...args)); };
+native.common = require('../../common/src/main/ets/diagnostics/RuntimeDiagnostics.ets');
 const root = path.resolve('phone/src/main/ets/computer');
 const { mayRediscover } = require(path.join(root, 'ComputerConnectionError.ets'));
 const { ComputerTransferHttpClient: Client } = require(path.join(root, 'ComputerTransferHttpClient.ets'));

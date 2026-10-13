@@ -45,6 +45,7 @@ const oldLoad = Module._load;
 Module._load = function(name, ...args) { return native[name] || oldLoad.call(this, name, ...args); };
 const root = path.resolve(__dirname, '../../phone/src/main/ets/v3');
 module.exports = { root, stores, Store, notifications,
+  schemaVersion: require(path.join(root, 'data/PhoneProjectionRepository.ets')).PHONE_PROJECTION_SCHEMA_VERSION,
   Repository: require(path.join(root, 'data/PhoneProjectionRepository.ets')).PhoneProjectionRepository,
   UseCases: require(path.join(root, 'application/PhoneV3UseCases.ets')).PhoneV3UseCases,
   contract: require(path.join(root, 'contracts/V3ContractModels.ets')),

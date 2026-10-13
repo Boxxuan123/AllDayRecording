@@ -1,6 +1,6 @@
 // Real SQL/use cases/ViewModel; native adapters only. Synthetic disk data.
 const assert = require('node:assert/strict'), fs = require('node:fs'), os = require('node:os'), path = require('node:path'), Module = require('node:module');
-const {Repository,UseCases,stores,apply,root,contract} = require('./phone-sqlite-harness.cjs');
+const {Repository,UseCases,stores,apply,root,contract, schemaVersion } = require('./phone-sqlite-harness.cjs');
 const {loadFixtureTranscript} = require('./phone-paged-fixture.cjs');
 global.Observed = c=>c; global.AppStorage = {setOrCreate(){}};
 const oldLoad = Module._load;
@@ -61,7 +61,7 @@ const wait=async predicate=>{const end=Date.now()+3000;while(!predicate()){asser
   await assert.rejects(use.queueAnnotation([row],'','Never saved',true,''),/commit failure/);store.commit=committed;
   assert.equal((await repo.annotationOperations([id(1)])).length,before);assert.equal((await repo.cachedPeople()).length,0);
   store.db.close();const reopened=await Repository.open({databasePath:file});assert.equal((await reopened.annotationOperations([id(1)])).length,before);
-  assert.equal(stores.at(-1).version,19);
+  assert.equal(stores.at(-1).version,schemaVersion);
   stores.at(-1).db.close();
  }
  console.log('PASS scale-independent target/dependency queries, zero scans/network, duplicate guard, rollback, restart, interleaved writes and older revisions');

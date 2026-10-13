@@ -1,5 +1,6 @@
 const assert=require('node:assert/strict'),path=require('node:path'),fs=require('node:fs'),os=require('node:os');
-const {Repository,UseCases,stores,contract,apply}=require('./phone-sqlite-harness.cjs');
+const {Repository,UseCases,stores,contract,apply, schemaVersion }=require('./phone-sqlite-harness.cjs');
+const {loadFixtureTranscript}=require('./phone-paged-fixture.cjs');
 const data=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 const base={...data.response,receipts:[],changes:[],has_more:false};
 async function create(){
@@ -7,7 +8,7 @@ async function create(){
  const repo=await Repository.open({databasePath});await repo.enqueue(data.operation);
  return {repo,databasePath};
 }
-async function model(repo){const use=new UseCases(repo,{list:async()=>[]},{isPaired:async()=>true,connect:async()=>{throw Error('no network');}});return (await use.loadCached([])).sessions.flatMap(s=>s.utterances);}
+async function model(repo){const use=new UseCases(repo,{list:async()=>[]},{isPaired:async()=>true,connect:async()=>{throw Error('no network');}});return (await loadFixtureTranscript(use,await use.loadCached([]))).sessions.flatMap(s=>s.utterances);}
 async function visible(repo,uid=data.corrected_uid){return (await model(repo)).find(r=>r.utteranceId===uid);}
 (async()=>{
  // Receipt before pages; per-resource overlays stop independently. No group max.
@@ -33,8 +34,31 @@ async function visible(repo,uid=data.corrected_uid){return (await model(repo)).f
 
  // v9 already-stuck accepted row: immutable replay obtains current snapshot targets.
  ({repo,databasePath}=await create());await apply(repo,{...data.response,receipts:[]});await apply(repo,data.late_response);
- let db=stores.at(-1).db;db.prepare('UPDATE outbox SET applied_revision=6').run();db.exec('DROP TABLE outbox_resource_receipts; PRAGMA user_version=9');db.close();
- repo=await Repository.open({databasePath});assert.equal(stores.at(-1).version,10);
+ let db=stores.at(-1).db;db.prepare('UPDATE outbox SET applied_revision=6').run();// Restore the actual v9 shape; changing only user_version would rerun ALTERs
+ // against columns introduced after v9 and would not test a valid migration.
+ db.exec(`
+   DROP TRIGGER IF EXISTS outbox_selection_insert;
+   DROP TRIGGER IF EXISTS outbox_selection_delete;
+   DROP TABLE outbox_resource_receipts;
+   DROP TABLE outbox_selections;
+   DROP TABLE local_session_completions;
+   DROP TABLE local_session_failures;
+   DROP INDEX idx_projection_utterances_session_time;
+   ALTER TABLE projection_utterances DROP COLUMN session_id;
+   ALTER TABLE projection_utterances DROP COLUMN start_ms;
+   ALTER TABLE projection_utterances DROP COLUMN status;
+   DROP TABLE pending_purity_reviews;
+   DROP TABLE pending_voice_reviews;
+   DROP TABLE calendar_reminder_account;
+   DROP TABLE calendar_reminder_mappings;
+   DROP TABLE projection_daily_events;
+   DROP TABLE projection_daily_summaries;
+   DROP TABLE projection_chat_followups;
+   DROP TABLE projection_memory_indexes;
+   UPDATE sync_state SET projection_version=4 WHERE singleton_id=1;
+   PRAGMA user_version=9;
+ `);db.close();
+ repo=await Repository.open({databasePath});assert.equal(stores.at(-1).version,schemaVersion);
  assert.deepEqual((await repo.pendingOperations())[0].payload,data.operation.payload);
  let sent=[];const session={status:async()=>({contract_version:contract.V3_CONTRACT_VERSION,projection_version:contract.V3_PROJECTION_VERSION}),
  sync:async req=>{sent.push(req.client_operations);return data.recovery_response;},reviews:async()=>({items:[]}),annotations:async()=>({people:[]})};
@@ -43,14 +67,22 @@ async function visible(repo,uid=data.corrected_uid){return (await model(repo)).f
  assert.deepEqual(sent.flat().map(({attempt_count,...op})=>op),[data.operation]);
  assert.equal((await visible(repo)).soundKind,'speech');assert.equal((await visible(repo)).annotationPending,false);
  stores.at(-1).db.close();repo=await Repository.open({databasePath});assert.equal((await repo.v3Status()).pendingOperations,0);
- console.log('PASS persisted v9 stale batch -> v10 -> original-payload replay -> per-resource recovery -> restart convergence');
+ console.log('PASS persisted v9 stale batch -> current schema -> original-payload replay -> per-resource recovery -> restart convergence');
 
  // Entire receipt/projection transaction failure rolls back metadata as well.
  ({repo,databasePath}=await create());const store=stores.at(-1),execute=store.executeSql.bind(store);let fail=true;
  store.executeSql=async(sql,params)=>{if(fail&&sql.includes('UPDATE sync_state SET cursor')){fail=false;throw Error('local transaction fault');}return execute(sql,params);};
  await assert.rejects(apply(repo,data.response),/local transaction fault/);
  assert.equal(store.db.prepare('SELECT count(*) n FROM outbox_resource_receipts').get().n,0);
- assert.equal((await repo.pendingOperations()).length,1);
+ // Delivery queries intentionally exclude annotations whose source projection
+ // has not arrived. Verify durable pending truth and the immutable payload instead.
+ assert.equal((await repo.v3Status()).pendingOperations,1);
+ const rolledBack=await repo.annotationOperations();assert.equal(rolledBack.length,1);
+ assert.equal(rolledBack[0].operation_id,data.operation.operation_id);
+ assert.deepEqual(rolledBack[0].payload,data.operation.payload);
+ assert.equal(rolledBack[0].applied_revision,undefined);
+ assert.equal(store.db.prepare('SELECT count(*) n FROM projection_utterances').get().n,0);
+ assert.equal((await repo.pendingOperations()).length,0,'missing source is still guarded after rollback');
  await apply(repo,data.response);assert.equal((await repo.v3Status()).pendingOperations,0);
  await repo.enqueue(data.noop_operation);await apply(repo,data.noop_response);assert.equal((await repo.v3Status()).pendingOperations,0);
  console.log('PASS local transaction rollback/replay and applied no-op with unchanged revision');

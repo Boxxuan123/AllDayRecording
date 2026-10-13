@@ -50,7 +50,9 @@ if (result.error) {
 }
 
 const records = parseRecords(`${result.stdout || ''}\n${result.stderr || ''}`);
-const defects = records.flatMap((record) => Array.isArray(record.defects) ? record.defects : []);
+const defects = records.flatMap((record) => Array.isArray(record.defects)
+  ? record.defects.map((defect) => ({ ...defect, _filePath: defect._filePath || record.filePath }))
+  : []);
 const incompleteMessages = records
   .filter((record) => record.messageType === 0 || record.messageType === -1)
   .map((record) => record.content)
