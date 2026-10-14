@@ -1,3 +1,4 @@
+import { i18n } from '@kit.LocalizationKit';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 import { PhoneV3SessionCard } from '../domain/PhoneV3Models';
 import { RecallRequest, RecallResponse, RecallClaim, RecallEvidence, RecallPerson, recallDate, recallRequestId, applyRecallContext, applyRecallPage } from '../domain/PhoneHistoryRecall';
@@ -19,7 +20,7 @@ export struct PhoneRecallSearch {
   @State private keyword:string='';
   @State private person:string='';
   @State private filters:boolean=false;
-  @State private summarize:boolean=false;
+  @State private summarize:boolean=true;
   @State private expand:boolean=true;
   @State private people:Array<RecallPerson>=[];
   @State private catalogError:string='';
@@ -41,17 +42,17 @@ export struct PhoneRecallSearch {
   private async loadPeople():Promise<void> {
     const generation=++this.catalogGeneration; this.catalogError='';
     try{const response=await this.viewModel.historyRecall({action:'catalog'});if(generation===this.catalogGeneration){this.people=response.people??[];}}
-    catch(_){if(generation===this.catalogGeneration){this.catalogError='人物筛选暂不可用，仍可按全部人物搜索';}}
+    catch(_){if(generation===this.catalogGeneration){this.catalogError='人物筛选暂不可用；涉及具体人物的查询仍需确认身份';}}
   }
   private async search():Promise<void> {
     if(this.question.trim().length===0||this.busy){return;}
     this.cancel();const generation=this.generation;this.queryId=recallRequestId();
     this.submitted=this.question.trim();this.busy=true;this.error='';this.result={};this.showEvidence=false;this.editing=false;
     try {
-      const request:RecallRequest={action:'query',query_id:this.queryId,question:this.submitted,keyword:this.keyword,person_id:this.person,source:this.source,sent_from:recallDate(this.first,false),sent_to:recallDate(this.last,true),summarize:this.summarize,expand:this.expand};
+      const request:RecallRequest={action:'query',query_id:this.queryId,question:this.submitted,keyword:this.keyword,person_id:this.person,source:this.source,timezone:i18n.getCalendar('zh-CN').getTimeZone(),sent_from:recallDate(this.first,false),sent_to:recallDate(this.last,true),summarize:this.summarize,expand:this.expand};
       const response=await this.viewModel.historyRecall(request);
       if(generation===this.generation){this.result=response;this.scroller.scrollTo({xOffset:0,yOffset:0});}
-    }catch(error){if(generation===this.generation){const message=error instanceof Error?error.message:'';this.error=message.includes('YYYY-MM-DD')||message==='日期无效'?message:'搜索暂未完成，检查电脑连接后可重试。';}}
+    }catch(error){if(generation===this.generation){const message=error instanceof Error?error.message:'';this.error=message.includes('YYYY-MM-DD')||/日期|时区|时刻|时间描述|时间段|人物|范围|来源.*冲突|起止/.test(message)?message:'搜索暂未完成，检查电脑连接后可重试。';}}
     finally{if(generation===this.generation){this.busy=false;}}
   }
   private async page(number:number):Promise<void> {
@@ -88,7 +89,7 @@ export struct PhoneRecallSearch {
         TextInput({text:this.keyword,placeholder:'精确关键词（可选）'}).onChange((v:string):void=>{this.keyword=v;})
         Row(){Text('生成有依据的归纳').layoutWeight(1);Toggle({type:ToggleType.Switch,isOn:this.summarize}).onChange((v:boolean):void=>{this.summarize=v;})}.height(44)
         Row(){Text('按需核对后续原文').layoutWeight(1);Toggle({type:ToggleType.Switch,isOn:this.expand}).onChange((v:boolean):void=>{this.expand=v;})}.height(44)
-        Text('日期按新加坡时间，单次最多一年。归纳由电脑按配置处理必要资料，可能联网；关闭后仍可检索原文。').fontSize(12).fontColor($r('app.color.text_secondary'))
+        Text('日期按手机当前时区，单次最多一年。归纳由电脑按配置处理必要资料，可能联网；关闭后仍可检索原文。').fontSize(12).fontColor($r('app.color.text_secondary'))
         Button('人物与来源管理').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).onClick(this.onOpenPeople)
       }
       if(this.submitted.length===0){Text('搜索 QQ、微信与已同步录音。').fontSize(14).fontColor($r('app.color.text_secondary'))}
@@ -99,6 +100,9 @@ export struct PhoneRecallSearch {
     Column({space:10}) {
       Text(productRecallAnswer(this.result)).fontSize(18).lineHeight(27).copyOption(CopyOptions.InApp)
 
+      if(this.result.status==='needs_clarification'&&(this.result.person_candidates?.length??0)>1){
+        Select((this.result.person_candidates??[]).map((p:RecallPerson):SelectOption=>({value:`${p.display_name} (${p.person_id})`}))).value('选择具体人物').onSelect((i:number):void=>{this.person=this.result.person_candidates?.[i]?.person_id??'';this.search();})
+      }
       if(productRecallCoverage(this.result).length>0){Text(productRecallCoverage(this.result)).fontSize(13).fontColor($r('app.color.brand_warning'))}
       ForEach(this.result.unknown??[],(text:string)=>{Text(`尚不确定：${text}`).fontSize(13)},(text:string):string=>text)
       ForEach(this.result.claims??[],(claim:RecallClaim)=>{

@@ -1,21 +1,24 @@
-export interface RecallPerson { person_id:string; display_name:string; kind:string; }
+export interface RecallPerson { person_id:string; display_name:string; kind:string; aliases?:Array<string>; }
 export interface RecallDecision { person_id:string; action:string; basis:string; }
 export interface RecallIdentity { key:string; platform:string; source:string; account:string; label:string; person_id:string; basis:string; editable:boolean; decisions:Array<RecallDecision>; }
 export interface RecallCommand { operation_id:string; key:string; person_id:string; action:string; basis:string; version:string; }
-export interface RecallRequest { action:string; query_id?:string; question?:string; keyword?:string; person_id?:string; source?:string; sent_from?:number; sent_to?:number; expand?:boolean; summarize?:boolean; page?:number; offset?:number; evidence_id?:string; decision?:RecallCommand; }
-export interface RecallEvidence { id:string; revision:number; source:string; speaker:string; person_id:string; identity_basis:string; identity_key:string; quote:string; quote_truncated:boolean; source_is_from_self?:boolean|null; effective_is_self?:boolean|null; validity?:string; sent_at:number; origin:string; role:string; assertion:string; source_account_id?:string; conversation_id?:string; sender_account_id?:string; session_id?:string; utterance_id?:string; start_ms?:number; end_ms?:number; start_at?:string; end_at?:string; }
+export interface RecallRequest { action:string; query_id?:string; question?:string; keyword?:string; person_id?:string; source?:string; timezone?:string; sent_from?:number; sent_to?:number; expand?:boolean; summarize?:boolean; page?:number; offset?:number; evidence_id?:string; decision?:RecallCommand; }
+export interface RecallEvidence { id:string; revision:number; source:string; speaker:string; person_id:string; identity_basis:string; identity_key:string; quote:string; quote_truncated:boolean; source_is_from_self?:boolean|null; effective_is_self?:boolean|null; validity?:string; sent_at:number; origin:string; role:string; assertion:string; source_account_id?:string; conversation_id?:string; conversation_type?:string; reply_record_id?:string; sender_account_id?:string; session_id?:string; utterance_id?:string; start_ms?:number; end_ms?:number; start_at?:string; end_at?:string; }
 export interface RecallClaim { kind:string; text:string; citations:Array<string>; }
 export interface RecallMetrics { hits:number; retrieved:number; model_calls:number; source_requests:number; elapsed_ms:number; model_elapsed_ms?:number; model_input_ids?:Array<string>; source_records_read?:number; }
-export interface RecallScope { person_id:string; source:string; sent_from:number; sent_to:number; }
-export interface RecallResponse { status?:string; query_id?:string; version?:string; people?:Array<RecallPerson>; items?:Array<RecallIdentity>; next_offset?:number; recording_notice?:string; answer?:string; evidence?:Array<RecallEvidence>; claims?:Array<RecallClaim>; unknown?:Array<string>; scope?:RecallScope; terms?:Array<string>; coverage?:Array<string>; model_status?:string; metrics?:RecallMetrics; page?:number; has_more?:boolean; notice?:string; intent?:string; invalidated_evidence_ids?:Array<string>; latest_status_confirmed?:boolean; }
+export interface RecallScope { person_id:string; source:string; sent_from:number; sent_to:number; timezone?:string; relationship?:string; }
+export interface RecallResponse { status?:string; query_id?:string; version?:string; people?:Array<RecallPerson>; person_candidates?:Array<RecallPerson>; items?:Array<RecallIdentity>; next_offset?:number; recording_notice?:string; answer?:string; evidence?:Array<RecallEvidence>; claims?:Array<RecallClaim>; unknown?:Array<string>; scope?:RecallScope; terms?:Array<string>; coverage?:Array<string>; model_status?:string; source_status?:string; metrics?:RecallMetrics; page?:number; has_more?:boolean; notice?:string; intent?:string; invalidated_evidence_ids?:Array<string>; latest_status_confirmed?:boolean; }
 
 // Stable operation/query IDs, including retries after an ambiguous HTTP outcome.
 export function recallRequestId():string { return `recall-${Date.now()}-${Math.floor(Math.random()*1000000000)}`; }
 export function recallDate(value:string,end:boolean):number|undefined {
   if(value.trim().length===0){return undefined;}
   if(!/^\d{4}-\d{2}-\d{2}$/.test(value)){throw new Error('日期请使用 YYYY-MM-DD');}
-  const stamp=Date.parse(`${value}T${end?'23:59:59':'00:00:00'}+08:00`);
-  if(!Number.isFinite(stamp)){throw new Error('日期无效');}
+  const parts:Array<string>=value.split('-');
+  const year=Number(parts[0]);const month=Number(parts[1]);const day=Number(parts[2]);
+  const first=new Date(year,month-1,day);
+  if(first.getFullYear()!==year||first.getMonth()!==month-1||first.getDate()!==day){throw new Error('日期无效');}
+  const stamp=end?new Date(year,month-1,day+1).getTime()-1000:first.getTime();
   return Math.floor(stamp/1000);
 }
 
@@ -30,6 +33,7 @@ export function applyRecallContext(current:RecallResponse,context:RecallResponse
     query_id:current.query_id,
     version:current.version,
     people:current.people,
+    person_candidates:current.person_candidates,
     items:current.items,
     next_offset:current.next_offset,
     recording_notice:current.recording_notice,
@@ -41,6 +45,7 @@ export function applyRecallContext(current:RecallResponse,context:RecallResponse
     terms:current.terms,
     coverage:current.coverage,
     model_status:current.model_status,
+    source_status:current.source_status,
     metrics:current.metrics,
     page:current.page,
     has_more:current.has_more,
@@ -96,6 +101,8 @@ function copyRecallEvidence(value:RecallEvidence):RecallEvidence {
     assertion:value.assertion,
     source_account_id:value.source_account_id,
     conversation_id:value.conversation_id,
+    conversation_type:value.conversation_type,
+    reply_record_id:value.reply_record_id,
     sender_account_id:value.sender_account_id,
     session_id:value.session_id,
     utterance_id:value.utterance_id,
