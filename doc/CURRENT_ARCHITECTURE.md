@@ -128,3 +128,12 @@ Phone/Watch 真机录音、系统 Calendar 和音频播放只有设备测试才�
 ## 2026-10-12 Cross-day memory V1
 
 Phone 1.0.8 uses contract 3.10.0 / projection 7 / Core 34 / Phone 21. memory_index is a bounded, rebuildable original-evidence projection. memory.link uses existing transactions, operation IDs, offline outbox, CAS receipts and conflict records. It owns no task status, voice eligibility, or Calendar state. Existing large ViewModel/Repository changes are restricted to dispatch/query integration; source validation and UI live in dedicated PhoneCrossDayMemory and PhoneCrossDayMemorySection. Synthetic actual SQLite peer checks, migrations, replay/conflict checks and signed builds passed; device installation/UI NOT_RUN. See CROSS_DAY_MEMORY_V1.md.
+
+## 手机内容展示 V2（2026-10-14）
+
+生产入口和四个底部入口保持不变。PhoneProductHome/Tasks/Recall/Evidence 是临时展示映射，读取原有日回顾、提醒、聊天跟进与引用；没有新增持久化任务或人物状态。
+PhoneEvidenceDetails 统一原消息/前后文与定位播放。保存的聊天引用使用引用时间前后各 1 秒、来源和原话前缀进行只读查找，再精确匹配原记录 ID；不匹配时保留缓存并提示，不替换为相似消息。该组合查询明确关闭归纳和扩展，离页取消自己拥有的查询/播放。
+PhoneV3ViewModel 本来已超过 500 行及字段复审阈值，本轮仅新增一个四行的转写 ID 读取方法，没有新增可变字段；修改集中在 UI 和展示映射，没有同时改动 Transport/Storage。
+独立实机装配只在 tools/quality/phone-product-device，使用 phone-product-v2- 前缀 RDB 与合成夹具，且不装配生产配对、Calendar 或模型。构建脚本 finally 恢复入口并移走测试资源；正式构建必须核对 HAP 中不存在该装配与 rawfile。
+
+PhoneRecallSearch 的约 26 个字段也达到 UI 复审阈值：19 个输入/展示状态、4 个请求与滚动对象、ViewModel 和两个路由回调分别维护筛选、异步世代和返回上下文。它们仅在页面生命周期内存在；没有新增持久化查询、任务或人物状态。后续若继续扩大搜索编辑流程，应拆分编辑器组件，而非在数据层保存第二份状态。

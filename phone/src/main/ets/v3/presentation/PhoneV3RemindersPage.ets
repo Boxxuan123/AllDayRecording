@@ -1,153 +1,47 @@
-import { PhoneV3ChatFollowupsSection } from './PhoneV3ChatFollowupsSection';
-import { PhoneV3Reminder, PhoneV3SessionCard, PhoneV3Conflict } from '../domain/PhoneV3Models';
+import { PhoneV3SessionCard } from '../domain/PhoneV3Models';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
-import { phoneV3ReminderState, phoneV3ReminderTime } from './PhoneV3UiFormat';
+import { PhoneProductTask, productTasks, productTaskMatches } from './PhoneProductTasks';
+import { PhoneTaskDetails } from './PhoneTaskDetails';
 import { PHONE_V3_FLOATING_TAB_BAR_CONTENT_END_OFFSET } from './PhoneV3NativeUi';
-import { localReminderTime, reminderConflictMessage } from '../domain/PhoneV3ReminderCommands';
-
 @Component
 export struct PhoneV3RemindersPage {
-  @Prop stateRevision: number = 0;
-  @State private filter: string = 'self';
-  @State private limit: number = 15;
-  onOpenReviews: () => void = (): void => {};
-  @Prop eventId: string = '';
-  @ObjectLink viewModel: PhoneV3ViewModel;
-  @State private editingId: string = '';
-  @State private editedTitle: string = '';
-  @State private editedDue: string = '';
-  onOpenSession: (session: PhoneV3SessionCard) => void = (_session: PhoneV3SessionCard): void => {};
-
-  private matchingReminders(): Array<PhoneV3Reminder> {
-    return this.viewModel.snapshot.reminders.filter((r: PhoneV3Reminder): boolean =>
-      this.eventId.length > 0 ? r.eventId === this.eventId : this.filter === 'ended' ? r.status === 'completed' || r.status === 'cancelled' : (r.status === 'scheduled' || r.status === 'delivered') && (this.filter !== 'self' || r.actorPersonId === 'self'));
+  @ObjectLink viewModel:PhoneV3ViewModel;
+  @Prop stateRevision:number=0;
+  @Prop eventId:string='';
+  @State private category:string='self';
+  @State private limit:number=15;
+  @State private selected:string='';
+  @State private showDetail:boolean=false;
+  onOpenReviews:()=>void=():void=>{};
+  onOpenSession:(session:PhoneV3SessionCard)=>void=():void=>{};
+  private scroller:Scroller=new Scroller();
+  aboutToAppear():void{if(this.eventId.length>0){this.selected=this.eventId;this.showDetail=true;}}
+  private tasks():Array<PhoneProductTask>{return productTasks(this.viewModel.snapshot).filter((task:PhoneProductTask):boolean=>productTaskMatches(task,this.category));}
+  private labels():Array<string>{return ['需要我处理','等待对方','已确认提醒','线索与待判断','已完成'];}
+  @Builder private detail(){PhoneTaskDetails({viewModel:this.viewModel,taskId:this.selected,stateRevision:this.stateRevision,onClose:():void=>{this.showDetail=false;},onOpenSession:(session:PhoneV3SessionCard):void=>{this.showDetail=false;this.onOpenSession(session);}})}
+  @Builder private card(task:PhoneProductTask){
+    Column({space:7}){
+      Text(task.title).fontSize(17).fontWeight(FontWeight.Medium).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
+      Row(){Text(task.status).fontSize(12).fontColor($r('app.color.text_secondary'));Blank();if(task.time.length>0){Text(task.time).fontSize(12).fontColor($r('app.color.text_secondary'))}}.width('100%')
+      Text(task.explanation).fontSize(13).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).fontColor($r('app.color.text_secondary'))
+      Button(task.category==='clues'?'核对这条线索':'查看详情').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).onClick(():void=>{this.selected=task.id;this.showDetail=true;})
+    }.width('100%').padding(14).alignItems(HorizontalAlign.Start).backgroundColor($r('app.color.surface_primary')).borderRadius(14)
   }
-  private reminders(): Array<PhoneV3Reminder> { return this.matchingReminders().slice(0, this.limit); }
-  private matchingSession(reminder: PhoneV3Reminder): PhoneV3SessionCard | undefined {
-    return this.viewModel.snapshot.sessions.find((session: PhoneV3SessionCard): boolean =>
-      session.sessionId === reminder.sessionId);
-  }
-
-  @Builder
-  private reminderCard(reminder: PhoneV3Reminder) {
-    Column({ space: 8 }) {
-      Row() {
-        Text(phoneV3ReminderTime(reminder))
-          .fontSize(12)
-          .fontColor($r('app.color.brand_primary'))
-        Blank()
-        Text(phoneV3ReminderState(reminder))
-          .fontSize(12)
-          .fontColor($r('app.color.text_secondary'))
+  build(){
+    Scroll(this.scroller){Column({space:12}){
+      Select(this.labels().map((label:string):SelectOption=>({value:label}))).selected(['self','waiting','scheduled','clues','ended'].indexOf(this.category)).value(this.labels()[['self','waiting','scheduled','clues','ended'].indexOf(this.category)])
+        .onSelect((i:number):void=>{this.category=['self','waiting','scheduled','clues','ended'][i];this.limit=15;this.scroller.scrollTo({xOffset:0,yOffset:0});})
+      Row(){Text(`${this.tasks().length} 项`).fontSize(12).fontColor($r('app.color.text_secondary'));Blank();Button('审核箱').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).onClick(this.onOpenReviews)}.width('100%')
+      if(this.category==='clues'){Text('历史原话和少量建议；确认当前仍需处理后才进入待办').fontSize(13).fontColor($r('app.color.text_secondary'))}
+      ForEach(this.tasks().slice(0,this.limit),(task:PhoneProductTask)=>{this.card(task)},(task:PhoneProductTask):string=>task.id)
+      if(this.tasks().length===0){
+        Text(this.category==='self'?'当前没有已确认需你处理的事项':this.category==='waiting'?'当前没有等待对方的跟进':this.category==='scheduled'?'当前没有已确认并安排的提醒':this.category==='ended'?'当前同步范围没有已结束事项':'当前没有保存的线索').fontSize(15).padding({top:18,bottom:6})
+        if(this.category==='self'){Button('查看线索与待判断').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).onClick(():void=>{this.category='clues';this.limit=15;})}
       }
-      .width('100%')
-      Text(reminder.title)
-        .width('100%')
-        .fontSize(17)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
-      if (reminder.pendingAction.length > 0) {
-        Text('操作已保存在手机，待电脑确认').fontSize(13).fontColor($r('app.color.brand_warning'))
-      }
-      if (this.viewModel.calendarReminderState(reminder.eventId) === 'permission_required') {
-        Text('需要日历权限才能按时提醒').fontSize(13).fontColor($r('app.color.brand_warning'))
-        Button('授权日历并重试').enabled(!this.viewModel.busy).onClick((): void => this.viewModel.retryCalendarReminder(reminder.eventId))
-      } else if (this.viewModel.calendarReminderState(reminder.eventId) === 'externally_removed') {
-        Text('系统提醒已被删除').fontSize(13).fontColor($r('app.color.brand_warning'))
-        Button('重新启用提醒').enabled(!this.viewModel.busy).onClick((): void => this.viewModel.retryCalendarReminder(reminder.eventId))
-      } else if (this.viewModel.calendarReminderState(reminder.eventId) === 'externally_modified') {
-        Text('系统提醒已被修改，已保留日历中的修改').fontSize(13).fontColor($r('app.color.brand_warning'))
-        Button('按任务时间重新启用提醒').enabled(!this.viewModel.busy).onClick((): void => this.viewModel.retryCalendarReminder(reminder.eventId))
-      } else if (this.viewModel.calendarReminderState(reminder.eventId) === 'error') {
-        Text('日历提醒同步失败，任务已保留').fontSize(13).fontColor($r('app.color.brand_warning'))
-        Button('重试日历提醒').enabled(!this.viewModel.busy).onClick((): void => this.viewModel.retryCalendarReminder(reminder.eventId))
-      } else if (this.viewModel.calendarReminderState(reminder.eventId) === 'scheduled') {
-        Text('已安排系统日历提醒').fontSize(13).fontColor($r('app.color.text_secondary'))
-      }
-      if (reminder.location !== null && reminder.location.length > 0) {
-        Text(`地点：${reminder.location}`)
-          .fontSize(13)
-          .fontColor($r('app.color.text_secondary'))
-      }
-      if (this.matchingSession(reminder) !== undefined) {
-        Button('查看来源录音', { type: ButtonType.Capsule })
-          .height(44)
-          .buttonStyle(ButtonStyleMode.TEXTUAL)
-          .onClick((): void => this.onOpenSession(this.matchingSession(reminder) as PhoneV3SessionCard))
-      }
-      if ((reminder.status === 'scheduled' || reminder.status === 'delivered') && reminder.pendingAction.length === 0) {
-        Row({ space: 8 }) {
-          Button('完成').enabled(!this.viewModel.busy).onClick((): void =>
-            this.viewModel.reminderCommand('reminder.task', reminder.eventId, 'complete', reminder.eventRevision))
-          Button('改时间').enabled(!this.viewModel.busy).onClick((): void => {
-            this.editingId = reminder.eventId; this.editedTitle = reminder.title;
-            this.editedDue = localReminderTime(reminder.scheduledAt);
-          })
-          Button('取消提醒').enabled(!this.viewModel.busy).onClick((): void =>
-            this.viewModel.reminderCommand('reminder.task', reminder.eventId, 'cancel', reminder.eventRevision))
-        }
-        if (this.editingId === reminder.eventId) {
-          TextInput({ text: this.editedTitle, placeholder: '要做什么' }).onChange((value: string): void => { this.editedTitle = value; })
-          TextInput({ text: this.editedDue, placeholder: 'YYYY-MM-DD HH:mm（手机本地时间）' }).onChange((value: string): void => { this.editedDue = value; })
-          Button('保存新时间').enabled(!this.viewModel.busy).onClick((): void =>
-            this.viewModel.reminderCommand('reminder.task', reminder.eventId, 'reschedule', reminder.eventRevision, this.editedTitle, this.editedDue))
-          Button('收起修改').onClick((): void => { this.editingId = ''; })
-        }
-      }
-    }
-    .width('100%')
-    .padding(16)
-    .alignItems(HorizontalAlign.Start)
-    .backgroundColor($r('app.color.surface_primary'))
-    .borderRadius(16)
-  }
-
-  build() {
-    Scroll() {
-      Column({ space: 12 }) {
-        if (this.eventId.length === 0) {
-          Select([{value:'需要我处理'},{value:'等待对方'},{value:'已确认提醒'},{value:'已完成'},{value:'待明确'}])
-            .selected(['self','waiting','scheduled','ended','pending'].indexOf(this.filter)).value(['需要我处理','等待对方','已确认提醒','已完成','待明确'][['self','waiting','scheduled','ended','pending'].indexOf(this.filter)]).onSelect((i: number): void => { this.filter = ['self','waiting','scheduled','ended','pending'][i]; this.limit = 15; })
-          Button('待判断建议与审核').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).onClick(this.onOpenReviews)
-          Text('跟进不等于提醒；候选确认后才会安排。').fontSize(13).fontColor($r('app.color.text_secondary'))
-        }
-        if (this.filter !== 'scheduled' && this.eventId.length === 0) { PhoneV3ChatFollowupsSection({viewModel:this.viewModel, category:this.filter}) }
-        if (this.viewModel.reminderSchedulingError().length > 0) {
-          Text(this.viewModel.reminderSchedulingError()).fontSize(14).fontColor($r('app.color.brand_warning'))
-        }
-        ForEach(this.viewModel.snapshot.conflicts.filter((conflict: PhoneV3Conflict): boolean => (conflict.kind.startsWith('reminder.') || conflict.kind==='chat.followup')),
-          (conflict: PhoneV3Conflict) => {
-            Text(`提醒操作未被电脑接受：${reminderConflictMessage(conflict.errorJson)}`).fontSize(13).fontColor($r('app.color.brand_warning'))
-          }, (conflict: PhoneV3Conflict): string => conflict.operationId)
-        if (this.filter === 'self' || this.filter === 'scheduled' || this.filter === 'ended' || this.eventId.length > 0) {
-        Text(this.filter === 'ended' ? '已完成与已取消提醒' : '已确认提醒')
-          .width('100%')
-          .fontSize(13)
-          .fontColor($r('app.color.text_secondary'))
-        if (this.reminders().length === 0) {
-          Text(this.filter === 'ended' ? '当前已同步范围没有已完成或取消的提醒。' : '当前已同步范围没有这一类已确认提醒；候选会先等待你判断。')
-            .width('100%')
-            .padding(18)
-            .fontSize(14)
-            .fontColor($r('app.color.text_secondary'))
-            .backgroundColor($r('app.color.surface_primary'))
-            .borderRadius(16)
-        } else {
-          ForEach(this.reminders(), (reminder: PhoneV3Reminder) => {
-            this.reminderCard(reminder)
-          }, (reminder: PhoneV3Reminder): string => reminder.eventId)
-        }
-        if (this.matchingReminders().length > this.limit) { Button('加载更多提醒').height(44).onClick((): void => { this.limit += 15; }) }
-        }
-      }
-      .width('100%')
-      .padding({ left: 18, right: 18, top: 10, bottom: 32 })
-      .alignItems(HorizontalAlign.Start)
-    }
-    .contentEndOffset(PHONE_V3_FLOATING_TAB_BAR_CONTENT_END_OFFSET)
-    .align(Alignment.TopStart)
-    .width('100%')
-    .height('100%')
-    .backgroundColor($r('app.color.page_background'))
+      if(this.tasks().length>this.limit){Button('加载更多事项').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).onClick(():void=>{this.limit+=15;})}
+      if(this.viewModel.snapshot.sync.pendingOperations>0){Text(`${this.viewModel.snapshot.sync.pendingOperations} 项修改已保存在手机，等待同步`).fontSize(12).fontColor($r('app.color.brand_warning'))}
+      if(this.viewModel.error.length>0){Text('部分操作未完成，请打开详情核对或从同步管理重试').fontSize(13).fontColor($r('app.color.brand_warning'))}
+    }.width('100%').padding(16).alignItems(HorizontalAlign.Start)}.width('100%').height('100%').align(Alignment.TopStart).contentEndOffset(PHONE_V3_FLOATING_TAB_BAR_CONTENT_END_OFFSET).backgroundColor($r('app.color.page_background'))
+      .bindSheet($$this.showDetail,this.detail(),{height:SheetSize.LARGE,showClose:false})
   }
 }

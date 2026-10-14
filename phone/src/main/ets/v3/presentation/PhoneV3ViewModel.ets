@@ -705,6 +705,10 @@ export class PhoneV3ViewModel {
     return this.useCases.loadDailyCache();
   }
 
+  async verifyEvidenceUtterance(evidence: PhoneDailyEvidence): Promise<PhoneV3Utterance | undefined> {
+    return this.useCases?.loadUtteranceById(evidence.utterance_id);
+  }
+
   playDailyEvidence(evidence: PhoneDailyEvidence): void {
     const session = this.snapshot.sessions.find((value: PhoneV3SessionCard): boolean =>
       value.sessionId === evidence.session_id);

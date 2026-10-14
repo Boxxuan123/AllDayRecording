@@ -1,0 +1,521 @@
+{
+  "description": "明确的隔离合成验收夹具，禁止导入生产数据库",
+  "packet": {
+    "projection_version": 7,
+    "changes": [
+      {
+        "sequence": 1,
+        "resource_type": "reminder",
+        "resource_id": "00000000000000000000000001",
+        "revision": 1,
+        "operation": "upsert",
+        "resource": {
+          "event_id": "00000000000000000000000001",
+          "session_id": "00000000000000000000000003",
+          "event_revision": 1,
+          "source_candidate_id": "00000000000000000000000007",
+          "title": "发送项目材料（隔离验收）",
+          "actor_person_id": "self",
+          "commitment_direction": "not_applicable",
+          "related_person_ids": [],
+          "scheduled_at": "2030-10-14T06:00:00Z",
+          "location": null,
+          "status": "scheduled",
+          "updated_at": "2026-10-14T01:00:00Z"
+        }
+      },
+      {
+        "sequence": 2,
+        "resource_type": "recording_session",
+        "resource_id": "00000000000000000000000003",
+        "revision": 1,
+        "operation": "upsert",
+        "resource": {
+          "session_id": "00000000000000000000000003",
+          "session_key": "phone-product-v2-tone",
+          "captured_start": "2026-10-14T01:00:00Z",
+          "device_name": "隔离音频夹具",
+          "state": "completed",
+          "status_code": "ready",
+          "progress": 100,
+          "revision": 1
+        }
+      },
+      {
+        "sequence": 3,
+        "resource_type": "utterance",
+        "resource_id": "00000000000000000000000004",
+        "revision": 1,
+        "operation": "upsert",
+        "resource": {
+          "utterance_id": "00000000000000000000000004",
+          "session_id": "00000000000000000000000003",
+          "speaker_track_id": "00000000000000000000000005",
+          "speaker_label": "我本人",
+          "original_speaker_track_id": "00000000000000000000000005",
+          "original_speaker_label": "我本人",
+          "identity": "self",
+          "original_identity": "self",
+          "identity_evidence": {},
+          "start_ms": 1000,
+          "end_ms": 6000,
+          "start_at": "2026-10-14T01:00:00Z",
+          "end_at": "2026-10-14T01:00:05Z",
+          "text": "先整理最后的图，再发送项目材料。",
+          "original_text": "先整理最后的图，再发送项目材料。",
+          "revision": 1,
+          "status": "active",
+          "evidence": {
+            "person_annotation": {
+              "person_id": "self",
+              "source": "human",
+              "state": "active"
+            }
+          }
+        }
+      },
+      {
+        "sequence": 4,
+        "resource_type": "daily_event",
+        "resource_id": "00000000000000000000000008",
+        "revision": 1,
+        "operation": "upsert",
+        "resource": {
+          "event_id": "00000000000000000000000008",
+          "revision": 1,
+          "local_date": "2026-10-14",
+          "timezone": "Asia/Singapore",
+          "title": "讨论项目材料发送顺序",
+          "start_at": "2026-10-14T01:00:00Z",
+          "end_at": "2026-10-14T01:00:05Z",
+          "category": "discussion",
+          "derivation_status": "active",
+          "participants": [
+            {
+              "key": "self",
+              "kind": "self",
+              "label": "我本人",
+              "status": "source_confirmed"
+            }
+          ],
+          "evidence_snapshots": [
+            {
+              "session_id": "00000000000000000000000003",
+              "utterance_id": "00000000000000000000000004",
+              "revision": 1,
+              "start_ms": 1000,
+              "end_ms": 6000,
+              "start_at": "2026-10-14T01:00:00Z",
+              "end_at": "2026-10-14T01:00:05Z",
+              "text": "先整理最后的图，再发送项目材料。",
+              "participant": {
+                "key": "self",
+                "kind": "self",
+                "label": "我本人",
+                "status": "source_confirmed"
+              }
+            }
+          ],
+          "linked_task_ids": [
+            "00000000000000000000000001"
+          ]
+        }
+      },
+      {
+        "sequence": 5,
+        "resource_type": "daily_summary",
+        "resource_id": "00000000000000000000000009",
+        "revision": 1,
+        "operation": "upsert",
+        "resource": {
+          "summary_id": "00000000000000000000000009",
+          "revision": 1,
+          "summary_date": "2026-10-14",
+          "timezone": "Asia/Singapore",
+          "derivation_status": "active",
+          "objective": {
+            "date": "2026-10-14",
+            "headline": "材料发送安排",
+            "source_event_ids": [
+              "00000000000000000000000008"
+            ],
+            "source_event_revisions": {
+              "00000000000000000000000008": 1
+            },
+            "key_events": [],
+            "tasks_created": [],
+            "tasks_completed": [],
+            "tasks_pending": [],
+            "people_interacted": [],
+            "unresolved_items": [],
+            "unified_review": {
+              "date": "2026-10-14",
+              "timezone": "Asia/Singapore",
+              "status": "ready",
+              "generated_at": "2026-10-14T02:00:00Z",
+              "coverage": {
+                "chat_records_in_day": 3,
+                "chat_records_selected": 3,
+                "chat_records_excluded": 0,
+                "recording_events": 1,
+                "recording_evidence": 1,
+                "period_start": "2026-10-14T00:00:00+08:00",
+                "period_end": "2026-10-14T23:59:59+08:00",
+                "scope": "隔离合成数据",
+                "missing_sources": []
+              },
+              "claims": [
+                {
+                  "section": "activity",
+                  "text": "讨论了项目材料的整理和发送顺序。",
+                  "certainty": "certain",
+                  "perspective": "self",
+                  "evidence": [
+                    {
+                      "evidence_id": "fixture-daily-chat",
+                      "quote": "明天我把项目材料发给你，先把最后的图整理好。"
+                    }
+                  ],
+                  "event_ids": []
+                },
+                {
+                  "section": "followup",
+                  "text": "计划先整理图片，再发送材料；是否已经发送尚不确定。",
+                  "certainty": "uncertain",
+                  "perspective": "self",
+                  "evidence": [
+                    {
+                      "evidence_id": "fixture-daily-record",
+                      "quote": "先整理最后的图，再发送项目材料。"
+                    }
+                  ],
+                  "event_ids": [
+                    "00000000000000000000000001"
+                  ]
+                }
+              ],
+              "evidence": [
+                {
+                  "evidence_id": "fixture-daily-chat",
+                  "source_type": "chat",
+                  "text": "明天我把项目材料发给你，先把最后的图整理好。",
+                  "revision": 1,
+                  "speaker": "我本人",
+                  "sent_at": 1791939601,
+                  "platform": "wechat",
+                  "record_id": "00000000000000000000000051",
+                  "context": {}
+                },
+                {
+                  "evidence_id": "fixture-daily-record",
+                  "source_type": "recording",
+                  "text": "先整理最后的图，再发送项目材料。",
+                  "revision": 1,
+                  "session_id": "00000000000000000000000003",
+                  "utterance_id": "00000000000000000000000004",
+                  "start_ms": 1000,
+                  "end_ms": 6000,
+                  "start_at": "2026-10-14T01:00:00Z",
+                  "end_at": "2026-10-14T01:00:05Z",
+                  "participant": {
+                    "key": "self",
+                    "kind": "self",
+                    "label": "我本人",
+                    "status": "source_confirmed"
+                  }
+                }
+              ],
+              "limitations": [
+                "只能核对已保存原文，计划不代表已完成"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "sequence": 6,
+        "resource_type": "chat_followup",
+        "resource_id": "00000000000000000000000011",
+        "revision": 1,
+        "operation": "upsert",
+        "resource": {
+          "event_id": "00000000000000000000000011",
+          "revision": 1,
+          "source_key": "fixture:11",
+          "title": "核对材料清单",
+          "status": "active",
+          "category": "self",
+          "actor_is_from_self": true,
+          "time": {
+            "expression": "待核对",
+            "date": null,
+            "at": null,
+            "timezone": "Asia/Singapore",
+            "uncertainty": "时间尚未确定"
+          },
+          "historical": false,
+          "progress_unknown": false,
+          "user_confirmed": true,
+          "ignored": false,
+          "uncertainty": [],
+          "evidence": [
+            {
+              "source_type": "chat_record",
+              "record_id": "00000000000000000000000051",
+              "record_revision": 1,
+              "platform": "wechat",
+              "sent_at": 1791939601,
+              "quote": "明天我把项目材料发给你，先把最后的图整理好。",
+              "is_from_self": true,
+              "speaker": "我本人",
+              "context": {}
+            }
+          ],
+          "pending_change": null,
+          "updated_at": "2026-10-14T01:00:00Z"
+        }
+      },
+      {
+        "sequence": 7,
+        "resource_type": "chat_followup",
+        "resource_id": "00000000000000000000000012",
+        "revision": 1,
+        "operation": "upsert",
+        "resource": {
+          "event_id": "00000000000000000000000012",
+          "revision": 1,
+          "source_key": "fixture:12",
+          "title": "等待同事核对表格",
+          "status": "active",
+          "category": "waiting",
+          "actor_is_from_self": false,
+          "time": {
+            "expression": "待核对",
+            "date": null,
+            "at": null,
+            "timezone": "Asia/Singapore",
+            "uncertainty": "时间尚未确定"
+          },
+          "historical": false,
+          "progress_unknown": false,
+          "user_confirmed": false,
+          "ignored": false,
+          "uncertainty": [],
+          "evidence": [
+            {
+              "source_type": "chat_record",
+              "record_id": "00000000000000000000000052",
+              "record_revision": 1,
+              "platform": "wechat",
+              "sent_at": 1791939602,
+              "quote": "好的，材料收到后我会核对表格。",
+              "is_from_self": false,
+              "speaker": "验收同事",
+              "context": {}
+            }
+          ],
+          "pending_change": null,
+          "updated_at": "2026-10-14T01:00:00Z"
+        }
+      },
+      {
+        "sequence": 8,
+        "resource_type": "chat_followup",
+        "resource_id": "00000000000000000000000013",
+        "revision": 1,
+        "operation": "upsert",
+        "resource": {
+          "event_id": "00000000000000000000000013",
+          "revision": 1,
+          "source_key": "fixture:13",
+          "title": "上周提到的版本（历史线索）",
+          "status": "active",
+          "category": "self",
+          "actor_is_from_self": true,
+          "time": {
+            "expression": "待核对",
+            "date": null,
+            "at": null,
+            "timezone": "Asia/Singapore",
+            "uncertainty": "时间尚未确定"
+          },
+          "historical": true,
+          "progress_unknown": true,
+          "user_confirmed": false,
+          "ignored": false,
+          "uncertainty": [],
+          "evidence": [
+            {
+              "source_type": "chat_record",
+              "record_id": "00000000000000000000000051",
+              "record_revision": 1,
+              "platform": "wechat",
+              "sent_at": 1791939601,
+              "quote": "明天我把项目材料发给你，先把最后的图整理好。",
+              "is_from_self": true,
+              "speaker": "我本人",
+              "context": {}
+            }
+          ],
+          "pending_change": null,
+          "updated_at": "2026-10-14T01:00:00Z"
+        }
+      }
+    ],
+    "receipts": [],
+    "next_cursor": "cursor-8",
+    "has_more": false,
+    "server_time": "2026-10-14T01:00:00Z"
+  },
+  "query": {
+    "status": "ready",
+    "answer": "原文提到先整理图片再发材料，目前没有找到已经发送的依据。",
+    "evidence": [
+      {
+        "id": "chat:00000000000000000000000051",
+        "revision": 1,
+        "source": "wechat",
+        "speaker": "我本人",
+        "person_id": "00000000000000000000000091",
+        "identity_basis": "来源确认本人",
+        "identity_key": "fixture:1",
+        "quote": "明天我把项目材料发给你，先把最后的图整理好。",
+        "quote_truncated": false,
+        "source_is_from_self": true,
+        "effective_is_self": true,
+        "validity": "valid",
+        "sent_at": 1791939601,
+        "origin": "mac",
+        "role": "hit",
+        "assertion": "讨论和计划需要核对上下文"
+      },
+      {
+        "id": "recording:00000000000000000000000004",
+        "revision": 1,
+        "source": "recording",
+        "speaker": "我本人",
+        "person_id": "00000000000000000000000091",
+        "identity_basis": "原转写人工确认",
+        "identity_key": "fixture-recording",
+        "quote": "先整理最后的图，再发送项目材料。",
+        "quote_truncated": false,
+        "validity": "valid",
+        "sent_at": 1791939605,
+        "origin": "windows",
+        "role": "hit",
+        "assertion": "录音中的计划不代表已经执行",
+        "session_id": "00000000000000000000000003",
+        "utterance_id": "00000000000000000000000004",
+        "start_ms": 1000,
+        "end_ms": 6000,
+        "start_at": "2026-10-14T01:00:00Z",
+        "end_at": "2026-10-14T01:00:05Z"
+      }
+    ],
+    "claims": [],
+    "unknown": [
+      "是否已经发送材料"
+    ],
+    "coverage": [
+      "当前只覆盖隔离测试来源"
+    ],
+    "model_status": "disabled",
+    "page": 0,
+    "has_more": false,
+    "latest_status_confirmed": false,
+    "metrics": {
+      "hits": 2,
+      "retrieved": 2,
+      "model_calls": 0,
+      "source_requests": 0,
+      "elapsed_ms": 1,
+      "model_input_ids": []
+    }
+  },
+  "context": {
+    "status": "ready",
+    "evidence": [
+      {
+        "id": "chat:00000000000000000000000051",
+        "revision": 1,
+        "source": "wechat",
+        "speaker": "我本人",
+        "person_id": "00000000000000000000000091",
+        "identity_basis": "来源确认本人",
+        "identity_key": "fixture:1",
+        "quote": "明天我把项目材料发给你，先把最后的图整理好。",
+        "quote_truncated": false,
+        "source_is_from_self": true,
+        "effective_is_self": true,
+        "validity": "valid",
+        "sent_at": 1791939601,
+        "origin": "mac",
+        "role": "hit",
+        "assertion": "讨论和计划需要核对上下文"
+      },
+      {
+        "id": "chat:00000000000000000000000052",
+        "revision": 1,
+        "source": "wechat",
+        "speaker": "验收同事",
+        "person_id": "",
+        "identity_basis": "来源显示名",
+        "identity_key": "fixture:2",
+        "quote": "好的，材料收到后我会核对表格。",
+        "quote_truncated": false,
+        "source_is_from_self": false,
+        "effective_is_self": false,
+        "validity": "valid",
+        "sent_at": 1791939602,
+        "origin": "mac",
+        "role": "context",
+        "assertion": "讨论和计划需要核对上下文"
+      },
+      {
+        "id": "chat:00000000000000000000000053",
+        "revision": 1,
+        "source": "wechat",
+        "speaker": "验收同事",
+        "person_id": "",
+        "identity_basis": "来源显示名",
+        "identity_key": "fixture:3",
+        "quote": "上周提过的版本也一起发来。",
+        "quote_truncated": false,
+        "source_is_from_self": false,
+        "effective_is_self": false,
+        "validity": "valid",
+        "sent_at": 1791939603,
+        "origin": "mac",
+        "role": "context",
+        "assertion": "讨论和计划需要核对上下文"
+      }
+    ]
+  },
+  "recording_context": {
+    "status": "ready",
+    "evidence": [
+      {
+        "id": "recording:00000000000000000000000004",
+        "revision": 1,
+        "source": "recording",
+        "speaker": "我本人",
+        "person_id": "00000000000000000000000091",
+        "identity_basis": "原转写人工确认",
+        "identity_key": "fixture-recording",
+        "quote": "先整理最后的图，再发送项目材料。",
+        "quote_truncated": false,
+        "validity": "valid",
+        "sent_at": 1791939605,
+        "origin": "windows",
+        "role": "hit",
+        "assertion": "录音中的计划不代表已经执行",
+        "session_id": "00000000000000000000000003",
+        "utterance_id": "00000000000000000000000004",
+        "start_ms": 1000,
+        "end_ms": 6000,
+        "start_at": "2026-10-14T01:00:00Z",
+        "end_at": "2026-10-14T01:00:05Z"
+      }
+    ]
+  }
+}
