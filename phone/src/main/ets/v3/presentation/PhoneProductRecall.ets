@@ -10,6 +10,7 @@ export function productRecallAnswer(result:RecallResponse):string{
     const text=claims.filter((claim:RecallClaim):boolean=>claim.text.trim().length>0&&claim.citations.length>0).map((claim:RecallClaim):string=>claim.kind==='inference'?`推测：${claim.text}`:claim.text).join('\n');
     return text.length>0?text:'归纳没有形成有依据的结论，请核对原文。';
   }
+  if(result.status==='coverage_insufficient'){return result.answer??'当前来源覆盖不足，不能判断没有聊天。';}
   if(result.status==='not_found'){return result.answer??'当前人物、日期与会话范围未找到记录，不能据此判断没有发生。';}
   if(result.status==='partial'&&(result.evidence?.length??0)===0){return result.answer??'本轮原文未完整取回，请查看来源状态后重试。';}
   return (result.evidence?.length??0)>0?'未请求归纳；以下为本次范围内的原文':'当前范围没有找到相关原文';
@@ -18,4 +19,11 @@ export function productRecallCoverage(result:RecallResponse):string{
   if((result.coverage??[]).some((line:string):boolean=>line.includes('离线')||line.includes('SOURCE_OFFLINE'))){return '部分来源暂时离线，已保存内容不代表最新状态';}
   if(result.status==='unavailable'||result.source_status==='unavailable'||(result.coverage??[]).some((line:string):boolean=>line.includes('来源未完整取回'))){return '部分来源未成功取回，已有内容不代表最新状态';}
   return result.latest_status_confirmed===false||(result.coverage?.length??0)>0?'结果只覆盖本次可用记录，尚不能确认完整经过或最终进展':'';
+}
+
+export function productRecallScope(result:RecallResponse):string{
+  const scope=result.scope;if(scope===undefined){return '';}
+  const first=scope.sent_from_local??new Date(scope.sent_from*1000).toISOString();
+  const last=scope.sent_to_local??new Date(scope.sent_to*1000).toISOString();
+  return `实际范围：${first} 至 ${last} · ${scope.timezone??'Asia/Singapore'} · ${scope.person_id.length>0?scope.person_id:'人物未限定'} · ${scope.source}`;
 }

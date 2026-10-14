@@ -3,7 +3,7 @@ import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 import { PhoneV3SessionCard } from '../domain/PhoneV3Models';
 import { RecallRequest, RecallResponse, RecallClaim, RecallEvidence, RecallPerson, recallDate, recallRequestId, applyRecallContext, applyRecallPage } from '../domain/PhoneHistoryRecall';
 import { PhoneProductEvidence, recallProductEvidence } from './PhoneProductEvidence';
-import { productRecallAnswer, productRecallCoverage } from './PhoneProductRecall';
+import { productRecallAnswer, productRecallCoverage, productRecallScope } from './PhoneProductRecall';
 import { PhoneEvidenceDetails } from './PhoneEvidenceDetails';
 
 @Component
@@ -98,6 +98,7 @@ export struct PhoneRecallSearch {
   }
   @Builder private answer() {
     Column({space:10}) {
+      if(productRecallScope(this.result).length>0){Text(productRecallScope(this.result)).fontSize(12).fontColor($r('app.color.text_secondary')).copyOption(CopyOptions.InApp)}
       Text(productRecallAnswer(this.result)).fontSize(18).lineHeight(27).copyOption(CopyOptions.InApp)
 
       if(this.result.status==='needs_clarification'&&(this.result.person_candidates?.length??0)>1){

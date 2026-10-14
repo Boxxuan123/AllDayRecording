@@ -2,7 +2,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {spawn}=require('node:child_process'),readline=require('node:readline');
 const {Repository,UseCases,stores,root}=require('./phone-sqlite-harness.cjs');
-const {productRecallAnswer,productRecallCoverage}=require(path.join(root,'presentation/PhoneProductRecall.ets'));
+const {productRecallAnswer,productRecallCoverage,productRecallScope}=require(path.join(root,'presentation/PhoneProductRecall.ets'));
 const {recallDate}=require(path.join(root,'domain/PhoneHistoryRecall.ets'));
 const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'recall-query-loop-'));
 const asr=process.env.CHAT_PHONE_ASR_ROOT;
@@ -19,6 +19,9 @@ function peer(v){return new Promise((resolve,reject)=>{pending.push({resolve,rej
  const success=await ask();
  const summary='你们讨论了样品检查，约定周五十点检查，由本人准备清单。';
  assert.equal(productRecallAnswer(success),summary);
+ assert.match(productRecallScope(success),/实际范围：2026-10-13T00:00:00.*Asia\/Singapore/);
+ assert.match(productRecallAnswer({...success,status:'coverage_insufficient',model_status:'not_requested',claims:[],evidence:[],answer:'来源覆盖不足，不能判断没有聊天。'}),/覆盖不足.*不能判断没有聊天/);
+ for(const question of ['昨天我们和蓝老师聊了什么','昨天我和Aster说了啥']){const r=await ask({question});assert.equal(productRecallAnswer(r),summary);assert.equal(r.intent,'conversation');}
  assert.equal(success.answer,summary);assert.equal(success.intent,'conversation');assert.deepEqual(success.terms,[]);
  assert(success.claims[0].citations.length>=2);assert(success.unknown.length>0);assert(success.coverage.length>0);
  assert(success.evidence.some(r=>r.effective_is_self===true));assert(success.evidence.every(r=>['alice-person','myself'].includes(r.person_id)));
