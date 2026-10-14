@@ -54,6 +54,16 @@ function peer(v){return new Promise((resolve,reject)=>{pending.push({resolve,rej
  assert.equal(productRecallAnswer(applyRecallContext(continued,context)),summary,'returning from original keeps the answer');
  const failure=await ask({fixture_native:true,source:'wechat',expand:true,fixture_model:'timeout',question:'昨天我和青岚聊了什么'});
  assert.match(productRecallAnswer(failure),/无法生成/);assert.equal(failure.evidence.length,2);assert.equal(failure.claims.length,0);
+ assert.equal(failure.model_status,'timeout');assert.match(productRecallAnswer(failure),/超时/);assert(failure.summary_retry_available);
+ const retried=await use.historyRecall({fixture_native:true,action:'retry_summary',query_id:failure.query_id});
+ assert.equal(productRecallAnswer(retried),summary);assert.deepEqual(retried.scope,failure.scope);assert.deepEqual(retried.evidence,failure.evidence);assert.equal(retried.summary_retry_available,false);
+ const unresolved=await ask({fixture_native:true,source:'wechat',expand:true,question:'昨天我跟菱花聊了什么'});
+ assert.equal(unresolved.status,'needs_clarification');assert(unresolved.contact_lookup_allowed);assert.equal(unresolved.contact_candidates.length,0);
+ const directory=await use.historyRecall({fixture_native:true,action:'contacts',query_id:unresolved.query_id,search:'Cobalt'});
+ assert.equal(directory.contact_candidates.length,1);assert.equal(directory.contact_candidates[0].platform,'wechat');
+ const picked=await use.historyRecall({fixture_native:true,action:'choose',query_id:unresolved.query_id,contact_key:directory.contact_candidates[0].key});
+ assert.equal(picked.query_id,unresolved.query_id);assert.equal(productRecallAnswer(picked),summary);assert.equal(picked.scope.sent_from,unresolved.scope.sent_from);assert.equal(picked.scope.sent_to,unresolved.scope.sent_to);
+ assert.equal(picked.scope.person_id,'');assert(picked.evidence.every(r=>r.source==='wechat'));assert.equal(picked.contact_lookup_allowed,false);
  assert.equal((await repository.pendingOperations()).length,0);
  process.env.TZ='Asia/Singapore';assert.equal(recallDate('2026-10-13',true)-recallDate('2026-10-13',false)+1,86400);
  process.env.TZ='America/New_York';assert.equal(recallDate('2026-03-08',true)-recallDate('2026-03-08',false)+1,23*3600);

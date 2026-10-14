@@ -3,12 +3,12 @@ export interface RecallPerson { person_id:string; display_name:string; kind:stri
 export interface RecallDecision { person_id:string; action:string; basis:string; }
 export interface RecallIdentity { key:string; platform:string; source:string; account:string; label:string; person_id:string; basis:string; editable:boolean; decisions:Array<RecallDecision>; }
 export interface RecallCommand { operation_id:string; key:string; person_id:string; action:string; basis:string; version:string; }
-export interface RecallRequest { action:string; query_id?:string; contact_key?:string; previous_query_id?:string; question?:string; keyword?:string; person_id?:string; source?:string; timezone?:string; sent_from?:number; sent_to?:number; expand?:boolean; summarize?:boolean; page?:number; offset?:number; evidence_id?:string; decision?:RecallCommand; }
+export interface RecallRequest { action:string; query_id?:string; contact_key?:string; search?:string; previous_query_id?:string; question?:string; keyword?:string; person_id?:string; source?:string; timezone?:string; sent_from?:number; sent_to?:number; expand?:boolean; summarize?:boolean; page?:number; offset?:number; evidence_id?:string; decision?:RecallCommand; }
 export interface RecallEvidence { id:string; revision:number; source:string; speaker:string; person_id:string; identity_basis:string; identity_key:string; quote:string; quote_truncated:boolean; source_is_from_self?:boolean|null; effective_is_self?:boolean|null; validity?:string; sent_at:number; origin:string; role:string; assertion:string; source_account_id?:string; conversation_id?:string; conversation_type?:string; reply_record_id?:string; sender_account_id?:string; session_id?:string; utterance_id?:string; start_ms?:number; end_ms?:number; start_at?:string; end_at?:string; }
 export interface RecallClaim { kind:string; text:string; citations:Array<string>; }
 export interface RecallMetrics { hits:number; retrieved:number; model_calls:number; source_requests:number; elapsed_ms:number; model_elapsed_ms?:number; model_input_ids?:Array<string>; source_records_read?:number; }
 export interface RecallScope { person_id:string; source:string; sent_from:number; sent_to:number; timezone?:string; relationship?:string; sent_from_local?:string; sent_to_local?:string; target_label?:string; }
-export interface RecallResponse { status?:string; query_id?:string; version?:string; people?:Array<RecallPerson>; person_candidates?:Array<RecallPerson>; contact_candidates?:Array<RecallContact>; items?:Array<RecallIdentity>; next_offset?:number; recording_notice?:string; answer?:string; evidence?:Array<RecallEvidence>; claims?:Array<RecallClaim>; unknown?:Array<string>; scope?:RecallScope; terms?:Array<string>; coverage?:Array<string>; model_status?:string; source_status?:string; metrics?:RecallMetrics; page?:number; has_more?:boolean; notice?:string; intent?:string; invalidated_evidence_ids?:Array<string>; latest_status_confirmed?:boolean; }
+export interface RecallResponse { status?:string; query_id?:string; version?:string; people?:Array<RecallPerson>; person_candidates?:Array<RecallPerson>; contact_candidates?:Array<RecallContact>; contact_lookup_allowed?:boolean; summary_retry_available?:boolean; items?:Array<RecallIdentity>; next_offset?:number; recording_notice?:string; answer?:string; evidence?:Array<RecallEvidence>; claims?:Array<RecallClaim>; unknown?:Array<string>; scope?:RecallScope; terms?:Array<string>; coverage?:Array<string>; model_status?:string; source_status?:string; metrics?:RecallMetrics; page?:number; has_more?:boolean; notice?:string; intent?:string; invalidated_evidence_ids?:Array<string>; latest_status_confirmed?:boolean; }
 
 // Stable operation/query IDs, including retries after an ambiguous HTTP outcome.
 export function recallRequestId():string { return `recall-${Date.now()}-${Math.floor(Math.random()*1000000000)}`; }
@@ -36,6 +36,8 @@ export function applyRecallContext(current:RecallResponse,context:RecallResponse
     people:current.people,
     person_candidates:current.person_candidates,
     contact_candidates:current.contact_candidates,
+    contact_lookup_allowed:current.contact_lookup_allowed,
+    summary_retry_available:current.summary_retry_available,
     items:current.items,
     next_offset:current.next_offset,
     recording_notice:current.recording_notice,
@@ -63,6 +65,7 @@ export function applyRecallContext(current:RecallResponse,context:RecallResponse
     (context.invalidated_evidence_ids??[]).forEach((id:string)=>{if(!ids.includes(id)){ids.push(id);}});
     next.status='stale';
     next.model_status='stale';
+    next.summary_retry_available=false;
     next.claims=[];
     next.answer='来源已确认修订／撤回，旧归纳已失效，请重新查询。';
     next.invalidated_evidence_ids=ids;

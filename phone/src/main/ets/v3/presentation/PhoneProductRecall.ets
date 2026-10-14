@@ -3,7 +3,9 @@ import { RecallResponse, RecallClaim } from '../domain/PhoneHistoryRecall';
 export function productRecallAnswer(result:RecallResponse):string{
   if(result.status==='stale'||result.model_status==='stale'){return '原文已发生变化，原先的归纳需要重新核对';}
   if(result.status==='needs_clarification'){return result.answer??'请明确人物或日期后重试';}
-  if(result.model_status==='failed'||result.model_status==='unavailable'||result.model_status==='timeout'){return '无法生成归纳（模型不可用、超时或证据校验失败）；以下仅为符合本次约束的原文。';}
+  if(result.model_status==='timeout'){return '无法生成归纳：归纳超时。已找到的原文保留在下方，可重试归纳。';}
+  if(result.model_status==='failed'){return '无法生成归纳：回答的依据校验未通过。请查看下方原文或重试归纳。';}
+  if(result.model_status==='unavailable'){return '无法生成归纳：归纳模型暂不可用。已找到的原文保留在下方。';}
   if(result.model_status==='insufficient'){return result.answer??'现有证据不足，无法生成可靠归纳；请核对本次范围内的原文。';}
   if(result.model_status==='available'){
     const claims=result.claims??[];

@@ -29,6 +29,9 @@ export struct PhoneRecallSearch {
   @State private error:string='';
   @State private technical:boolean=false;
   @State private showEvidence:boolean=false;
+  @State private contactsOpen:boolean=false;
+  @State private contactSearch:string='';
+  @State private contactsResult:RecallResponse={};
   @State private selected:Array<PhoneProductEvidence>=[];
   private queryId:string='';
   private previousQueryId:string='';
@@ -49,7 +52,7 @@ export struct PhoneRecallSearch {
     if(this.question.trim().length===0||this.busy){return;}
     if((this.result.evidence?.length??0)>0){this.previousQueryId=this.queryId;}
     this.cancel();const generation=this.generation;this.queryId=recallRequestId();
-    this.submitted=this.question.trim();this.busy=true;this.error='';this.result={};this.showEvidence=false;this.editing=false;
+    this.submitted=this.question.trim();this.busy=true;this.error='';this.result={};this.showEvidence=false;this.contactsOpen=false;this.contactsResult={};this.editing=false;
     try {
       const request:RecallRequest={action:'query',query_id:this.queryId,question:this.submitted,previous_query_id:this.previousQueryId.length>0?this.previousQueryId:undefined,keyword:this.keyword,person_id:this.person,source:this.source,timezone:i18n.getTimeZone().getID(),sent_from:recallDate(this.first,false),sent_to:recallDate(this.last,true),summarize:this.summarize,expand:this.expand};
       const response=await this.viewModel.historyRecall(request);
@@ -60,9 +63,40 @@ export struct PhoneRecallSearch {
   private async chooseContact(contact:RecallContact):Promise<void>{
     if(this.busy){return;}
     const generation=++this.generation;this.busy=true;this.error='';
-    try{const response=await this.viewModel.historyRecall({action:'choose',query_id:this.queryId,contact_key:contact.key});if(generation===this.generation){this.result=response;this.scroller.scrollTo({xOffset:0,yOffset:0});}}
+    try{const response=await this.viewModel.historyRecall({action:'choose',query_id:this.queryId,contact_key:contact.key});if(generation===this.generation){this.result=response;this.contactsOpen=false;this.scroller.scrollTo({xOffset:0,yOffset:0});}}
     catch(_){if(generation===this.generation){this.error='本次联系人选择暂未完成，请重试；原问题已保留。';}}
     finally{if(generation===this.generation){this.busy=false;}}
+  }
+  private async lookupContacts(offset:number=0):Promise<void>{
+    if(this.busy){return;}
+    const generation=++this.generation;this.busy=true;this.error='';this.contactsOpen=true;
+    try{const response=await this.viewModel.historyRecall({action:'contacts',query_id:this.queryId,search:this.contactSearch,offset:offset});if(generation===this.generation){this.contactsResult=response;}}
+    catch(_){if(generation===this.generation){this.error='联系人目录暂未取回；可检查电脑连接后重试，原问题已保留。';}}
+    finally{if(generation===this.generation){this.busy=false;}}
+  }
+  private async retrySummary():Promise<void>{
+    if(this.busy){return;}
+    const generation=++this.generation;this.busy=true;this.error='';
+    try{const response=await this.viewModel.historyRecall({action:'retry_summary',query_id:this.queryId});if(generation===this.generation){this.result=response;}}
+    catch(_){if(generation===this.generation){this.error='本次归纳未完成或已过期，原文已保留；可以重新搜索。';}}
+    finally{if(generation===this.generation){this.busy=false;}}
+  }
+  @Builder private contactLookup(){
+    Column({space:10}){
+      Text('查找来源联系人').fontSize(16).fontWeight(FontWeight.Medium)
+      Row({space:8}){
+        TextInput({text:this.contactSearch,placeholder:'输入联系人备注或昵称'}).layoutWeight(1).height(48).onChange((value:string):void=>{this.contactSearch=value;}).onSubmit(():void=>{this.lookupContacts();})
+        Button('查找').height(48).enabled(!this.busy).onClick(():void=>{this.lookupContacts();})
+      }.width('100%')
+      Text(this.contactsResult.notice??'选择后自动继续原问题，日期和来源筛选保留；仅本次使用。').fontSize(13)
+      ForEach(this.contactsResult.contact_candidates??[],(contact:RecallContact)=>{Button(this.contactLabel(contact)).width('100%').height(56).enabled(!this.busy).onClick(():void=>{this.chooseContact(contact);})},(contact:RecallContact):string=>contact.key)
+      if(this.contactsResult.query_id!==undefined&&(this.contactsResult.contact_candidates?.length??0)===0){Text('目录中暂未找到匹配称呼。可改用备注、昵称或浏览已收到的联系人。').fontSize(13)}
+      Row({space:8}){
+        Button('浏览联系人').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).enabled(!this.busy).onClick(():void=>{this.contactSearch='';this.lookupContacts();})
+        if(this.contactsResult.has_more===true){Button('下一批').height(44).enabled(!this.busy).onClick(():void=>{this.lookupContacts(this.contactsResult.next_offset??0);})}
+        Button('收起').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).enabled(!this.busy).onClick(():void=>{this.contactsOpen=false;})
+      }
+    }.width('100%').alignItems(HorizontalAlign.Start)
   }
   private contactLabel(contact:RecallContact):string{
     const source=contact.platform==='wechat'?'微信':'QQ';
@@ -115,6 +149,9 @@ export struct PhoneRecallSearch {
       if(productRecallRange(this.result).length>0){Text(productRecallRange(this.result)).fontSize(12).fontColor($r('app.color.text_secondary')).copyOption(CopyOptions.InApp)}
       Text(productRecallAnswer(this.result)).fontSize(18).lineHeight(27).copyOption(CopyOptions.InApp)
 
+      if(this.result.contact_lookup_allowed===true){Button('查找 / 选择联系人').height(48).enabled(!this.busy).onClick(():void=>{this.lookupContacts();})}
+      if(this.contactsOpen){this.contactLookup()}
+      if(this.result.summary_retry_available===true){Button('重试归纳').height(48).enabled(!this.busy).onClick(():void=>{this.retrySummary();});Text('使用本次已取回的原文，最多重试一次，不扩大查询范围。').fontSize(12)}
       if(this.result.status==='needs_clarification'&&(this.result.contact_candidates?.length??0)>0){
         ForEach(this.result.contact_candidates??[],(contact:RecallContact)=>{Button(this.contactLabel(contact)).height(48).enabled(!this.busy).onClick(():void=>{this.chooseContact(contact);})},(contact:RecallContact):string=>contact.key)
         Text('选择只用于本次查询，不会建立人物关联。').fontSize(12)
@@ -137,7 +174,7 @@ export struct PhoneRecallSearch {
     Scroll(this.scroller){Column({space:14}){
       if(this.editing){this.searchEditor()}else{
         Row({space:8}){Text(this.submitted).fontSize(16).fontWeight(FontWeight.Medium).maxLines(2).layoutWeight(1);Button('修改问题').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).onClick(():void=>{this.editing=true;})}.width('100%')
-        if(this.busy){Row({space:8}){LoadingProgress().width(24).height(24);Text('正在查找原文…');Blank();Button('取消').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).onClick(():void=>{this.cancel();this.error='本次查询已取消，可修改问题后重试。';})}.width('100%')}
+        if(this.busy){Row({space:8}){LoadingProgress().width(24).height(24);Text('正在检索或归纳，最多约一分钟…');Blank();Button('取消').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).onClick(():void=>{this.cancel();this.error='本次查询已取消，可修改问题后重试。';})}.width('100%')}
         if(this.result.query_id!==undefined||this.result.answer!==undefined||this.result.evidence!==undefined){
           this.answer()
 

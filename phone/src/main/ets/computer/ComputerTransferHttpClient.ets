@@ -353,7 +353,7 @@ export class ComputerTransferHttpClient {
         header: headers,
         usingCache: false,
         connectTimeout: path === '/device/v3/recall' ? 5000 : CONNECT_TIMEOUT_MS,
-        readTimeout: path === '/device/v3/recall' ? 35000 : READ_TIMEOUT_MS,
+        readTimeout: path === '/device/v3/recall' ? 70000 : READ_TIMEOUT_MS,
         expectDataType: http.HttpDataType.ARRAY_BUFFER,
         maxLimit: COMPUTER_JSON_MAX_BYTES,
         caPath: this.caPath
