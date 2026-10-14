@@ -49,7 +49,7 @@ export struct PhoneRecallSearch {
     this.cancel();const generation=this.generation;this.queryId=recallRequestId();
     this.submitted=this.question.trim();this.busy=true;this.error='';this.result={};this.showEvidence=false;this.editing=false;
     try {
-      const request:RecallRequest={action:'query',query_id:this.queryId,question:this.submitted,keyword:this.keyword,person_id:this.person,source:this.source,timezone:i18n.getCalendar('zh-CN').getTimeZone(),sent_from:recallDate(this.first,false),sent_to:recallDate(this.last,true),summarize:this.summarize,expand:this.expand};
+      const request:RecallRequest={action:'query',query_id:this.queryId,question:this.submitted,keyword:this.keyword,person_id:this.person,source:this.source,timezone:i18n.getTimeZone().getID(),sent_from:recallDate(this.first,false),sent_to:recallDate(this.last,true),summarize:this.summarize,expand:this.expand};
       const response=await this.viewModel.historyRecall(request);
       if(generation===this.generation){this.result=response;this.scroller.scrollTo({xOffset:0,yOffset:0});}
     }catch(error){if(generation===this.generation){const message=error instanceof Error?error.message:'';this.error=message.includes('YYYY-MM-DD')||/日期|时区|时刻|时间描述|时间段|人物|范围|来源.*冲突|起止/.test(message)?message:'搜索暂未完成，检查电脑连接后可重试。';}}
