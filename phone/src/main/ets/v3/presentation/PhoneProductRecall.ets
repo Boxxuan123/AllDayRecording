@@ -27,3 +27,10 @@ export function productRecallScope(result:RecallResponse):string{
   const last=scope.sent_to_local??new Date(scope.sent_to*1000).toISOString();
   return `实际范围：${first} 至 ${last} · ${scope.timezone??'Asia/Singapore'} · ${scope.person_id.length>0?scope.person_id:'人物未限定'} · ${scope.source}`;
 }
+
+export function productRecallRange(result:RecallResponse):string{
+  const scope=result.scope;if(scope===undefined){return '';}
+  const format=(stamp:number):string=>{const d=new Date(stamp*1000);return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日 ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;};
+  const source=scope.source==='wechat'?'微信':scope.source==='qq'?'QQ':scope.source==='recording'?'录音':'授权历史';
+  return `${scope.target_label!==undefined?scope.target_label+" · ":""}${source} · ${format(scope.sent_from)} 至 ${format(scope.sent_to)}`;
+}

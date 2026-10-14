@@ -1,9 +1,9 @@
 import { i18n } from '@kit.LocalizationKit';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 import { PhoneV3SessionCard } from '../domain/PhoneV3Models';
-import { RecallRequest, RecallResponse, RecallClaim, RecallEvidence, RecallPerson, recallDate, recallRequestId, applyRecallContext, applyRecallPage } from '../domain/PhoneHistoryRecall';
+import { RecallRequest, RecallResponse, RecallContact, RecallClaim, RecallEvidence, RecallPerson, recallDate, recallRequestId, applyRecallContext, applyRecallPage } from '../domain/PhoneHistoryRecall';
 import { PhoneProductEvidence, recallProductEvidence } from './PhoneProductEvidence';
-import { productRecallAnswer, productRecallCoverage, productRecallScope } from './PhoneProductRecall';
+import { productRecallAnswer, productRecallCoverage, productRecallScope, productRecallRange } from './PhoneProductRecall';
 import { PhoneEvidenceDetails } from './PhoneEvidenceDetails';
 
 @Component
@@ -31,29 +31,43 @@ export struct PhoneRecallSearch {
   @State private showEvidence:boolean=false;
   @State private selected:Array<PhoneProductEvidence>=[];
   private queryId:string='';
+  private previousQueryId:string='';
   private generation:number=0;
   private catalogGeneration:number=0;
   private scroller:Scroller=new Scroller();
   aboutToDisappear():void { this.catalogGeneration++; if(this.busy){this.cancel();} }
   private cancel():void {
-    this.generation++; this.busy=false;
-    if(this.queryId.length>0){this.viewModel.historyRecall({action:'cancel',query_id:this.queryId}).catch(():void=>{});}
+    const wasBusy=this.busy; this.generation++; this.busy=false;
+    if(wasBusy&&this.queryId.length>0){this.viewModel.historyRecall({action:'cancel',query_id:this.queryId}).catch(():void=>{});}
   }
   private async loadPeople():Promise<void> {
     const generation=++this.catalogGeneration; this.catalogError='';
     try{const response=await this.viewModel.historyRecall({action:'catalog'});if(generation===this.catalogGeneration){this.people=response.people??[];}}
-    catch(_){if(generation===this.catalogGeneration){this.catalogError='人物筛选暂不可用；涉及具体人物的查询仍需确认身份';}}
+    catch(_){if(generation===this.catalogGeneration){this.catalogError='人物筛选暂不可用；仍可通过来源联系人搜索';}}
   }
   private async search():Promise<void> {
     if(this.question.trim().length===0||this.busy){return;}
+    if((this.result.evidence?.length??0)>0){this.previousQueryId=this.queryId;}
     this.cancel();const generation=this.generation;this.queryId=recallRequestId();
     this.submitted=this.question.trim();this.busy=true;this.error='';this.result={};this.showEvidence=false;this.editing=false;
     try {
-      const request:RecallRequest={action:'query',query_id:this.queryId,question:this.submitted,keyword:this.keyword,person_id:this.person,source:this.source,timezone:i18n.getTimeZone().getID(),sent_from:recallDate(this.first,false),sent_to:recallDate(this.last,true),summarize:this.summarize,expand:this.expand};
+      const request:RecallRequest={action:'query',query_id:this.queryId,question:this.submitted,previous_query_id:this.previousQueryId.length>0?this.previousQueryId:undefined,keyword:this.keyword,person_id:this.person,source:this.source,timezone:i18n.getTimeZone().getID(),sent_from:recallDate(this.first,false),sent_to:recallDate(this.last,true),summarize:this.summarize,expand:this.expand};
       const response=await this.viewModel.historyRecall(request);
       if(generation===this.generation){this.result=response;this.scroller.scrollTo({xOffset:0,yOffset:0});}
     }catch(error){if(generation===this.generation){const message=error instanceof Error?error.message:'';this.error=message.includes('YYYY-MM-DD')||/日期|时区|时刻|时间描述|时间段|人物|范围|来源.*冲突|起止/.test(message)?message:'搜索暂未完成，检查电脑连接后可重试。';}}
     finally{if(generation===this.generation){this.busy=false;}}
+  }
+  private async chooseContact(contact:RecallContact):Promise<void>{
+    if(this.busy){return;}
+    const generation=++this.generation;this.busy=true;this.error='';
+    try{const response=await this.viewModel.historyRecall({action:'choose',query_id:this.queryId,contact_key:contact.key});if(generation===this.generation){this.result=response;this.scroller.scrollTo({xOffset:0,yOffset:0});}}
+    catch(_){if(generation===this.generation){this.error='本次联系人选择暂未完成，请重试；原问题已保留。';}}
+    finally{if(generation===this.generation){this.busy=false;}}
+  }
+  private contactLabel(contact:RecallContact):string{
+    const source=contact.platform==='wechat'?'微信':'QQ';
+    const other=contact.names.filter((name:string):boolean=>name!==contact.display_name).slice(0,2).join('、');
+    return `${contact.display_name}${other.length>0?'（'+other+'）':''} · ${source}${contact.conversation_type==='group'?' · 群聊':' · 私聊'}`;
   }
   private async page(number:number):Promise<void> {
     const generation=this.generation;this.busy=true;this.error='';
@@ -80,7 +94,7 @@ export struct PhoneRecallSearch {
           .onChange((value:string):void=>{this.question=value;this.error='';}).onSubmit(():void=>{this.search();})
         Button('搜索').height(48).enabled(this.question.trim().length>0&&!this.busy).onClick(():void=>{this.search();})
       }.width('100%')
-      Row(){Button(this.filters?'收起筛选':'筛选').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).onClick(():void=>{this.filters=!this.filters;if(this.filters&&this.people.length===0){this.loadPeople();}});Blank();Text('默认最近 30 天').fontSize(12).fontColor($r('app.color.text_secondary'))}.width('100%')
+      Row(){Button(this.filters?'收起筛选':'筛选').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).onClick(():void=>{this.filters=!this.filters;if(this.filters&&this.people.length===0){this.loadPeople();}});Blank();Text('未指定日期时查询近一年').fontSize(12).fontColor($r('app.color.text_secondary'))}.width('100%')
       if(this.filters){
         Select([{value:'全部来源'},{value:'QQ'},{value:'微信'},{value:'录音'}]).selected(['all','qq','wechat','recording'].indexOf(this.source)).value(['全部来源','QQ','微信','录音'][['all','qq','wechat','recording'].indexOf(this.source)]).onSelect((i:number):void=>{this.source=['all','qq','wechat','recording'][i];})
         Select(this.peopleOptions()).selected(this.people.findIndex((p:RecallPerson):boolean=>p.person_id===this.person)+1).value(this.people.find((p:RecallPerson):boolean=>p.person_id===this.person)?.display_name??'全部人物').onSelect((i:number):void=>{this.person=i===0?'':this.people[i-1].person_id;})
@@ -98,11 +112,15 @@ export struct PhoneRecallSearch {
   }
   @Builder private answer() {
     Column({space:10}) {
-      if(productRecallScope(this.result).length>0){Text(productRecallScope(this.result)).fontSize(12).fontColor($r('app.color.text_secondary')).copyOption(CopyOptions.InApp)}
+      if(productRecallRange(this.result).length>0){Text(productRecallRange(this.result)).fontSize(12).fontColor($r('app.color.text_secondary')).copyOption(CopyOptions.InApp)}
       Text(productRecallAnswer(this.result)).fontSize(18).lineHeight(27).copyOption(CopyOptions.InApp)
 
+      if(this.result.status==='needs_clarification'&&(this.result.contact_candidates?.length??0)>0){
+        ForEach(this.result.contact_candidates??[],(contact:RecallContact)=>{Button(this.contactLabel(contact)).height(48).enabled(!this.busy).onClick(():void=>{this.chooseContact(contact);})},(contact:RecallContact):string=>contact.key)
+        Text('选择只用于本次查询，不会建立人物关联。').fontSize(12)
+      }
       if(this.result.status==='needs_clarification'&&(this.result.person_candidates?.length??0)>1){
-        Select((this.result.person_candidates??[]).map((p:RecallPerson):SelectOption=>({value:`${p.display_name} (${p.person_id})`}))).value('选择具体人物').onSelect((i:number):void=>{this.person=this.result.person_candidates?.[i]?.person_id??'';this.search();})
+        Select((this.result.person_candidates??[]).map((p:RecallPerson):SelectOption=>({value:p.display_name}))).value('选择具体人物').onSelect((i:number):void=>{this.person=this.result.person_candidates?.[i]?.person_id??'';this.search();})
       }
       if(productRecallCoverage(this.result).length>0){Text(productRecallCoverage(this.result)).fontSize(13).fontColor($r('app.color.brand_warning'))}
       ForEach(this.result.unknown??[],(text:string)=>{Text(`尚不确定：${text}`).fontSize(13)},(text:string):string=>text)
@@ -129,7 +147,7 @@ export struct PhoneRecallSearch {
           },(e:RecallEvidence):string=>e.id)
           if(this.result.has_more===true||(this.result.page??0)>0){Row(){Button('上一页').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).enabled(!this.busy&&(this.result.page??0)>0).onClick(():void=>{this.page((this.result.page??0)-1);});Blank();Text(`第 ${(this.result.page??0)+1} 页`).fontSize(12);Blank();Button('下一页').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).enabled(!this.busy&&this.result.has_more===true).onClick(():void=>{this.page((this.result.page??0)+1);})}.width('100%')}
           Button(this.technical?'收起技术详情':'技术详情').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).onClick(():void=>{this.technical=!this.technical;})
-          if(this.technical){Text(JSON.stringify(this.result.metrics)).fontSize(11);Text(this.result.answer??'').fontSize(11);ForEach(this.result.coverage??[],(line:string)=>{Text(line).fontSize(11)},(line:string):string=>line);Text(`${this.result.status??''} · ${this.result.model_status??''}`).fontSize(11)}
+          if(this.technical){Text(productRecallScope(this.result)).fontSize(11);Text(JSON.stringify(this.result.metrics)).fontSize(11);Text(this.result.answer??'').fontSize(11);ForEach(this.result.coverage??[],(line:string)=>{Text(line).fontSize(11)},(line:string):string=>line);Text(`${this.result.status??''} · ${this.result.model_status??''}`).fontSize(11)}
         }
       }
       if(this.error.length>0){Text(this.error).fontSize(14).fontColor($r('app.color.brand_warning'));Button('重试搜索').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).enabled(!this.busy).onClick(():void=>{this.search();})}
