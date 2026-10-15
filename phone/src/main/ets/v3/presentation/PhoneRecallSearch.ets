@@ -3,7 +3,7 @@ import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 import { PhoneV3SessionCard } from '../domain/PhoneV3Models';
 import { RecallRequest, RecallResponse, RecallContact, RecallClaim, RecallEvidence, RecallPerson, recallDate, recallRequestId, applyRecallContext, applyRecallPage } from '../domain/PhoneHistoryRecall';
 import { PhoneProductEvidence, recallProductEvidence } from './PhoneProductEvidence';
-import { productRecallAnswer, productRecallCoverage, productRecallScope, productRecallRange } from './PhoneProductRecall';
+import { productRecallAnswer, productRecallCoverage, productRecallScope, productRecallRange, productRecallClaimLabel, productRecallClaimTime } from './PhoneProductRecall';
 import { PhoneEvidenceDetails } from './PhoneEvidenceDetails';
 
 @Component
@@ -163,8 +163,9 @@ export struct PhoneRecallSearch {
       ForEach(this.result.unknown??[],(text:string)=>{Text(`尚不确定：${text}`).fontSize(13)},(text:string):string=>text)
       ForEach(this.result.claims??[],(claim:RecallClaim)=>{
         Column({space:4}) {
-          Text(claim.kind==='quote'?'原话引用':claim.kind==='inference'?'推测':'模型归纳').fontSize(12).fontColor($r('app.color.text_secondary'))
+          Text(productRecallClaimLabel(claim)).fontSize(12).fontColor($r('app.color.text_secondary'))
           Text(claim.text).fontSize(15)
+          if(productRecallClaimTime(claim).length>0){Text(productRecallClaimTime(claim)).fontSize(12).fontColor($r('app.color.text_secondary'))}
           ForEach(claim.citations,(id:string,index:number)=>{Button(`查看依据 ${index+1}`).height(44).buttonStyle(ButtonStyleMode.TEXTUAL).onClick(():void=>{this.original(id);})},(id:string):string=>id)
         }.width('100%').alignItems(HorizontalAlign.Start)
       },(claim:RecallClaim):string=>claim.kind+claim.text)
@@ -174,7 +175,7 @@ export struct PhoneRecallSearch {
     Scroll(this.scroller){Column({space:14}){
       if(this.editing){this.searchEditor()}else{
         Row({space:8}){Text(this.submitted).fontSize(16).fontWeight(FontWeight.Medium).maxLines(2).layoutWeight(1);Button('修改问题').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).onClick(():void=>{this.editing=true;})}.width('100%')
-        if(this.busy){Row({space:8}){LoadingProgress().width(24).height(24);Text('正在检索或归纳，最多约一分钟…');Blank();Button('取消').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).onClick(():void=>{this.cancel();this.error='本次查询已取消，可修改问题后重试。';})}.width('100%')}
+        if(this.busy){Row({space:8}){LoadingProgress().width(24).height(24);Text('正在查找相关会话和历史讨论，最多约一分钟…');Blank();Button('取消').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).onClick(():void=>{this.cancel();this.error='本次查询已取消，可修改问题后重试。';})}.width('100%')}
         if(this.result.query_id!==undefined||this.result.answer!==undefined||this.result.evidence!==undefined){
           this.answer()
 
@@ -184,7 +185,7 @@ export struct PhoneRecallSearch {
           },(e:RecallEvidence):string=>e.id)
           if(this.result.has_more===true||(this.result.page??0)>0){Row(){Button('上一页').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).enabled(!this.busy&&(this.result.page??0)>0).onClick(():void=>{this.page((this.result.page??0)-1);});Blank();Text(`第 ${(this.result.page??0)+1} 页`).fontSize(12);Blank();Button('下一页').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).enabled(!this.busy&&this.result.has_more===true).onClick(():void=>{this.page((this.result.page??0)+1);})}.width('100%')}
           Button(this.technical?'收起技术详情':'技术详情').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).onClick(():void=>{this.technical=!this.technical;})
-          if(this.technical){Text(productRecallScope(this.result)).fontSize(11);Text(JSON.stringify(this.result.metrics)).fontSize(11);Text(this.result.answer??'').fontSize(11);ForEach(this.result.coverage??[],(line:string)=>{Text(line).fontSize(11)},(line:string):string=>line);Text(`${this.result.status??''} · ${this.result.model_status??''}`).fontSize(11)}
+          if(this.technical){Text(productRecallScope(this.result)).fontSize(11);Text(`本轮取得 ${this.result.metrics?.retrieved??0} 条依据，用时 ${Math.ceil((this.result.metrics?.elapsed_ms??0)/1000)} 秒`).fontSize(11);Text(this.result.answer??'').fontSize(11);ForEach(this.result.coverage??[],(line:string)=>{Text(line).fontSize(11)},(line:string):string=>line);Text(`${this.result.status??''} · ${this.result.model_status??''}`).fontSize(11)}
         }
       }
       if(this.error.length>0){Text(this.error).fontSize(14).fontColor($r('app.color.brand_warning'));Button('重试搜索').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).enabled(!this.busy).onClick(():void=>{this.search();})}
