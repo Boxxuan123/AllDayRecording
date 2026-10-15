@@ -1,3 +1,4 @@
+import { ChatFollowup, validateChatFollowup, overlayChatCommands } from '../domain/PhoneChatFollowup';
 import { PhoneDailyCache, PhoneDailyEvent, PhoneDailySummary } from '../domain/PhoneV3DailyModels';
 import { overlayReminderCommands, pendingReminderReview } from '../domain/PhoneV3ReminderCommands';
 import { validateV3UtteranceDto } from '../contracts/V3ContractModels';
@@ -71,6 +72,7 @@ export class PhoneV3ProjectionQueries {
     const utterances = paged ? [] : grouped === null ? await this.repository.projectionRows('utterance') : [];
     const reviews = await this.repository.projectionRows('review_item');
     const reminders = await this.repository.projectionRows('reminder');
+    const chatRows = await this.repository.projectionRows('chat_followup');
     const links = await this.repository.localAudioLinks();
     const conflicts = await this.repository.conflictRows();
     const status = await this.repository.v3Status();
@@ -111,7 +113,7 @@ export class PhoneV3ProjectionQueries {
       sessions,
       conflicts, status, paired, reminderValues, overlayPendingPurityReviews(phoneV3ReviewItems(reviews).filter(
         (item: PhoneV3ReviewItem): boolean => !pendingReminderReview(item, commands)),
-        await this.repository.pendingPurityReviews()));
+        await this.repository.pendingPurityReviews()), overlayChatCommands(chatRows.map((row:PhoneV3ProjectionRow):ChatFollowup=>validateChatFollowup(JSON.parse(row.payloadJson) as Object)), commands));
   }
 
   async loadSessionUtterancePage(card: PhoneV3SessionCard, targetCount: number): Promise<void> {

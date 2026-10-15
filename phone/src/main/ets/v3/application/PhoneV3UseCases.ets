@@ -207,7 +207,7 @@ export class PhoneV3UseCases implements ReviewAudioPrefetchPort {
   }
 
   async queueReminder(kind: string, payload: PhoneV3ReminderCommand, revision: number | null = null): Promise<void> {
-    if (['reminder.review', 'reminder.task'].indexOf(kind) < 0) { throw new Error('提醒操作无效'); }
+    if (['reminder.review', 'reminder.task', 'chat.followup'].indexOf(kind) < 0) { throw new Error('提醒操作无效'); }
     await this.repository.beginTransaction();
     try {
       const pending = this.repository.reminderOperations === undefined ? [] : await this.repository.reminderOperations();
@@ -251,7 +251,7 @@ export class PhoneV3UseCases implements ReviewAudioPrefetchPort {
         session.revision,session.updatedAt,session.localPaths,session.sizeBytes,session.durationMs,session.uploadStatus,
         session.processingStatus,session.processingStage,session.processingProgress,merged);
     });
-    return new PhoneV3Snapshot(sessions,snapshot.conflicts,status,snapshot.paired,snapshot.reminders,snapshot.reviewItems);
+    return new PhoneV3Snapshot(sessions,snapshot.conflicts,status,snapshot.paired,snapshot.reminders,snapshot.reviewItems, snapshot.chatFollowups);
   }
 
   async queueUtteranceCorrection(utterance: PhoneV3Utterance,
@@ -469,7 +469,7 @@ export class PhoneV3UseCases implements ReviewAudioPrefetchPort {
   async refreshReviewSnapshot(snapshot: PhoneV3Snapshot): Promise<PhoneV3Snapshot> {
     const reviews = phoneV3ReviewItems(await this.repository.projectionRows('review_item'));
     return new PhoneV3Snapshot(snapshot.sessions, snapshot.conflicts, snapshot.sync,
-      snapshot.paired, snapshot.reminders, await this.withPendingPurity(reviews));
+      snapshot.paired, snapshot.reminders, await this.withPendingPurity(reviews), snapshot.chatFollowups);
   }
 
   private async withPendingPurity(items: Array<PhoneV3ReviewItem>): Promise<Array<PhoneV3ReviewItem>> {

@@ -141,8 +141,8 @@ export function phoneV3Reminders(rows: Array<PhoneV3ProjectionRow>): Array<Phone
     try {
       const payload = validateV3ReminderDto(parseProjectionObject(rows[index]));
       values.push(new PhoneV3Reminder(
-        payload.event_id, payload.session_id, payload.event_revision,
-        payload.source_candidate_id, payload.title, payload.actor_person_id,
+        payload.event_id, payload.session_id ?? '', payload.event_revision,
+        payload.source_candidate_id ?? '', payload.title, payload.actor_person_id,
         payload.commitment_direction, payload.related_person_ids.slice(),
         payload.scheduled_at, payload.location, payload.status, payload.updated_at));
     } catch (error) {

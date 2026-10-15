@@ -1,7 +1,9 @@
+import { ChatFollowupCommand, ChatFollowupChanges } from './PhoneChatFollowup';
 import { PhonePendingOperation } from '../data/PhoneSyncProjection';
 import { PhoneV3Reminder, PhoneV3ReviewItem } from './PhoneV3Models';
 
 export interface PhoneV3ReminderCommand {
+  changes?: ChatFollowupChanges;
   action: string;
   candidate_id?: string;
   event_id?: string;
@@ -39,6 +41,18 @@ export function reminderContext(item: PhoneV3ReviewItem): PhoneV3ReminderContext
 export function overlayReminderCommands(reminders: Array<PhoneV3Reminder>,
   operations: Array<PhonePendingOperation>): Array<PhoneV3Reminder> {
   for (let operation of operations) {
+    if (operation.kind === 'chat.followup') {
+      const chat=operation.payload as ChatFollowupCommand;
+      const reminder=reminders.find((v: PhoneV3Reminder):boolean=>v.eventId===chat.event_id);
+      if(reminder!==undefined){
+        reminder.pendingAction=chat.action;
+        if(chat.action==='complete'){reminder.status='completed';}
+        if(chat.action==='cancel'||chat.action==='ignore'){reminder.status='cancelled';}
+        if(chat.changes?.at){reminder.scheduledAt=chat.changes.at;}
+        if(chat.changes?.title){reminder.title=chat.changes.title;}
+      }
+      continue;
+    }
     if (operation.kind !== 'reminder.task') { continue; }
     const command = operation.payload as PhoneV3ReminderCommand;
     const reminder = reminders.find((value: PhoneV3Reminder): boolean => value.eventId === command.event_id);

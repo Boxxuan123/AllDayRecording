@@ -115,3 +115,7 @@ Wear Engine wire JSON、requestId、同步目录相对结构和重试/超时参�
 开发阶段仅运行受影响模块的编译级检查、lint 和单个合成回归测试。最终统一验收会运行 Phone/Watch/common 宿主机与 Hypium 可执行项目、Phone 构建、Code Linter、跨仓库合同校验，以及录音接收、Calendar、并发同步和分页性能故障注入。最终数量和失败项以 `ENGINEERING_REMEDIATION_REPORT.md` 为准；本文件不沿用历史 Phase 6 报告数字。
 
 Phone/Watch 真机录音、系统 Calendar 和音频播放只有设备测试才能证明。没有设备时标记 `NOT_RUN_DEVICE_ONLY`，宿主机 fake/fixture 的通过不冒充实机。所有故障注入使用临时目录、合成录音、临时 SQLite 和 fake Calendar/remote；生产录音、Calendar、用户确认任务和语义结果不参与测试。
+
+## 2026-10-11 聊天事项手机接入
+
+契约 3.9.0 / 投影 6 / Core 33 / Phone 20。聊天事项使用现有 Event、人工操作、同步 outbox 和回执；chat_record 证据独立于录音身份。首次提醒由用户确认执行时间后进入现有 ReminderSchedule 与 Calendar Kit 专用日历。新进展保存同一 Event 的待审核变化，人工标题／状态受保护。本轮跨 UI、Transport、Storage，既有超 500 行 ViewModel／Repository 复审与验证结果见 [验收记录](CHAT_FOLLOWUP_PHONE_ACCEPTANCE_20261011.md)。代码接入完成；实机 NOT_RUN。

@@ -1,3 +1,4 @@
+import { PhoneV3ChatFollowupsSection } from './PhoneV3ChatFollowupsSection';
 import { PhoneV3Reminder, PhoneV3SessionCard, PhoneV3Conflict } from '../domain/PhoneV3Models';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
 import { phoneV3ReminderState, phoneV3ReminderTime } from './PhoneV3UiFormat';
@@ -93,10 +94,11 @@ export struct PhoneV3RemindersPage {
   build() {
     Scroll() {
       Column({ space: 12 }) {
+        PhoneV3ChatFollowupsSection({viewModel:this.viewModel})
         if (this.viewModel.reminderSchedulingError().length > 0) {
           Text(this.viewModel.reminderSchedulingError()).fontSize(14).fontColor($r('app.color.brand_warning'))
         }
-        ForEach(this.viewModel.snapshot.conflicts.filter((conflict: PhoneV3Conflict): boolean => conflict.kind.startsWith('reminder.')),
+        ForEach(this.viewModel.snapshot.conflicts.filter((conflict: PhoneV3Conflict): boolean => (conflict.kind.startsWith('reminder.') || conflict.kind==='chat.followup')),
           (conflict: PhoneV3Conflict) => {
             Text(`提醒操作未被电脑接受：${reminderConflictMessage(conflict.errorJson)}`).fontSize(13).fontColor($r('app.color.brand_warning'))
           }, (conflict: PhoneV3Conflict): string => conflict.operationId)
