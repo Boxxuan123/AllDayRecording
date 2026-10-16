@@ -3,13 +3,14 @@ export interface RecallPerson { person_id:string; display_name:string; kind:stri
 export interface RecallDecision { person_id:string; action:string; basis:string; }
 export interface RecallIdentity { key:string; platform:string; source:string; account:string; label:string; person_id:string; basis:string; editable:boolean; decisions:Array<RecallDecision>; }
 export interface RecallCommand { operation_id:string; key:string; person_id:string; action:string; basis:string; version:string; }
-export interface RecallRequest { action:string; query_id?:string; contact_key?:string; search?:string; previous_query_id?:string; question?:string; keyword?:string; person_id?:string; source?:string; timezone?:string; sent_from?:number; sent_to?:number; expand?:boolean; summarize?:boolean; page?:number; offset?:number; evidence_id?:string; decision?:RecallCommand; }
+export interface RecallRequest { action:string; query_id?:string; contact_key?:string; remember?:boolean; search?:string; previous_query_id?:string; question?:string; keyword?:string; person_id?:string; source?:string; timezone?:string; sent_from?:number; sent_to?:number; expand?:boolean; summarize?:boolean; page?:number; offset?:number; evidence_id?:string; decision?:RecallCommand; }
 export interface RecallEvidence { id:string; revision:number; source:string; speaker:string; person_id:string; identity_basis:string; identity_key:string; quote:string; quote_truncated:boolean; source_is_from_self?:boolean|null; effective_is_self?:boolean|null; validity?:string; sent_at:number; origin:string; role:string; assertion:string; source_account_id?:string; conversation_id?:string; conversation_type?:string; reply_record_id?:string; sender_account_id?:string; session_id?:string; utterance_id?:string; start_ms?:number; end_ms?:number; start_at?:string; end_at?:string; }
 export interface RecallEventTime { basis:string; first:string; last:string; evidence_id:string; quote:string; }
 export interface RecallClaim { kind:string; text:string; citations:Array<string>; event_time?:RecallEventTime; }
 export interface RecallMetrics { hits:number; retrieved:number; model_calls:number; source_requests:number; elapsed_ms:number; model_elapsed_ms?:number; model_input_ids?:Array<string>; source_records_read?:number; }
 export interface RecallScope { person_id:string; source:string; sent_from:number; sent_to:number; timezone?:string; relationship?:string; sent_from_local?:string; sent_to_local?:string; target_label?:string; }
-export interface RecallResponse { status?:string; query_id?:string; version?:string; people?:Array<RecallPerson>; person_candidates?:Array<RecallPerson>; contact_candidates?:Array<RecallContact>; contact_lookup_allowed?:boolean; summary_retry_available?:boolean; items?:Array<RecallIdentity>; next_offset?:number; recording_notice?:string; answer?:string; evidence?:Array<RecallEvidence>; claims?:Array<RecallClaim>; unknown?:Array<string>; scope?:RecallScope; terms?:Array<string>; coverage?:Array<string>; model_status?:string; source_status?:string; metrics?:RecallMetrics; page?:number; has_more?:boolean; notice?:string; intent?:string; invalidated_evidence_ids?:Array<string>; latest_status_confirmed?:boolean; }
+export interface RecallTargetPreference { mention:string; display_name:string; platform:string; }
+export interface RecallResponse { target_preference?:RecallTargetPreference; target_remember_available?:boolean; time_notice?:string; status?:string; query_id?:string; version?:string; people?:Array<RecallPerson>; person_candidates?:Array<RecallPerson>; contact_candidates?:Array<RecallContact>; contact_lookup_allowed?:boolean; summary_retry_available?:boolean; items?:Array<RecallIdentity>; next_offset?:number; recording_notice?:string; answer?:string; evidence?:Array<RecallEvidence>; claims?:Array<RecallClaim>; unknown?:Array<string>; scope?:RecallScope; terms?:Array<string>; coverage?:Array<string>; model_status?:string; source_status?:string; metrics?:RecallMetrics; page?:number; has_more?:boolean; notice?:string; intent?:string; invalidated_evidence_ids?:Array<string>; latest_status_confirmed?:boolean; }
 
 // Stable operation/query IDs, including retries after an ambiguous HTTP outcome.
 export function recallRequestId():string { return `recall-${Date.now()}-${Math.floor(Math.random()*1000000000)}`; }
@@ -31,6 +32,9 @@ export function applyRecallContext(current:RecallResponse,context:RecallResponse
   if(context.status!=='stale'&&context.status!=='unavailable'){return current;}
   // Copy only the collections changed below; preserve optional fields and source values.
   const next:RecallResponse={
+    target_preference:current.target_preference,
+    target_remember_available:current.target_remember_available,
+    time_notice:current.time_notice,
     status:current.status,
     query_id:current.query_id,
     version:current.version,

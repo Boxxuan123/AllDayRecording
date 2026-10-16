@@ -64,6 +64,17 @@ function peer(v){return new Promise((resolve,reject)=>{pending.push({resolve,rej
  const picked=await use.historyRecall({fixture_native:true,action:'choose',query_id:unresolved.query_id,contact_key:directory.contact_candidates[0].key});
  assert.equal(picked.query_id,unresolved.query_id);assert.equal(productRecallAnswer(picked),summary);assert.equal(picked.scope.sent_from,unresolved.scope.sent_from);assert.equal(picked.scope.sent_to,unresolved.scope.sent_to);
  assert.equal(picked.scope.person_id,'');assert(picked.evidence.every(r=>r.source==='wechat'));assert.equal(picked.contact_lookup_allowed,false);
+ const prefQuestion='昨天我和青岚聊了什么';
+ const prefStart=await ask({fixture_native:true,expand:true,question:prefQuestion});
+ assert.equal(prefStart.status,'needs_clarification');
+ const prefContact=prefStart.contact_candidates.find(r=>r.platform==='wechat');
+ const prefPicked=await use.historyRecall({fixture_native:true,action:'choose',query_id:prefStart.query_id,contact_key:prefContact.key,remember:true});
+ assert.equal(prefPicked.target_preference.platform,'wechat');
+ const prefAgain=await ask({fixture_native:true,expand:true,question:prefQuestion});
+ assert.equal(productRecallAnswer(prefAgain),summary);assert.equal(prefAgain.scope.source,'wechat');
+ assert(prefAgain.evidence.every(r=>r.conversation_id==='native-wechat'));
+ await use.historyRecall({fixture_native:true,action:'forget_target',query_id:prefAgain.query_id});
+ assert.equal((await ask({fixture_native:true,expand:true,question:prefQuestion})).status,'needs_clarification');
  assert.equal((await repository.pendingOperations()).length,0);
  process.env.TZ='Asia/Singapore';assert.equal(recallDate('2026-10-13',true)-recallDate('2026-10-13',false)+1,86400);
  process.env.TZ='America/New_York';assert.equal(recallDate('2026-03-08',true)-recallDate('2026-03-08',false)+1,23*3600);

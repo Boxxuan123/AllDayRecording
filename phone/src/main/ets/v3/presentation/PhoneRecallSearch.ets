@@ -31,6 +31,7 @@ export struct PhoneRecallSearch {
   @State private showEvidence:boolean=false;
   @State private contactsOpen:boolean=false;
   @State private contactSearch:string='';
+  @State private rememberContact:boolean=false;
   @State private contactsResult:RecallResponse={};
   @State private selected:Array<PhoneProductEvidence>=[];
   private queryId:string='';
@@ -52,7 +53,7 @@ export struct PhoneRecallSearch {
     if(this.question.trim().length===0||this.busy){return;}
     if((this.result.evidence?.length??0)>0){this.previousQueryId=this.queryId;}
     this.cancel();const generation=this.generation;this.queryId=recallRequestId();
-    this.submitted=this.question.trim();this.busy=true;this.error='';this.result={};this.showEvidence=false;this.contactsOpen=false;this.contactsResult={};this.editing=false;
+    this.submitted=this.question.trim();this.busy=true;this.error='';this.result={};this.showEvidence=false;this.contactsOpen=false;this.contactsResult={};this.rememberContact=false;this.editing=false;
     try {
       const request:RecallRequest={action:'query',query_id:this.queryId,question:this.submitted,previous_query_id:this.previousQueryId.length>0?this.previousQueryId:undefined,keyword:this.keyword,person_id:this.person,source:this.source,timezone:i18n.getTimeZone().getID(),sent_from:recallDate(this.first,false),sent_to:recallDate(this.last,true),summarize:this.summarize,expand:this.expand};
       const response=await this.viewModel.historyRecall(request);
@@ -63,9 +64,27 @@ export struct PhoneRecallSearch {
   private async chooseContact(contact:RecallContact):Promise<void>{
     if(this.busy){return;}
     const generation=++this.generation;this.busy=true;this.error='';
-    try{const response=await this.viewModel.historyRecall({action:'choose',query_id:this.queryId,contact_key:contact.key});if(generation===this.generation){this.result=response;this.contactsOpen=false;this.scroller.scrollTo({xOffset:0,yOffset:0});}}
+    try{const response=await this.viewModel.historyRecall({action:'choose',query_id:this.queryId,contact_key:contact.key,remember:this.rememberContact});if(generation===this.generation){this.result=response;this.contactsOpen=false;this.scroller.scrollTo({xOffset:0,yOffset:0});}}
     catch(_){if(generation===this.generation){this.error='本次联系人选择暂未完成，请重试；原问题已保留。';}}
     finally{if(generation===this.generation){this.busy=false;}}
+  }
+  private async rememberTarget():Promise<void>{
+    if(this.busy){return;}
+    const generation=++this.generation;this.busy=true;this.error='';
+    try{const response=await this.viewModel.historyRecall({action:'remember_target',query_id:this.queryId});if(generation===this.generation){this.result=response;}}
+    catch(_){if(generation===this.generation){this.error='查询对象暂未记住，请重试。';}}
+    finally{if(generation===this.generation){this.busy=false;}}
+  }
+  private async forgetTarget():Promise<void>{
+    if(this.busy){return;}
+    const generation=++this.generation;this.busy=true;this.error='';
+    try{const response=await this.viewModel.historyRecall({action:'forget_target',query_id:this.queryId});if(generation===this.generation){this.result=response;this.rememberContact=false;}}
+    catch(_){if(generation===this.generation){this.error='查询对象记忆暂未撤销，请重试。';}}
+    finally{if(generation===this.generation){this.busy=false;}}
+  }
+  @Builder private rememberChoice(){
+    Row(){Text('记住此称呼对应的查询对象').layoutWeight(1);Toggle({type:ToggleType.Switch,isOn:this.rememberContact}).onChange((value:boolean):void=>{this.rememberContact=value;})}.width('100%').height(48)
+    Text('勾选后，重复查询、返回页面和重启均可复用；可在查询结果撤销。不合并人物或其他平台身份。').fontSize(12)
   }
   private async lookupContacts(offset:number=0):Promise<void>{
     if(this.busy){return;}
@@ -89,6 +108,7 @@ export struct PhoneRecallSearch {
         Button('查找').height(48).enabled(!this.busy).onClick(():void=>{this.lookupContacts();})
       }.width('100%')
       Text(this.contactsResult.notice??'选择后自动继续原问题，日期和来源筛选保留；仅本次使用。').fontSize(13)
+      this.rememberChoice()
       ForEach(this.contactsResult.contact_candidates??[],(contact:RecallContact)=>{Button(this.contactLabel(contact)).width('100%').height(56).enabled(!this.busy).onClick(():void=>{this.chooseContact(contact);})},(contact:RecallContact):string=>contact.key)
       if(this.contactsResult.query_id!==undefined&&(this.contactsResult.contact_candidates?.length??0)===0){Text('目录中暂未找到匹配称呼。可改用备注、昵称或浏览已收到的联系人。').fontSize(13)}
       Row({space:8}){
@@ -149,12 +169,16 @@ export struct PhoneRecallSearch {
       if(productRecallRange(this.result).length>0){Text(productRecallRange(this.result)).fontSize(12).fontColor($r('app.color.text_secondary')).copyOption(CopyOptions.InApp)}
       Text(productRecallAnswer(this.result)).fontSize(18).lineHeight(27).copyOption(CopyOptions.InApp)
 
+      if((this.result.time_notice??'').length>0){Text(this.result.time_notice??'').fontSize(13).fontColor($r('app.color.brand_warning'))}
+      if(this.result.target_remember_available===true&&this.result.target_preference===undefined){Button('记住这个查询对象').height(44).enabled(!this.busy).onClick(():void=>{this.rememberTarget();});Text('只用于回忆查询，可随时撤销，不合并人物身份。').fontSize(12)}
+      if(this.result.target_preference!==undefined){Text(`已记住查询对象：${this.result.target_preference.mention} → ${this.result.target_preference.display_name}`).fontSize(13);Button('撤销查询对象记忆').height(44).enabled(!this.busy).onClick(():void=>{this.forgetTarget();})}
       if(this.result.contact_lookup_allowed===true){Button('查找 / 选择联系人').height(48).enabled(!this.busy).onClick(():void=>{this.lookupContacts();})}
       if(this.contactsOpen){this.contactLookup()}
       if(this.result.summary_retry_available===true){Button('重试归纳').height(48).enabled(!this.busy).onClick(():void=>{this.retrySummary();});Text('使用本次已取回的原文，最多重试一次，不扩大查询范围。').fontSize(12)}
       if(this.result.status==='needs_clarification'&&(this.result.contact_candidates?.length??0)>0){
+        this.rememberChoice()
         ForEach(this.result.contact_candidates??[],(contact:RecallContact)=>{Button(this.contactLabel(contact)).height(48).enabled(!this.busy).onClick(():void=>{this.chooseContact(contact);})},(contact:RecallContact):string=>contact.key)
-        Text('选择只用于本次查询，不会建立人物关联。').fontSize(12)
+        Text('未勾选记忆时仅本次有效；所有选择均不会建立跨平台人物关联。').fontSize(12)
       }
       if(this.result.status==='needs_clarification'&&(this.result.person_candidates?.length??0)>1){
         Select((this.result.person_candidates??[]).map((p:RecallPerson):SelectOption=>({value:p.display_name}))).value('选择具体人物').onSelect((i:number):void=>{this.person=this.result.person_candidates?.[i]?.person_id??'';this.search();})
