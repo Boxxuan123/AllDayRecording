@@ -6,6 +6,7 @@ const {productDay}=require(path.join(root,'presentation/PhoneProductHome.ets'));
 const {recallProductEvidence,chatProductEvidence,productEvidenceQuery,productQuoteContext}=require(path.join(root,'presentation/PhoneProductEvidence.ets'));
 const {productRecallAnswer,productRecallCoverage}=require(path.join(root,'presentation/PhoneProductRecall.ets'));
 const fixture=JSON.parse(fs.readFileSync(path.resolve('tests/fixtures/phone-product-v2.json'),'utf8'));
+require('./check-recall-evidence-render.cjs');
 (async()=>{
  assert(!productRecallAnswer({...fixture.query,answer:'找到200条，上限100'}).includes('100'));assert(!productRecallCoverage({...fixture.query,coverage:['预算100前2后4 Mac']}).includes('Mac'));
  const repo=await Repository.open({databasePath:path.join(fs.mkdtempSync(path.join(os.tmpdir(),'phone-product-v2-')),'isolated.sqlite')});

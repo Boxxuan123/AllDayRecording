@@ -1,4 +1,4 @@
-import { PhoneProductEvidence, recallProductEvidence, productEvidenceQuery } from './PhoneProductEvidence';
+import { PhoneProductEvidence, recallProductEvidence, productEvidenceQuery, productEvidenceRenderKey, productContextNotice } from './PhoneProductEvidence';
 import { RecallResponse, recallRequestId } from '../domain/PhoneHistoryRecall';
 import { PhoneV3SessionCard, PhoneV3Utterance } from '../domain/PhoneV3Models';
 import { PhoneV3ViewModel } from './PhoneV3ViewModel';
@@ -64,7 +64,7 @@ export struct PhoneEvidenceDetails {
       const context=await this.sourceContext(selected,generation);
       if(generation!==this.generation){return;}
       this.onContext(context);stale=context.status==='stale';
-      notice=stale?'来源已失效或修订；保存的归纳需重新核对':context.status==='unavailable'?'来源离线，以下为已保存原文；无法确认最新上下文':'原消息与前后文';
+      notice=productContextNotice(context);
       const incoming=context.evidence?.map(recallProductEvidence)??[];
       const original=incoming.find((e:PhoneProductEvidence):boolean=>e.id===selected.id);
       if(incoming.length>0){rows=original===undefined?incoming:[original].concat(incoming.filter((e:PhoneProductEvidence):boolean=>e.id!==original.id));}
@@ -117,7 +117,7 @@ export struct PhoneEvidenceDetails {
       Text(this.notice).fontSize(13).fontColor($r('app.color.text_secondary'))
       if(this.loading){LoadingProgress().width(24).height(24)}
       if(this.error.length>0){Text(this.error).fontSize(13).fontColor($r('app.color.brand_warning'));Button('重新读取来源').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).onClick(():void=>{this.load();})}
-      ForEach(this.rows.slice(0,this.limit),(e:PhoneProductEvidence)=>{this.row(e)},(e:PhoneProductEvidence):string=>e.id)
+      ForEach(this.rows.slice(0,this.limit),(e:PhoneProductEvidence)=>{this.row(e)},(e:PhoneProductEvidence):string=>productEvidenceRenderKey(e))
       if(this.rows.length>this.limit){Button('展开更多上下文').height(44).buttonStyle(ButtonStyleMode.TEXTUAL).onClick(():void=>{this.limit+=15;})}
       if(this.rows.length===0&&!this.loading){Text('手机没有保存这条原文。请同步后再查看。').fontSize(14)}
       if(this.viewModel.error.length>0){Text('播放或读取尚未完成，现有原文仍保留；可检查同步后重试').fontSize(13).fontColor($r('app.color.brand_warning'))}

@@ -1,4 +1,4 @@
-import { RecallEvidence, RecallRequest } from '../domain/PhoneHistoryRecall';
+import { RecallEvidence, RecallRequest, RecallResponse } from '../domain/PhoneHistoryRecall';
 import { PhoneDailyEvidence } from '../domain/PhoneV3DailyModels';
 import { PhoneUnifiedEvidence, unifiedRecordingEvidence } from '../domain/PhoneUnifiedReview';
 import { ChatFollowupEvidence } from '../domain/PhoneChatFollowup';
@@ -97,4 +97,15 @@ export function utteranceProductEvidence(e: PhoneV3Utterance): PhoneProductEvide
 export function productEvidenceQuery(e:PhoneProductEvidence,queryId:string):RecallRequest|undefined{
   if(e.recordId.length===0||!Number.isSafeInteger(e.recordRevision)||e.recordRevision<1||!Number.isSafeInteger(e.stamp)||e.stamp<=0||e.quote.trim().length===0||!['qq','wechat'].includes(e.platform)){return undefined;}
   return {action:'query',query_id:queryId,question:'查看这条原文',keyword:e.quote.slice(0,80),source:e.platform,sent_from:Math.max(0,e.stamp-1),sent_to:e.stamp+1,summarize:false,expand:false};
+}
+
+// Render identity includes the current display value. A placeholder and its filled
+// native citation share an evidence ID, but must not reuse a frozen ArkUI row.
+export function productEvidenceRenderKey(value:PhoneProductEvidence):string {
+  return JSON.stringify(value);
+}
+export function productContextNotice(context:RecallResponse):string {
+  if(context.status==='stale'){return '来源已失效或修订；保存的归纳需重新核对';}
+  if(context.status==='unavailable'){return context.notice??'上下文暂未取回，以下为已保存原文；当前状态未重新核对';}
+  return '原消息与前后文';
 }
