@@ -1,6 +1,6 @@
 # Phase 1E：进程中断后的 WAV 自动封口
 
-> 文档状态：`superseded` — 本文是恢复能力建立时的阶段记录；当前恢复与证据边界以 `doc/CURRENT_ARCHITECTURE.md` 为准。
+> 文档状态：`superseded` — 本文是恢复能力建立时的阶段记录；当前恢复与证据边界以 `docs/architecture/CURRENT_ARCHITECTURE.md` 为准。
 
 ## 目标
 

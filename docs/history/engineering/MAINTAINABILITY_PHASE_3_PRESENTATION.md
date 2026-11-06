@@ -1,6 +1,6 @@
 # Phase 3：手机/手表表现层拆分
 
-> 文档状态：`superseded` — 这是 Phase 3 完成时的历史快照；当前表现层边界以 `doc/CURRENT_ARCHITECTURE.md` 为准。
+> 文档状态：`superseded` — 这是 Phase 3 完成时的历史快照；当前表现层边界以 `docs/architecture/CURRENT_ARCHITECTURE.md` 为准。
 
 ## 1. 当前状态
 

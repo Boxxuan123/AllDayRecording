@@ -2,7 +2,7 @@
 
 本目录 Index.ets 是**临时测试入口**，不在正式源码 import 链中。它使用生产 PhoneV3AnnotationPage、ViewModel、UseCases、PhoneProjectionRepository 和原生 AudioPlaybackService；独立 RDB、合成数据、本地桥及离线/慢传输端口替代真实业务资源。只能证明所列分层行为，不能作为完整生产备份端到端或帧性能报告。
 
-实际结果见 ../../../doc/SYNC_PHASE1_ACCEPTANCE.md。原样例 tests/ui/main.py 和 PhoneMoreSmoke 不变；新增 runner 沿用同一 Hypium、设备配置、报告和控件操作，非 Appium。
+实际结果见 ../../../docs/history/sync/SYNC_PHASE1_ACCEPTANCE.md。原样例 tests/ui/main.py 和 PhoneMoreSmoke 不变；新增 runner 沿用同一 Hypium、设备配置、报告和控件操作，非 Appium。
 
 ## 前置检查与数据保护
 

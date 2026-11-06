@@ -43,4 +43,4 @@ DevEco Testing 客户端的“回归测试”服务读取**测试包**，不直�
 
 ## 第一阶段业务验收扩展
 
-新增 `run_phase1.py` 沿用本工程驱动与配置，运行 `PhoneOfflineAnnotation` 和 `PhoneSyncInteraction`。这两个用例必须先安装隔离测试入口，不能直接用于正式应用。准备、数据保护、运行与正式恢复见 [隔离真机复现说明](../../tools/quality/sync-phase1-device/README.md)，本次结果和未完成项见 [第一阶段验收记录](../../doc/SYNC_PHASE1_ACCEPTANCE.md)。原 `main.py` / `PhoneMoreSmoke` 仍按上述方式独立运行。
+新增 `run_phase1.py` 沿用本工程驱动与配置，运行 `PhoneOfflineAnnotation` 和 `PhoneSyncInteraction`。这两个用例必须先安装隔离测试入口，不能直接用于正式应用。准备、数据保护、运行与正式恢复见 [隔离真机复现说明](../../tools/quality/sync-phase1-device/README.md)，本次结果和未完成项见 [第一阶段验收记录](../../docs/history/sync/SYNC_PHASE1_ACCEPTANCE.md)。原 `main.py` / `PhoneMoreSmoke` 仍按上述方式独立运行。

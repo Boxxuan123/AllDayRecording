@@ -708,4 +708,4 @@ hdc -t TARGET file recv -b BUNDLE_NAME REMOTE_PATH LOCAL_PATH
 
 完整报告：
 
-[`outputs/device_checks/20260829_persistent_queue_final/PERSISTENT_QUEUE_ACCEPTANCE_REPORT.md`](../outputs/device_checks/20260829_persistent_queue_final/PERSISTENT_QUEUE_ACCEPTANCE_REPORT.md)
+`outputs/device_checks/20260829_persistent_queue_final/PERSISTENT_QUEUE_ACCEPTANCE_REPORT.md`（历史记录路径；2026-10-19 整理时该文件已不存在，不作为当前可用链接。）

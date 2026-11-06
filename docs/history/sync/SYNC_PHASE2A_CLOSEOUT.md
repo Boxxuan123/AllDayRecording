@@ -33,7 +33,7 @@ Home/More/People 三个页面改用 `@ObjectLink` 链接已有 `@Observed PhoneV
 |真实 Code Linter|0 defects，exit0；outputs/sync-phase2a-closeout-lint-final.log|
 |额外错误分类矩阵|400/403/TLS/identity 停止自动重试并可显式重试；500/timeout 有界退避，100 次触发不造成风暴；是真实 coordinator 的可控时钟行为测试，不是真机完整矩阵|
 
-复现命令沿用现有脚本，设置 `DEVECO_SDK_HOME` 为本机 SDK、`PHONE_TEST_TYPESCRIPT` 为 SDK ets-loader/node_modules/typescript；使用 `tools/quality/build-sync-device.ps1 phase2a`、`production`；原生使用 `tests/ui/run_phase2a.py`，`SYNC_PHASE2A_EVIDENCE` 指向本轮独立接收端 evidence.json。完整环境与安装、清理步骤见 [夹具 README](../tools/quality/sync-phase2a-device/README.md)。
+复现命令沿用现有脚本，设置 `DEVECO_SDK_HOME` 为本机 SDK、`PHONE_TEST_TYPESCRIPT` 为 SDK ets-loader/node_modules/typescript；使用 `tools/quality/build-sync-device.ps1 phase2a`、`production`；原生使用 `tests/ui/run_phase2a.py`，`SYNC_PHASE2A_EVIDENCE` 指向本轮独立接收端 evidence.json。完整环境与安装、清理步骤见 [夹具 README](../../../tools/quality/sync-phase2a-device/README.md)。
 
 ## 最终原生业务回归
 

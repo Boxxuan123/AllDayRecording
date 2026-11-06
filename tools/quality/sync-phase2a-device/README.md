@@ -6,9 +6,9 @@
 
 故障配置仅由本地测试脚本写入，`mode` 支持 `offline`、`500-once`、`drop-once` 或空串。每轮完整验收使用全新接收端输出目录，保留之前失败报告。重新开始完整流程前，只清理本夹具的 cache/sync-phase2a-resume 标记；不要清理正式配对或数据。
 
-每次安装前记录 `Get-FileHash <实际HAP> -Algorithm SHA256` 和 `git rev-parse HEAD`，不要拿重建后的同名文件代替实际安装包哈希。后续原生结果和未完成项以 [收尾报告](../../../doc/SYNC_PHASE2A_CLOSEOUT.md) 为准。
+每次安装前记录 `Get-FileHash <实际HAP> -Algorithm SHA256` 和 `git rev-parse HEAD`，不要拿重建后的同名文件代替实际安装包哈希。后续原生结果和未完成项以 [收尾报告](../../../docs/history/sync/SYNC_PHASE2A_CLOSEOUT.md) 为准。
 
-`Index.ets` 是临时入口，不被生产页面 import。沿用 `tests/ui/main.py` 的 DevEco Testing/Hypium、设备配置和报告；用稳定 ID/文字和有截止时间的条件等待。真实结果见 `doc/SYNC_PHASE2A_ACCEPTANCE.md`，不能仅凭脚本存在判断通过。
+`Index.ets` 是临时入口，不被生产页面 import。沿用 `tests/ui/main.py` 的 DevEco Testing/Hypium、设备配置和报告；用稳定 ID/文字和有截止时间的条件等待。真实结果见 `docs/history/sync/SYNC_PHASE2A_ACCEPTANCE.md`，不能仅凭脚本存在判断通过。
 
 ## 范围
 

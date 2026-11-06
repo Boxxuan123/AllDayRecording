@@ -8,4 +8,4 @@
 
 验证：完整宿主 161/161；assembleHap 通过；check-self-identity-review.cjs 和 check-durable-review-queues.cjs 通过。SQLite 脚本用 Node 24 和 DevEco TypeScript。详细证据仅保存于未跟踪 outputs/。
 
-PC 匿名完整报告在 AllDayRecording-ASR 的 docs/historical-self-backfill-20261002.md。Synthetic 结果仅用于交互诊断，不声称模型准确率。
+PC 匿名完整报告在 AllDayRecording-ASR 的 docs/history/speaker/historical-self-backfill-20261002.md。Synthetic 结果仅用于交互诊断，不声称模型准确率。

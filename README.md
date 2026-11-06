@@ -22,8 +22,8 @@ AllDayRecording 是一个同时交付到手机与 HUAWEI WATCH 5 的 HarmonyOS �
 - `entry/src/test`、`phone/src/test`：按设备边界拆分的宿主机 Hypium 业务测试。
 - `entry/src/ohosTest`：设备测试 HAP 的业务契约入口。
 
-当前依赖与数据流详见 [当前架构](doc/CURRENT_ARCHITECTURE.md)。历史阶段报告会明确标记为 `superseded` 或 `experiment`，不作为当前产品行为的唯一依据。
-手机到电脑的首次配对、换 Wi-Fi 和上传流程详见 [手机到电脑安全传输](doc/PHONE_TO_COMPUTER_TRANSFER.md)。
+当前依赖与数据流详见 [当前架构](docs/architecture/CURRENT_ARCHITECTURE.md)。历史阶段报告会明确标记为 `superseded` 或 `experiment`，不作为当前产品行为的唯一依据。
+手机到电脑的首次配对、换 Wi-Fi 和上传流程详见 [手机到电脑安全传输](docs/guides/PHONE_TO_COMPUTER_TRANSFER.md)。
 
 工程级 `default` product 仅构建 Watch：使用 API 26 编译 SDK，但 `targetSdkVersion` 与
 `compatibleSdkVersion` 均为 `6.1.0(23)`。`phone` product 仅构建 Phone，编译、目标和最低兼容
@@ -174,4 +174,11 @@ API 26 实机已验证专用账户、事件写入/查询和 `[0]` 提醒配置�
 
 ## 独立聊天事项与首次提醒
 
-Windows 接纳事项后，在现有手机“更多→提醒”页同步查看和处理。聊天卡片提供“启用提醒”，明确确认仍需执行并输入带时区的未来时刻；无需录音任务 ID。历史事项保留进展未知，新进展可采用或拒绝。复用原同步队列、Event 修订和 Calendar Kit；实机闭环本轮 NOT_RUN。验证及操作步骤见 [2026-10-11 验收记录](doc/CHAT_FOLLOWUP_PHONE_ACCEPTANCE_20261011.md)。
+Windows 接纳事项后，在现有手机“更多→提醒”页同步查看和处理。聊天卡片提供“启用提醒”，明确确认仍需执行并输入带时区的未来时刻；无需录音任务 ID。历史事项保留进展未知，新进展可采用或拒绝。复用原同步队列、Event 修订和 Calendar Kit；实机闭环本轮 NOT_RUN。验证及操作步骤见 [2026-10-11 验收记录](docs/history/phone/CHAT_FOLLOWUP_PHONE_ACCEPTANCE_20261011.md)。
+
+## 文档与工具导航
+
+- [文档分类索引](docs/README.md)
+- [工具分类索引](tools/README.md)
+- [项目目录约定](docs/engineering/REPOSITORY_LAYOUT.md)
+- [本次整理记录](docs/engineering/WORKSPACE_CLEANUP_20261019.md)

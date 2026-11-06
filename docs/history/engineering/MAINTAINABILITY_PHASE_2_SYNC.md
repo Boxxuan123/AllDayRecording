@@ -1,6 +1,6 @@
 # Phase 2：Wear Engine 传输与同步状态机拆分
 
-> 文档状态：`superseded` — 这是 Phase 2 完成时的历史快照；当前同步边界以 `doc/CURRENT_ARCHITECTURE.md` 为准。
+> 文档状态：`superseded` — 这是 Phase 2 完成时的历史快照；当前同步边界以 `docs/architecture/CURRENT_ARCHITECTURE.md` 为准。
 
 ## 1. 当前状态
 

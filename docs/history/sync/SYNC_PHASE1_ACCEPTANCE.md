@@ -50,7 +50,7 @@
 
 ## 已执行命令与本次结果
 
-下列相对路径基于各自仓库；N 为 Studio/tools/node/node.exe，H 为 Studio/tools/hvigor/bin/hvigorw.js，S 为 bundled Node v24.19.0。原始输出保留在本地被忽略的 outputs/，不是提交材料。设备准备/清理的具体步骤见 [真机复现说明](../tools/quality/sync-phase1-device/README.md)。
+下列相对路径基于各自仓库；N 为 Studio/tools/node/node.exe，H 为 Studio/tools/hvigor/bin/hvigorw.js，S 为 bundled Node v24.19.0。原始输出保留在本地被忽略的 outputs/，不是提交材料。设备准备/清理的具体步骤见 [真机复现说明](../../../tools/quality/sync-phase1-device/README.md)。
 
 |命令/入口|退出码、数量|本次证据|
 |---|---|---|

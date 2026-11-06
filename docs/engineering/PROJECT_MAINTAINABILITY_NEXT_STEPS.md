@@ -102,7 +102,7 @@ test: restore reproducible phone and watch test reports
 并新增会校验报告新鲜度、源码测试数、失败数且带有界超时的 `hostTest` 门禁。当前真实报告为
 Watch 43/43、Phone 3/3，合计 46/46 通过；Linter、`entry@ohosTest`、独立 clean
 Debug/Release 与双 HAP 产物边界均通过。详细证据见
-`doc/MAINTAINABILITY_PHASE_N0_TEST_GATE.md`。
+`docs/history/engineering/MAINTAINABILITY_PHASE_N0_TEST_GATE.md`。
 
 ## 5. Phase N1：加固自动同步队列清单恢复
 
@@ -114,7 +114,7 @@ Debug/Release 与双 HAP 产物边界均通过。详细证据见
 
 - `common/src/main/ets/sync/watch/AutomaticSyncQueue.ets`
 - `entry/src/test/AutomaticQueueAndSyncState.test.ets`
-- 必要时更新 `doc/CURRENT_ARCHITECTURE.md` 的恢复说明
+- 必要时更新 `docs/architecture/CURRENT_ARCHITECTURE.md` 的恢复说明
 
 不得顺带修改 Transport、wire 消息、ACK、同步批量大小或目录结构。
 
@@ -163,7 +163,7 @@ fix: harden automatic sync queue manifest recovery
 合法清单缺失项的过滤与剩余队列持久化行为保持不变。新增 7 项测试后当前真实报告为
 Watch 50/50、Phone 3/3，合计 53/53；Linter、`entry@ohosTest`、独立 clean
 Debug/Release 与双 HAP 产物边界均通过。详细证据见
-`doc/MAINTAINABILITY_PHASE_N1_QUEUE_RECOVERY.md`。
+`docs/history/engineering/MAINTAINABILITY_PHASE_N1_QUEUE_RECOVERY.md`。
 
 ## 6. Phase N2：消除构建产生的 Git 污染
 
@@ -204,7 +204,7 @@ build: keep generated build profile out of source changes
 构建可稳定重建。该文件已取消跟踪，`.gitignore` 只增加
 `/common/BuildProfile.ets` 精确规则。目标索引状态下独立 clean Debug/Release 构建均成功且
 没有产生未暂存差异，`common` HAR、Watch HAP、Phone HAP 与双 HAP `.app` 均正常生成。
-详细证据见 `doc/MAINTAINABILITY_PHASE_N2_BUILD_CLEANLINESS.md`。
+详细证据见 `docs/history/engineering/MAINTAINABILITY_PHASE_N2_BUILD_CLEANLINESS.md`。
 
 ## 7. Phase N3：清理遗留命名并同步文档
 
@@ -217,7 +217,7 @@ build: keep generated build profile out of source changes
 - 将 Phone `EntryAbility` 中的 `phase6Probe` 改为稳定的 Phone 模块日志标签。
 - 将 `Failed to load Phone probe page` 改为正式页面加载错误描述。
 - 复查生产目录中是否还有只属于已结束 Phase 的日志标签；诊断目录内明确保留的 `Probe` 不在本次清理范围。
-- 更新本文件和 `doc/CURRENT_ARCHITECTURE.md` 的执行状态。
+- 更新本文件和 `docs/architecture/CURRENT_ARCHITECTURE.md` 的执行状态。
 
 ### 验收标准
 
@@ -238,7 +238,7 @@ chore: replace phase probe names in phone startup logs
 `WATCH_CONTROL_PROBE/control_probe` 仍是现行 wire 语义，`diagnostics` 下的 SleepMode Probe
 仍是明确保留且生产 UI 不可达的诊断能力，两者均未误改。Host 53/53、Linter、Phone HAP、
 独立 clean Debug/Release 和双 HAP 交付边界均通过。详细证据见
-`doc/MAINTAINABILITY_PHASE_N3_STARTUP_LOG_NAMING.md`。
+`docs/history/engineering/MAINTAINABILITY_PHASE_N3_STARTUP_LOG_NAMING.md`。
 
 ## 8. 后续大文件采用触发式拆分
 

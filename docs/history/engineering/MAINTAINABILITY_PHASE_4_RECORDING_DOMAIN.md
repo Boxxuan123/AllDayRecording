@@ -1,6 +1,6 @@
 # Phase 4：录音领域与诊断隔离
 
-> 文档状态：`superseded` — 这是 Phase 4 完成时的历史快照；当前录音边界与告警状态以 `doc/CURRENT_ARCHITECTURE.md` 为准。
+> 文档状态：`superseded` — 这是 Phase 4 完成时的历史快照；当前录音边界与告警状态以 `docs/architecture/CURRENT_ARCHITECTURE.md` 为准。
 
 ## 1. 当前状态
 

@@ -1,6 +1,6 @@
 # AllDayRecording 可维护性重构 Phase 0 基线
 
-> 文档状态：`superseded` — 这是 Phase 0 完成时的历史快照；当前结构与命令以 `doc/CURRENT_ARCHITECTURE.md` 和根目录 `README.md` 为准。
+> 文档状态：`superseded` — 这是 Phase 0 完成时的历史快照；当前结构与命令以 `docs/architecture/CURRENT_ARCHITECTURE.md` 和根目录 `README.md` 为准。
 
 ## 1. 结论
 

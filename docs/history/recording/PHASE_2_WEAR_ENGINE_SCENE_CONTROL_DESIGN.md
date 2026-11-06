@@ -1,6 +1,6 @@
 # Phase 2：手机场景控制 Watch 5 录音
 
-> 文档状态：`superseded` — 这是实现前的设计依据；当前 API 23 前台启动、通知降级与控制状态以 `doc/CURRENT_ARCHITECTURE.md` 和生产代码为准。
+> 文档状态：`superseded` — 这是实现前的设计依据；当前 API 23 前台启动、通知降级与控制状态以 `docs/architecture/CURRENT_ARCHITECTURE.md` 和生产代码为准。
 
 ## 结论先行
 

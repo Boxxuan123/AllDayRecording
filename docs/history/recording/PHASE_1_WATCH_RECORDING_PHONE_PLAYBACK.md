@@ -1,6 +1,6 @@
 # Phase 1：手表录音 → 手机接收 → 手机试听
 
-> 文档状态：`superseded` — 2026-08-28 的真机闭环证据仍有效，但批次上限、队列和索引能力已经演进；当前行为以 `doc/CURRENT_ARCHITECTURE.md` 为准。
+> 文档状态：`superseded` — 2026-08-28 的真机闭环证据仍有效，但批次上限、队列和索引能力已经演进；当前行为以 `docs/architecture/CURRENT_ARCHITECTURE.md` 为准。
 
 ## 目标
 

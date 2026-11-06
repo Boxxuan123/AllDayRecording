@@ -9,7 +9,7 @@
 - `tools/quality/run-code-linter.mjs` 从 SDK 元数据解析 API/platform 版本，解析 Code Linter JSON 行报告；任何 defect、检查不完整或工具非零退出都会令 Hvigor 失败。不能再以工具“有 defect 仍返回 0”误判通过。
 - 两个 `export *` 性能告警改为显式导出，没有关闭或弱化规则。
 - CoreFileKit、Preferences、AudioKit、后台任务、通知和 Wear Engine 的可抛异常在各自 adapter/服务边界捕获并传播。生产 Debug/Release 源码图的 `Function may throw exceptions` 从 Phase 4 的 69 个降为 0。
-- 补齐根 `README.md` 与 `doc/CURRENT_ARCHITECTURE.md`，更新默认 package 描述，并为历史 Phase 文档标记 `superseded`/`experiment`。
+- 补齐根 `README.md` 与 `docs/architecture/CURRENT_ARCHITECTURE.md`，更新默认 package 描述，并为历史 Phase 文档标记 `superseded`/`experiment`。
 - 旧文档中的“一次 100 个”“历史索引未持久化”“5 秒生产分片”已修正：当前手动请求最多 1 个缺失文件、库存键每页 24 个、Phone 索引持久化并可扫描重建、生产 WAV 为 60 秒而 5 秒仅是内存队列上限。
 - 当前架构记录了 500 行/25 字段/跨三层复审阈值和现有例外。
 
@@ -43,7 +43,7 @@ Debug 与 Release 分别独立执行 `clean assembleHap`：
 
 Release `pack.info` 继续确认同一 `entry` 模块、`phone` + `wearable`、compatible API 23、target API 26。Release 另保留 DevEco 的混淆未启用建议；本阶段没有为追求零提示擅自开启可能改变运行行为的混淆。
 
-28 个 wearable 目标提示来自同一 HAP 内的 Phone Wear Engine receiver/远端启动代码；Phone/Watch Root 已按设备隔离，Transport 连接前检查 Wear Engine 能力。7 个系统能力提示来自 AudioCapturer（6）和 AVPlayer（1），调用前均有 `canIUse`。完整调用边界见 `doc/CURRENT_ARCHITECTURE.md`。
+28 个 wearable 目标提示来自同一 HAP 内的 Phone Wear Engine receiver/远端启动代码；Phone/Watch Root 已按设备隔离，Transport 连接前检查 Wear Engine 能力。7 个系统能力提示来自 AudioCapturer（6）和 AVPlayer（1），调用前均有 `canIUse`。完整调用边界见 `docs/architecture/CURRENT_ARCHITECTURE.md`。
 
 ## 4. Git 与数据保护
 

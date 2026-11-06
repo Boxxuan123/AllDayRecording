@@ -140,7 +140,7 @@ Pages -> ViewModels/Coordinators -> Domain services -> Transport/Storage adapter
 
 ### Phase 0：冻结行为基线并建立特征测试
 
-执行状态（2026-08-29）：已完成 Phase 0。实际 Hypium 报告为 19/19 通过，Debug/Release 均在独立 `clean` 后构建成功，用户随后确认真机录音没有问题；详细架构、测试、警告和构建证据见 `doc/MAINTAINABILITY_PHASE_0_BASELINE.md`。Codex 本阶段未安装或访问设备，队列/ACK 的直接生产状态机测试仍按计划在 Phase 2 用 fake transport/fake clock 替换当前同契约模型。
+执行状态（2026-08-29）：已完成 Phase 0。实际 Hypium 报告为 19/19 通过，Debug/Release 均在独立 `clean` 后构建成功，用户随后确认真机录音没有问题；详细架构、测试、警告和构建证据见 `docs/history/engineering/MAINTAINABILITY_PHASE_0_BASELINE.md`。Codex 本阶段未安装或访问设备，队列/ACK 的直接生产状态机测试仍按计划在 Phase 2 用 fake transport/fake clock 替换当前同契约模型。
 
 目标：在移动代码前，先把当前真实行为固化为可重复验证的测试和清单。
 
@@ -169,7 +169,7 @@ Pages -> ViewModels/Coordinators -> Domain services -> Transport/Storage adapter
 
 ### Phase 1：提取无状态共享基础设施
 
-执行状态（2026-08-29）：已完成，用户已确认真机回归通过。当前 Hypium 报告为 27/27 通过，`entry@ohosTest` 测试 HAP、独立 clean Debug 和 Release 构建均成功；路径、JSON schema/version、WAV 格式、录音参数和 wire 协议未改。真机回归期间发现 Wear Engine 核心接收通道卡住后仅重新注册回调不足以恢复，因此追加了 `stop -> destroy -> start` 的硬重连和重复点击保护；原先积压的第三段随后进入手机索引。详细迁移、字节/失败语义、警告保留依据及真机证据见 `doc/MAINTAINABILITY_PHASE_1_SHARED_IO.md`。
+执行状态（2026-08-29）：已完成，用户已确认真机回归通过。当前 Hypium 报告为 27/27 通过，`entry@ohosTest` 测试 HAP、独立 clean Debug 和 Release 构建均成功；路径、JSON schema/version、WAV 格式、录音参数和 wire 协议未改。真机回归期间发现 Wear Engine 核心接收通道卡住后仅重新注册回调不足以恢复，因此追加了 `stop -> destroy -> start` 的硬重连和重复点击保护；原先积压的第三段随后进入手机索引。详细迁移、字节/失败语义、警告保留依据及真机证据见 `docs/history/engineering/MAINTAINABILITY_PHASE_1_SHARED_IO.md`。
 
 目标：先消除最容易验证的重复逻辑，为后续拆分提供稳定底座。
 
@@ -192,7 +192,7 @@ Pages -> ViewModels/Coordinators -> Domain services -> Transport/Storage adapter
 
 ### Phase 2：拆分 Wear Engine 传输与同步状态机
 
-执行状态（2026-08-29）：已完成 Phase 2，用户已确认 WATCH 5 真机回归通过。当前直接生产状态测试 35/35 通过，`entry@ohosTest` 测试 HAP、独立 clean Debug 和 Release 构建均成功；协议版本、wire JSON、requestId、路径、重试/超时值和源文件保留语义未改。详细边界、测试、构建和验收证据见 `doc/MAINTAINABILITY_PHASE_2_SYNC.md`。
+执行状态（2026-08-29）：已完成 Phase 2，用户已确认 WATCH 5 真机回归通过。当前直接生产状态测试 35/35 通过，`entry@ohosTest` 测试 HAP、独立 clean Debug 和 Release 构建均成功；协议版本、wire JSON、requestId、路径、重试/超时值和源文件保留语义未改。详细边界、测试、构建和验收证据见 `docs/history/engineering/MAINTAINABILITY_PHASE_2_SYNC.md`。
 
 目标：把 2,029 行传输文件拆成可独立测试的协议、Transport、Watch 协调器和 Phone 协调器。
 
@@ -229,7 +229,7 @@ Pages -> ViewModels/Coordinators -> Domain services -> Transport/Storage adapter
 
 ### Phase 3：拆分手机/手表页面与业务状态
 
-执行状态（2026-08-30）：已完成 Phase 3，用户已确认 WATCH 5 真机视觉与录音流程回归通过，代码提交为 `2cfa334`。`Index.ets` 已从 1,394 行缩减为 17 行，只负责设备类型选择；手机/手表 Root、ViewModel 和六个页面组件已分离。Hypium 39/39 通过，`entry@ohosTest`、独立 clean Debug 和 Release 构建成功，详见 `doc/MAINTAINABILITY_PHASE_3_PRESENTATION.md`。
+执行状态（2026-08-30）：已完成 Phase 3，用户已确认 WATCH 5 真机视觉与录音流程回归通过，代码提交为 `2cfa334`。`Index.ets` 已从 1,394 行缩减为 17 行，只负责设备类型选择；手机/手表 Root、ViewModel 和六个页面组件已分离。Hypium 39/39 通过，`entry@ohosTest`、独立 clean Debug 和 Release 构建成功，详见 `docs/history/engineering/MAINTAINABILITY_PHASE_3_PRESENTATION.md`。
 
 目标：把 `Index.ets` 从业务控制中心降为最小设备入口。
 
@@ -255,7 +255,7 @@ Pages -> ViewModels/Coordinators -> Domain services -> Transport/Storage adapter
 
 ### Phase 4：整理录音领域与诊断代码
 
-执行状态（2026-08-30）：已完成 Phase 4，用户已确认 WATCH 5 正常停止、熄屏录音和中断恢复回归通过，代码提交为 `550fb46`。`PcmSegmentedRecordingService.ets` 已从 663 行缩减为 405 行，AudioCapturer、后台任务、WAV 文件槽、会话契约/摘要分别独立；旧 AVRecorder 与 Sleep Mode Probe 已移入默认关闭且生产 UI 不可达的 `diagnostics`。Hypium 46/46 通过，`entry@ohosTest`、独立 clean Debug 和 Release 构建成功，详见 `doc/MAINTAINABILITY_PHASE_4_RECORDING_DOMAIN.md`。
+执行状态（2026-08-30）：已完成 Phase 4，用户已确认 WATCH 5 正常停止、熄屏录音和中断恢复回归通过，代码提交为 `550fb46`。`PcmSegmentedRecordingService.ets` 已从 663 行缩减为 405 行，AudioCapturer、后台任务、WAV 文件槽、会话契约/摘要分别独立；旧 AVRecorder 与 Sleep Mode Probe 已移入默认关闭且生产 UI 不可达的 `diagnostics`。Hypium 46/46 通过，`entry@ohosTest`、独立 clean Debug 和 Release 构建成功，详见 `docs/history/engineering/MAINTAINABILITY_PHASE_4_RECORDING_DOMAIN.md`。
 
 目标：区分生产录音链路、历史基线和诊断工具。
 
@@ -278,7 +278,7 @@ Pages -> ViewModels/Coordinators -> Domain services -> Transport/Storage adapter
 
 ### Phase 5：接通质量门禁并修正文档
 
-执行状态（2026-08-30）：已完成 Phase 5，用户已确认 Phone/WATCH 5 快速回归通过，代码提交为 `53e42a0`。`hvigorw codeLinter` 已实际读取 `code-linter.json5` 并以 defect/不完整报告阻断；生产 Debug/Release 构建中的 `Function may throw exceptions` 已从 69 个降为 0。README、当前架构、历史文档状态和过期同步/索引/分片描述已更新，详细证据见 `doc/MAINTAINABILITY_PHASE_5_QUALITY_GATES.md`。
+执行状态（2026-08-30）：已完成 Phase 5，用户已确认 Phone/WATCH 5 快速回归通过，代码提交为 `53e42a0`。`hvigorw codeLinter` 已实际读取 `code-linter.json5` 并以 defect/不完整报告阻断；生产 Debug/Release 构建中的 `Function may throw exceptions` 已从 69 个降为 0。README、当前架构、历史文档状态和过期同步/索引/分片描述已更新，详细证据见 `docs/history/engineering/MAINTAINABILITY_PHASE_5_QUALITY_GATES.md`。
 
 目标：让后续膨胀和文档漂移能被自动发现。
 
@@ -303,7 +303,7 @@ Pages -> ViewModels/Coordinators -> Domain services -> Transport/Storage adapter
 
 ### Phase 6：评估物理拆分 Phone/Watch 模块
 
-执行状态（2026-08-30）：已完成并获用户真机验收。安装前 Phone（PLR-AL00）与 WATCH 5（RTS-AL00）均为同一 `bundleName`、`appIdentifier` 和 `entry` 模块，兼容 API 23、目标 API 26；同一模块多 target 无法从 Phone HAP 中裁掉录音权限和 `audioRecording` Ability，两个同名模块又会被 Hvigor 拒绝。最终采用 Watch `entry` + Phone `phone` 两个设备类型互斥的 Entry HAP，并增加 `common` HAR；真实 Phone 页面、Receiver、索引和资源迁入 `phone`，Watch Sender 与录音留在 `entry`。应用提升到 `1.0.1 / 1000001` 以满足 Entry 模块变化的升级校验，`bundleName`、Client ID 和签名配置不变。Code Linter、独立 clean Debug/Release `assembleApp`、双 HAP 解包声明和跨端 source map 边界均通过。用户决定不做 Phone `entry -> phone` 数据迁移，以两端安装前双份只读备份作为回退：WATCH 两份各 29 个文件、24,625,471 字节，Phone 两份各 25 个文件、30,716,796 字节，逐文件 SHA-256 清单一致；随后用户确认双端覆盖安装完成且验收通过。宿主机测试源码仍为 46 项，但 runner 未生成 Phase 6 新报告，因此不虚报通过数。证据见 `doc/MAINTAINABILITY_PHASE_6_HAP_SPLIT_FEASIBILITY.md`。
+执行状态（2026-08-30）：已完成并获用户真机验收。安装前 Phone（PLR-AL00）与 WATCH 5（RTS-AL00）均为同一 `bundleName`、`appIdentifier` 和 `entry` 模块，兼容 API 23、目标 API 26；同一模块多 target 无法从 Phone HAP 中裁掉录音权限和 `audioRecording` Ability，两个同名模块又会被 Hvigor 拒绝。最终采用 Watch `entry` + Phone `phone` 两个设备类型互斥的 Entry HAP，并增加 `common` HAR；真实 Phone 页面、Receiver、索引和资源迁入 `phone`，Watch Sender 与录音留在 `entry`。应用提升到 `1.0.1 / 1000001` 以满足 Entry 模块变化的升级校验，`bundleName`、Client ID 和签名配置不变。Code Linter、独立 clean Debug/Release `assembleApp`、双 HAP 解包声明和跨端 source map 边界均通过。用户决定不做 Phone `entry -> phone` 数据迁移，以两端安装前双份只读备份作为回退：WATCH 两份各 29 个文件、24,625,471 字节，Phone 两份各 25 个文件、30,716,796 字节，逐文件 SHA-256 清单一致；随后用户确认双端覆盖安装完成且验收通过。宿主机测试源码仍为 46 项，但 runner 未生成 Phase 6 新报告，因此不虚报通过数。证据见 `docs/history/engineering/MAINTAINABILITY_PHASE_6_HAP_SPLIT_FEASIBILITY.md`。
 
 目标：在逻辑边界稳定后，判断是否把单一 `entry` 拆成按设备交付的 HAP。
 
@@ -381,13 +381,13 @@ Release 必须在 Debug 完成后再次 clean，避免共享模块构建目录�
 
 | Phase | 状态 | 验收记录 | 提交 |
 | --- | --- | --- | --- |
-| Phase 0 行为基线与特征测试 | 已完成 | `doc/MAINTAINABILITY_PHASE_0_BASELINE.md` | `f5264dd` |
-| Phase 1 共享文件/WAV 基础设施 | 已完成 | `doc/MAINTAINABILITY_PHASE_1_SHARED_IO.md` | `8f7443c`、`c6f4fb7` |
-| Phase 2 Wear Engine 与同步状态机拆分 | 已完成 | `doc/MAINTAINABILITY_PHASE_2_SYNC.md` | `081109d`、`2c68691` |
-| Phase 3 Phone/Watch 页面与状态拆分 | 已完成 | `doc/MAINTAINABILITY_PHASE_3_PRESENTATION.md` | `2cfa334` |
-| Phase 4 录音领域与诊断隔离 | 已完成 | `doc/MAINTAINABILITY_PHASE_4_RECORDING_DOMAIN.md` | `550fb46`、`7543eda` |
-| Phase 5 质量门禁与文档 | 已完成 | `doc/MAINTAINABILITY_PHASE_5_QUALITY_GATES.md` | `53e42a0` |
-| Phase 6 Phone/Watch 物理模块评估 | 已完成（本地门禁、双端只读基线、覆盖安装与用户真机验收通过） | `doc/MAINTAINABILITY_PHASE_6_HAP_SPLIT_FEASIBILITY.md` |  |
+| Phase 0 行为基线与特征测试 | 已完成 | `docs/history/engineering/MAINTAINABILITY_PHASE_0_BASELINE.md` | `f5264dd` |
+| Phase 1 共享文件/WAV 基础设施 | 已完成 | `docs/history/engineering/MAINTAINABILITY_PHASE_1_SHARED_IO.md` | `8f7443c`、`c6f4fb7` |
+| Phase 2 Wear Engine 与同步状态机拆分 | 已完成 | `docs/history/engineering/MAINTAINABILITY_PHASE_2_SYNC.md` | `081109d`、`2c68691` |
+| Phase 3 Phone/Watch 页面与状态拆分 | 已完成 | `docs/history/engineering/MAINTAINABILITY_PHASE_3_PRESENTATION.md` | `2cfa334` |
+| Phase 4 录音领域与诊断隔离 | 已完成 | `docs/history/engineering/MAINTAINABILITY_PHASE_4_RECORDING_DOMAIN.md` | `550fb46`、`7543eda` |
+| Phase 5 质量门禁与文档 | 已完成 | `docs/history/engineering/MAINTAINABILITY_PHASE_5_QUALITY_GATES.md` | `53e42a0` |
+| Phase 6 Phone/Watch 物理模块评估 | 已完成（本地门禁、双端只读基线、覆盖安装与用户真机验收通过） | `docs/history/engineering/MAINTAINABILITY_PHASE_6_HAP_SPLIT_FEASIBILITY.md` |  |
 | Phase 7 内容完整性协议升级 | 未批准 |  |  |
 
 ## 11. 整体完成标准

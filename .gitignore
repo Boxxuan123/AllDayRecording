@@ -43,3 +43,7 @@
 *.pfx
 *.jks
 *.keystore
+
+# Disposable local outputs
+/output/
+/.test/

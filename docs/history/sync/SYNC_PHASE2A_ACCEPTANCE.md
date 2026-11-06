@@ -94,7 +94,7 @@ tools/quality/build-sync-device.ps1 production
 
 本轮原始成功证据 `outputs/sync-phase2a-production-evidence.json` 包含之前失败尝试的合成回执，本文仅摘录最终成功操作；不提交大型原始报告。成功用例最后删除独立测试 HUKS alias 并停应用。
 
-完整复现、临时入口和清理方法见 [隔离生产测试 README](../tools/quality/sync-phase2a-device/README.md)。原应用不卸载，不清真实库，不修改真实配对、录音、审核或 Watch。正式源码不 import 临时入口；公开提交只含源码、测试、生成器和脱敏说明。
+完整复现、临时入口和清理方法见 [隔离生产测试 README](../../../tools/quality/sync-phase2a-device/README.md)。原应用不卸载，不清真实库，不修改真实配对、录音、审核或 Watch。正式源码不 import 临时入口；公开提交只含源码、测试、生成器和脱敏说明。
 
 最终恢复完成：仅清理列出核实的两个本轮测试 RDB 及同名附属文件、7 个测试 cache、4 个生成 rawfile；生产 HUKS alias 未操作，测试 alias 已由成功用例删除。正式入口/HAP 恢复，不自动启动真实同步。两个独立 receiver 已停止，19099/19100 测试 rport 已移除，最终映射为空，HDC 网络保持。
 
